@@ -20,6 +20,8 @@ final class AstJson {
     private final String src;
     private final boolean bindings;
     private final List<Object> methods = new ArrayList<>();
+    private final List<Object> cfgFailures = new ArrayList<>();
+    private int cfgCount;
 
     /** @param bindings whether the unit was parsed with resolved bindings (semantic information) */
     AstJson(CompilationUnit cu, String src, boolean bindings) {
@@ -55,7 +57,9 @@ final class AstJson {
         }
         out.put("types", types);
         out.put("methods", methods);
-        out.put("diagnostics", diagnostics(problems));
+        List<Object> diagnostics = diagnostics(problems);
+        diagnostics.addAll(cfgFailures);
+        out.put("diagnostics", diagnostics);
         return out;
     }
 
@@ -168,6 +172,7 @@ final class AstJson {
         m.put("throws", texts(md.thrownExceptionTypes()));
         m.put("resolved_throws", mb == null ? null : typeInfos(mb.getExceptionTypes()));
         m.put("body", md.getBody() == null ? null : block(md.getBody()));
+        m.put("cfg", md.getBody() == null ? null : cfg(md, id));
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("id", id);
@@ -175,6 +180,22 @@ final class AstJson {
         summary.put("source_range", range(md));
         methods.add(summary);
         return m;
+    }
+
+    /** A CFG failure must not invalidate the AST: report it as a warning and emit `cfg: null`. */
+    private Map<String, Object> cfg(MethodDeclaration md, String methodId) {
+        try {
+            return new CfgBuilder(this, "m" + cfgCount++, methodId, md).build();
+        } catch (RuntimeException | StackOverflowError e) {
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("code", "cfg_build_failed");
+            d.put("category", "analysis");
+            d.put("severity", "warning");
+            d.put("message", "Control-flow graph could not be built for " + methodId + ": " + e);
+            d.put("source_range", range(md));
+            cfgFailures.add(d);
+            return null;
+        }
     }
 
     private List<Object> parameters(List<?> params) {
@@ -557,10 +578,12 @@ final class AstJson {
         return m;
     }
 
-    private Map<String, Object> range(ASTNode n) {
+    Map<String, Object> range(ASTNode n) {
+        return range(n.getStartPosition(), n.getLength());
+    }
+
+    Map<String, Object> range(int start, int length) {
         Map<String, Object> r = new LinkedHashMap<>();
-        int start = n.getStartPosition();
-        int length = n.getLength();
         r.put("start", start);
         r.put("length", length);
         r.put("line", cu.getLineNumber(start));
@@ -568,7 +591,7 @@ final class AstJson {
         return r;
     }
 
-    private String text(ASTNode n) {
+    String text(ASTNode n) {
         return src.substring(n.getStartPosition(), n.getStartPosition() + n.getLength());
     }
 
