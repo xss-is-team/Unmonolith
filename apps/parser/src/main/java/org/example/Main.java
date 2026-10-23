@@ -76,7 +76,7 @@ public class Main {
         }
 
         Map<String, String> options = JavaCore.getOptions();
-        JavaCore.setComplianceOptions(JavaCore.latestSupportedJavaVersion(), options);
+        JavaCore.setComplianceOptions(JavaCore.VERSION_21, options);
         parser.setCompilerOptions(options);
 
         return (CompilationUnit) parser.createAST(null);

@@ -231,11 +231,25 @@ class SemanticTest {
     }
 
     @Test
-    void publicClassNeedNotMatchStoredFileName() {
-        JsonNode root = JSON.valueToTree(Main.parse("package a.b;\npublic class Anything { }\n", "3.java"));
+    void publicClassMustMatchPreservedFileName() {
+        JsonNode root = JSON.valueToTree(Main.parse("package a.b;\npublic class Anything { }\n", "Stored.java"));
 
-        assertEquals("completed", root.get("status").asText());
-        assertEquals(0, root.get("diagnostics").size());
+        assertEquals("partial", root.get("status").asText());
+        assertTrue(hasDiagnostic(root, "must be defined in its own file"));
+    }
+
+    @Test
+    void java22SyntaxIsRejectedAtJava21Compliance() {
+        JsonNode root = analyze("""
+                class Example {
+                    void f() {
+                        try { throw new Exception(); } catch (Exception _) { }
+                    }
+                }
+                """);
+
+        assertEquals("partial", root.get("status").asText());
+        assertTrue(count(root, "error") > 0);
     }
 
     @Test

@@ -32,7 +32,7 @@ final class AstJson {
 
     Map<String, Object> convert() {
         Map<String, Object> out = new LinkedHashMap<>();
-        List<IProblem> problems = problems();
+        List<IProblem> problems = List.of(cu.getProblems());
         boolean hasErrors = problems.stream().anyMatch(IProblem::isError);
 
         out.put("protocol_version", 1);
@@ -64,20 +64,6 @@ final class AstJson {
     }
 
     // ---------- diagnostics ----------
-
-    /**
-     * The backend stores sources under revision-based file names, so JDT's "public type must be
-     * defined in its own file" check is a storage artifact, not a defect in the user's code.
-     */
-    private List<IProblem> problems() {
-        List<IProblem> list = new ArrayList<>();
-        for (IProblem p : cu.getProblems()) {
-            if (p.getID() != IProblem.PublicClassMustMatchFileName) {
-                list.add(p);
-            }
-        }
-        return list;
-    }
 
     private List<Object> diagnostics(List<IProblem> problems) {
         List<Object> list = new ArrayList<>();

@@ -25,10 +25,14 @@ pub struct UpdateSourceRequest {
     pub expected_revision: u64,
 }
 
-pub async fn create(session_dir: &Path, source: &[u8]) -> Result<Project, ApiError> {
+pub async fn create(
+    session_dir: &Path,
+    filename: &str,
+    source: &[u8],
+) -> Result<Project, ApiError> {
     let project = Project {
         id: Uuid::new_v4(),
-        filename: "Main.java".to_owned(),
+        filename: filename.to_owned(),
         revision: 1,
         created_at: OffsetDateTime::now_utc()
             .format(&Rfc3339)
@@ -37,7 +41,7 @@ pub async fn create(session_dir: &Path, source: &[u8]) -> Result<Project, ApiErr
     let directory = project_dir(session_dir, project.id);
     fs::create_dir_all(directory.join("revisions")).await?;
     fs::create_dir_all(directory.join("analysis")).await?;
-    atomic_write(&source_path(&directory, 1), source).await?;
+    atomic_write(&source_path(&directory, 1, filename), source).await?;
     let metadata = serde_json::to_vec_pretty(&project).map_err(internal_json_error)?;
     atomic_write(&directory.join("project.json"), &metadata).await?;
     Ok(project)
@@ -59,8 +63,12 @@ pub async fn load(session_dir: &Path, id: Uuid) -> Result<(Project, PathBuf), Ap
     Ok((project, directory))
 }
 
-pub async fn read_source(directory: &Path, revision: u64) -> Result<Vec<u8>, ApiError> {
-    fs::read(source_path(directory, revision))
+pub async fn read_source(
+    directory: &Path,
+    revision: u64,
+    filename: &str,
+) -> Result<Vec<u8>, ApiError> {
+    fs::read(source_path(directory, revision, filename))
         .await
         .map_err(Into::into)
 }
@@ -84,7 +92,11 @@ pub async fn update(
         .revision
         .checked_add(1)
         .ok_or_else(|| ApiError::bad_request("source revision limit reached"))?;
-    atomic_write(&source_path(directory, revision), request.source.as_bytes()).await?;
+    atomic_write(
+        &source_path(directory, revision, &project.filename),
+        request.source.as_bytes(),
+    )
+    .await?;
     project.revision = revision;
     let metadata = serde_json::to_vec_pretty(&project).map_err(internal_json_error)?;
     atomic_write(&directory.join("project.json"), &metadata).await?;
@@ -95,11 +107,11 @@ pub fn project_dir(session_dir: &Path, id: Uuid) -> PathBuf {
     session_dir.join("projects").join(id.to_string())
 }
 
-pub fn source_path(directory: &Path, revision: u64) -> PathBuf {
+pub fn source_path(directory: &Path, revision: u64, filename: &str) -> PathBuf {
     directory
         .join("revisions")
         .join(revision.to_string())
-        .join("Main.java")
+        .join(filename)
 }
 
 pub async fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), ApiError> {
