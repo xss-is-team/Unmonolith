@@ -1,0 +1,372 @@
+openapi: 3.0.3
+info:
+  title: Java Blueprints MVP API
+  version: 0.1.0
+  description: |
+    M1: guest sessions, single-Java-file projects, revisioned source, analyzer adapter.
+    Paths marked 'Planned M2+' are future contract only and MUST NOT be implemented as successful M1 endpoints.
+servers:
+  - url: /api/v1
+tags:
+  - name: Sessions
+  - name: Projects
+  - name: Analysis
+  - name: Planned M2+
+  - name: System
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      tags: [System]
+      responses:
+        '200':
+          description: API process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, enum: [ok]}
+  /sessions/guest:
+    post:
+      operationId: createGuestSession
+      tags: [Sessions]
+      description: Creates an anonymous session and sets an HttpOnly cookie.
+      responses:
+        '201':
+          description: Guest session created
+          headers:
+            Set-Cookie:
+              schema: {type: string}
+              description: Opaque session cookie; HttpOnly, SameSite=Lax, Secure under HTTPS
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [kind]
+                properties:
+                  kind: {type: string, enum: [guest]}
+  /projects:
+    post:
+      operationId: uploadProject
+      tags: [Projects]
+      security: [{guestSession: []}]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: One .java UTF-8 source file (M1). No ZIP support in M1.
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Project'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '413': {$ref: '#/components/responses/TooLarge'}
+  /projects/{project_id}:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: getProject
+      tags: [Projects]
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Project metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Project'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/source:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: getProjectSource
+      tags: [Projects]
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Current Java source
+          headers:
+            X-Source-Revision:
+              schema: {type: integer, minimum: 1}
+          content:
+            text/plain:
+              schema: {type: string}
+        '404': {$ref: '#/components/responses/NotFound'}
+    put:
+      operationId: updateProjectSource
+      tags: [Projects]
+      security: [{guestSession: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateSourceRequest'}
+      responses:
+        '200':
+          description: Updated revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Project'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /projects/{project_id}/analyze:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      operationId: analyzeProject
+      tags: [Analysis]
+      description: |
+        M1 synchronous analysis adapter with timeout. Invokes Java worker if configured.
+        If worker is missing, returns 503; NEVER fabricate successful analysis.
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Validated result from a real Java worker
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AnalysisResult'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        '504': {$ref: '#/components/responses/Timeout'}
+  /projects/{project_id}/methods/{method_id}/cfg:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - name: method_id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getMethodCfg
+      tags: [Planned M2+]
+      description: Planned M2. Do NOT implement in M1.
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: CFG for one method
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Cfg'}
+  /projects/{project_id}/transform:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      operationId: transformProject
+      tags: [Planned M2+]
+      description: Planned M3. Only allow AST-backed typed changes; no arbitrary CFG graph-to-Java generation.
+      security: [{guestSession: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TransformRequest'}
+      responses:
+        '200':
+          description: New source revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Project'}
+  /projects/{project_id}/verify:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      operationId: verifyBehavior
+      tags: [Planned M2+]
+      description: Planned M4. Separate isolated runner executes controlled tests and compares outcomes.
+      security: [{guestSession: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/VerifyRequest'}
+      responses:
+        '200':
+          description: Verification result for the provided test cases
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VerifyResult'}
+  /projects/{project_id}/export:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: exportSource
+      tags: [Planned M2+]
+      description: Planned M3. Download current Java source.
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Java source download
+          content:
+            text/x-java-source:
+              schema: {type: string}
+components:
+  securitySchemes:
+    guestSession:
+      type: apiKey
+      in: cookie
+      name: blueprints_session
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    Unauthorized:
+      description: No valid guest session
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    NotFound:
+      description: Project does not exist or not owned by current session
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    Conflict:
+      description: Stale source revision
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    TooLarge:
+      description: Uploaded source exceeds configured size
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    Unavailable:
+      description: Java worker is not configured or unavailable
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    Timeout:
+      description: Java worker timeout
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+  schemas:
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string, example: analyzer_unavailable}
+        message: {type: string}
+    Project:
+      type: object
+      required: [id, filename, revision, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        filename: {type: string, example: Main.java}
+        revision: {type: integer, minimum: 1}
+        created_at: {type: string, format: date-time}
+    UpdateSourceRequest:
+      type: object
+      required: [source, expected_revision]
+      properties:
+        source: {type: string}
+        expected_revision: {type: integer, minimum: 1}
+    SourceRange:
+      type: object
+      required: [start, length]
+      properties:
+        file: {type: string}
+        start: {type: integer, minimum: 0, description: 'Source offset in worker-defined units; choose UTF-16 for JDT and document mapping'}
+        length: {type: integer, minimum: 0}
+        line: {type: integer, minimum: 1}
+    Method:
+      type: object
+      required: [id, name, source_range]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        source_range: {$ref: '#/components/schemas/SourceRange'}
+    Diagnostic:
+      type: object
+      required: [code, severity, message, source_range]
+      properties:
+        code: {type: string}
+        severity: {type: string, enum: [error, warning, info]}
+        message: {type: string}
+        source_range: {$ref: '#/components/schemas/SourceRange'}
+    AnalysisResult:
+      type: object
+      required: [protocol_version, status, revision, methods, diagnostics]
+      properties:
+        protocol_version: {type: integer, enum: [1]}
+        status: {type: string, enum: [completed, partial, failed]}
+        revision: {type: integer, minimum: 1}
+        methods:
+          type: array
+          items: {$ref: '#/components/schemas/Method'}
+        diagnostics:
+          type: array
+          items: {$ref: '#/components/schemas/Diagnostic'}
+    CfgNode:
+      type: object
+      required: [id, kind, label, source_range]
+      properties:
+        id: {type: string}
+        kind: {type: string, example: condition}
+        label: {type: string}
+        source_range: {$ref: '#/components/schemas/SourceRange'}
+    CfgEdge:
+      type: object
+      required: [source, target, kind]
+      properties:
+        source: {type: string}
+        target: {type: string}
+        kind: {type: string, example: 'true'}
+    Cfg:
+      type: object
+      required: [method_id, nodes, edges]
+      properties:
+        method_id: {type: string}
+        nodes:
+          type: array
+          items: {$ref: '#/components/schemas/CfgNode'}
+        edges:
+          type: array
+          items: {$ref: '#/components/schemas/CfgEdge'}
+    TransformRequest:
+      type: object
+      required: [expected_revision, operation, node_id, expression]
+      properties:
+        expected_revision: {type: integer, minimum: 1}
+        operation: {type: string, enum: [replace_expression, replace_condition]}
+        node_id: {type: string}
+        expression: {type: string}
+    VerifyRequest:
+      type: object
+      required: [original_revision, candidate_revision, cases]
+      properties:
+        original_revision: {type: integer, minimum: 1}
+        candidate_revision: {type: integer, minimum: 1}
+        cases:
+          type: array
+          items:
+            type: object
+            required: [stdin]
+            properties:
+              stdin: {type: string}
+    VerifyResult:
+      type: object
+      required: [status, cases_passed, cases_total]
+      properties:
+        status: {type: string, enum: [matched, differed, inconclusive]}
+        cases_passed: {type: integer, minimum: 0}
+        cases_total: {type: integer, minimum: 0}
