@@ -1,5 +1,5 @@
 {
-  description = "Java Blueprints development shell";
+  description = "Java Blueprints development environment for backend, parser, and web app";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -12,7 +12,18 @@
         let pkgs = import nixpkgs { inherit system; };
         in {
           default = pkgs.mkShell {
-            packages = with pkgs; [ cargo rustc rustfmt clippy jdk21 maven git pkg-config ];
+            packages = with pkgs; [
+              cargo
+              rustc
+              rustfmt
+              clippy
+              jdk25
+              maven
+              nodejs_22
+              pnpm
+              git
+              pkg-config
+            ];
           };
         });
     };

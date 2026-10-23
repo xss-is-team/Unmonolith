@@ -6,13 +6,12 @@ The submitted program is never executed.
 
 ## Build and run
 
-Requires JDK 21 and Maven (the Nix dev shell in `../api/flake.nix` provides `jdk21` and `maven`).
+Requires JDK 21 or newer and Maven. From the repository root, `./dev parser-build` creates the executable JAR; the optional root Nix flake also provides these tools.
 The code is compiled with `--release 21`.
 
 ```sh
-mvn test
-mvn package                              # target/ASTPARSER-1.0-SNAPSHOT.jar (shaded, executable)
-java -jar target/ASTPARSER-1.0-SNAPSHOT.jar Example.java
+./dev parser-build                       # runs Maven tests and builds the shaded JAR
+java -jar apps/parser/target/ASTPARSER-1.0-SNAPSHOT.jar Example.java
 ```
 
 ## CLI contract

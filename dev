@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'EOF'
+Java Blueprints commands (run from the repository root):
+
+  ./dev api           Start API on :3000 (uses local parser JAR if built)
+  ./dev web-install   Install frontend dependencies
+  ./dev web           Start Next.js on :3001
+  ./dev parser-build  Build the Java parser CLI
+  ./dev api-check     Run Rust format and compile checks
+  ./dev api-test      Run Rust tests
+  ./dev web-check     Run frontend lint and production build
+EOF
+}
+
+run_in() {
+  local directory="$1"
+  shift
+  cd "$ROOT/$directory"
+  exec "$@"
+}
+
+command="${1:-help}"
+case "$command" in
+  api)
+    parser_jar="$ROOT/apps/parser/target/ASTPARSER-1.0-SNAPSHOT.jar"
+    if [[ -z "${BLUEPRINTS_ANALYZER_JAR:-}" && -f "$parser_jar" ]]; then
+      export BLUEPRINTS_ANALYZER_JAR="$parser_jar"
+    elif [[ -z "${BLUEPRINTS_ANALYZER_JAR:-}" ]]; then
+      printf 'Parser JAR not built; analysis will be unavailable. Run ./dev parser-build first.\n' >&2
+    fi
+    run_in apps/api cargo run
+    ;;
+  web-install)
+    run_in apps/web pnpm install
+    ;;
+  web)
+    run_in apps/web pnpm dev
+    ;;
+  parser-build)
+    run_in apps/parser mvn package
+    ;;
+  api-check)
+    cd "$ROOT/apps/api"
+    cargo fmt --check
+    cargo check
+    ;;
+  api-test)
+    run_in apps/api cargo test
+    ;;
+  web-check)
+    cd "$ROOT/apps/web"
+    pnpm lint
+    pnpm build
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    printf 'Unknown command: %s\n\n' "$command" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
