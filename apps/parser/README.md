@@ -1,7 +1,8 @@
 # Java Blueprints parser
 
 Parses one Java file with Eclipse JDT Core and prints a nested JSON AST with resolved types,
-resolved method calls and compiler diagnostics. No CFG or complexity analysis yet (Phases 3–5).
+resolved method calls, compiler diagnostics and a per-method control-flow graph. No complexity
+analysis or transformations yet (Phases 4–5).
 The submitted program is never executed.
 
 ## Build and run
@@ -43,7 +44,7 @@ package           string | null
 imports[]         {name, static, on_demand}
 types[]           class | interface | enum | record | annotation_type
 methods[]         flat list {id, name, source_range} of every method/constructor
-diagnostics[]     {code, category: syntax|semantic, severity: error|warning|info, message, source_range}
+diagnostics[]     {code, category: syntax|semantic|analysis, severity: error|warning|info, message, source_range}
 ```
 
 Every node carries `kind` and `source_range {start, length, line, end_line}` (`start`/`length` are
@@ -110,6 +111,75 @@ recovery). All semantic fields are additive; the syntax-only fields above are un
 - `source_range.start`/`length` are UTF-16 code units (Java `String` indices), not bytes and not
   Unicode code points; an emoji counts as 2. The Rust side must convert if it slices UTF-8 bytes.
   JDT diagnostics use the same unit.
+
+## Control-flow graph
+
+Every `method` and `constructor` member with a body has `"cfg"` (`null` for abstract/interface
+methods and when construction failed; failure adds a `cfg_build_failed` warning diagnostic with
+`category: "analysis"` and never touches the AST or semantic fields). `protocol_version` stays 1.
+Initializer blocks and lambda bodies get no graph; methods of nested and local classes get their own.
+
+```json
+"cfg": {
+  "method_id": "Example.f(int)",
+  "entry": "m0.n0", "exit": "m0.n1",
+  "nodes": [
+    {"id": "m0.n2", "kind": "branch", "statement_kind": "while", "text": "i < n",
+     "source_range": {"start": 61, "length": 5, "line": 4, "end_line": 4}},
+    {"id": "m0.n9", "kind": "statement", "statement_kind": "expression", "text": "dead();",
+     "source_range": {...}, "reachable": false}
+  ],
+  "edges": [
+    {"from": "m0.n2", "to": "m0.n3", "kind": "true"},
+    {"from": "m0.n5", "to": "m0.n2", "kind": "next", "back": true},
+    {"from": "m0.n4", "to": "m0.n6", "kind": "case", "label": "1, 2"}
+  ]
+}
+```
+
+- **Node ids** are `m<k>.n<i>`: `k` numbers the graphs of this response in source order, `i` is
+  the position in `nodes` (entry is always `n0`, exit `n1`, then breadth-first, unreachable last).
+  They are only meaningful within one analysis result (one revision); they change when the source changes.
+- **Node `kind`**: `entry`, `exit`, `statement` (simple statement), `branch` (condition of
+  `if`/`while`/`for`/`do_while`/`foreach`), `switch`, `return`, `throw`, `break`, `continue`,
+  `catch`, `rethrow` (end of an exceptional `finally`), `join` (condition-less `for(;;)` head).
+  `statement_kind` uses the AST `kind` names (`expression`, `variable_declaration`, `if`, `foreach`,
+  `for_init`, `for_update`, `resource`, `synchronized`, `local_type`, …). `text` and `source_range`
+  are the node's own source (the condition for a branch, the whole statement otherwise); entry
+  and exit carry the method's range. Absent fields are omitted, not `null`.
+- **Edge `kind`**: `next`; `true`/`false` (branch and loop conditions); `case` (with `label`: the
+  case constants) and `default` (switch dispatch); `break`, `continue`, `return` (jump nodes);
+  `exception` (with `label`: the catch type or `finally`). `back: true` marks an edge that closes
+  a cycle in a depth-first walk from the entry (loop iteration end, `continue` into a header, `do`
+  condition → body). It is omitted when false.
+- **Reachability.** Nodes unreachable from the entry (code after `return`, a `finally` clone that
+  can never run, a catch nothing can reach) are kept and marked `"reachable": false`.
+
+Modeled: sequential flow, `if`/`else if`, `while`, `do/while`, `for` (init → condition → body →
+update → condition; `continue` goes to the update), enhanced `for`, labeled `break`/`continue`,
+`switch` statements (fallthrough for `case X:`, no fallthrough for `case X ->`, an implicit
+`default` edge when there is no default case), `return`, `throw`, `try`/`catch`/`finally`,
+try-with-resources, `synchronized`.
+
+`finally` is **cloned** per exit path (normal completion, each `return`/`break`/`continue` that
+crosses it, and exceptional exit followed by a `rethrow` node), so clones share `text` and
+`source_range` but have distinct ids; paths never merge through a shared `finally`.
+
+Limitations (the graph is a conservative over-approximation, not a proof):
+- **Exceptions** are modeled only inside a `try`. Nodes that may throw (calls, `new`, array
+  access/creation, casts, `/` and `%`, `throw`) get `exception` edges to every catch clause that
+  could match and, unless some clause catches `Exception`/`Throwable`, onward to the outer handler or
+  `exit`. For `throw` the thrown/catch types are compared with JDT bindings when resolvable;
+  for calls every clause is assumed possible. Implicit exceptions outside any `try`, `Error`s, and
+  the implicit `close()` of try-with-resources are not modeled.
+- Conditions are single nodes: `&&`, `||`, `?:` short-circuit paths are not split.
+- Switch expressions, lambdas and anonymous classes are opaque (expression text only).
+  Pattern/`case null` labels are emitted as text; exhaustiveness is not analyzed, so a pattern
+  switch without `default` still gets a `default` edge past the switch.
+- Empty statements produce no node. Implicit `super()` calls are not shown.
+- Constant conditions are not evaluated (`while (true)` still has a `false` edge), and
+  definite-assignment/unreachable-code rules of the compiler are not applied; JDT reports those
+  as diagnostics.
 
 ## Mismatch with `../api` (not changed here)
 
