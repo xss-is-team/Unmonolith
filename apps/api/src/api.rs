@@ -230,9 +230,7 @@ async fn upload_project(
         let filename = field
             .file_name()
             .ok_or_else(|| ApiError::bad_request("file must include a filename"))?;
-        if !filename.to_ascii_lowercase().ends_with(".java") {
-            return Err(ApiError::bad_request("only one .java file is supported"));
-        }
+        let filename = normalize_java_filename(filename)?;
 
         let mut bytes = Vec::new();
         while let Some(chunk) = field
@@ -251,12 +249,25 @@ async fn upload_project(
         }
         std::str::from_utf8(&bytes)
             .map_err(|_| ApiError::bad_request("Java source must be valid UTF-8"))?;
-        source = Some(bytes);
+        source = Some((filename, bytes));
     }
-    let source = source.ok_or_else(|| ApiError::bad_request("missing file field"))?;
+    let (filename, source) = source.ok_or_else(|| ApiError::bad_request("missing file field"))?;
     let _guard = state.0.writes.lock().await;
-    let project = project::create(&session_dir, &source).await?;
+    let project = project::create(&session_dir, &filename, &source).await?;
     Ok((StatusCode::CREATED, Json(project)))
+}
+
+fn normalize_java_filename(value: &str) -> Result<String, ApiError> {
+    let filename = value.rsplit(['/', '\\']).next().unwrap_or_default();
+    if filename.is_empty()
+        || filename == "."
+        || filename == ".."
+        || filename.contains('\0')
+        || !filename.to_ascii_lowercase().ends_with(".java")
+    {
+        return Err(ApiError::bad_request("only one .java file is supported"));
+    }
+    Ok(filename.to_owned())
 }
 
 #[utoipa::path(
@@ -302,7 +313,7 @@ async fn get_project_source(
     let project_id = parse_project_id(&project_id)?;
     let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
     let (project, directory) = project::load(&session_dir, project_id).await?;
-    let source = project::read_source(&directory, project.revision).await?;
+    let source = project::read_source(&directory, project.revision, &project.filename).await?;
     let mut response = Response::new(Body::from(source));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -376,7 +387,7 @@ async fn analyze_project(
         state
             .0
             .analyzer
-            .analyze(directory, project.revision)
+            .analyze(directory, project.revision, &project.filename)
             .await?,
     ))
 }
@@ -396,7 +407,7 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
-    use super::{app, AppState};
+    use super::{app, normalize_java_filename, AppState};
     use crate::Config;
 
     struct TestData(PathBuf);
@@ -523,6 +534,25 @@ mod tests {
         let cookie = guest_cookie(&app).await;
         let response = upload(&app, &cookie, "project.zip").await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn upload_preserves_java_basename() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+
+        let project = response_json(upload(&app, &cookie, "Example.java").await).await;
+
+        assert_eq!(project["filename"], "Example.java");
+        assert_eq!(
+            normalize_java_filename("C:\\fakepath\\Example.java").unwrap(),
+            "Example.java"
+        );
+        assert_eq!(
+            normalize_java_filename("../../Example.java").unwrap(),
+            "Example.java"
+        );
     }
 
     #[tokio::test]

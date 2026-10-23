@@ -6,7 +6,7 @@ The submitted program is never executed.
 
 ## Build and run
 
-Requires JDK 21+ and Maven (the Nix dev shell in `../api/flake.nix` provides `jdk21` and `maven`).
+Requires JDK 21 and Maven (the Nix dev shell in `../api/flake.nix` provides `jdk21` and `maven`).
 The code is compiled with `--release 21`.
 
 ```sh
@@ -82,8 +82,7 @@ recovery). All semantic fields are additive; the syntax-only fields above are un
 - **Environment.** Single file only. Types resolve against the JDK that runs the parser
   (`java.lang`, `java.util`, `java.io`, …). There is no project classpath, no Maven/Gradle
   import, and no other source files: anything outside the JDK is reported as unresolved.
-  Compliance is JDT's latest supported level (26 for the bundled JDT 3.47); a JDK 21 runtime
-  resolves only JDK 21 classes.
+  Language compliance is fixed to Java 21; a JDK 21 runtime resolves JDK 21 classes.
 - **Types** (`resolved_type`, `resolved_return_type`, `resolved_throws[]`,
   `resolved_variable_type`, `resolved_exception_types[]`, `receiver_type`) are
   `{name, kind}`. `name` is fully qualified with type arguments (`java.util.List<java.lang.String>`,
@@ -105,19 +104,13 @@ recovery). All semantic fields are additive; the syntax-only fields above are un
 - JDT skips flow analysis (e.g. "unhandled exception") in a method that already has resolution
   errors, so fixing one error can reveal another.
 - Unresolved bindings never fail the run: the field is `null`, `resolved: false`, or `kind: "unresolved"`.
-- The check "public type must be defined in its own file" is suppressed because the backend
-  stores sources under revision-based names.
+- The API preserves a safe uploaded basename, so JDT reports a public type whose name does not
+  match its source filename.
 - `source_range.start`/`length` are UTF-16 code units (Java `String` indices), not bytes and not
   Unicode code points; an emoji counts as 2. The Rust side must convert if it slices UTF-8 bytes.
   JDT diagnostics use the same unit.
 
-## Mismatch with `../api` (not changed here)
+## API integration
 
-`../api/src/analyzer.rs` currently launches the worker as
-`java -jar <jar> analyze --input <file> --output <tmp.json>`, discards stdout, reads the result
-from `--output`, and requires `revision` in the JSON to equal the project revision.
-The parser instead takes a positional file, writes to stdout and has no `revision` field.
-To integrate, either the API switches to `java -jar <jar> <file>` and captures stdout
-(adding `revision` itself), or the parser gains an `analyze --input --output` mode plus a revision
-argument. Also, `SourceRange` in the API requires `start`/`length`; the parser's extra
-`end_line` is ignored by serde. This needs an agreed decision between the two owners.
+The Rust API invokes this positional CLI, captures the JSON from stdout, attaches its trusted
+project revision, and preserves the complete parser document as the per-revision analysis artifact.
