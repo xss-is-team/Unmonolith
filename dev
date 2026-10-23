@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'EOF'
+Java Blueprints commands (run from the repository root):
+
+  ./dev api           Start API on :3000 (uses local parser JAR if built)
+  ./dev web-install   Install frontend dependencies
+  ./dev web           Start Next.js on :3001
+  ./dev parser-build  Build the Java parser CLI
+  ./dev up            Install project deps, build, and start the app
+  ./dev api-check     Run Rust format and compile checks
+  ./dev api-test      Run Rust tests
+  ./dev web-check     Run frontend lint and production build
+EOF
+}
+
+run_in() {
+  local directory="$1"
+  shift
+  cd "$ROOT/$directory"
+  exec "$@"
+}
+
+require_tools() {
+  local missing=""
+  local tool
+  for tool in cargo java mvn node pnpm; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      missing="$missing $tool"
+    fi
+  done
+  if [[ -n "$missing" ]]; then
+    printf 'Missing required tools:%s\nInstall them using the instructions in README.md.\n' "$missing" >&2
+    exit 1
+  fi
+}
+
+command="${1:-help}"
+case "$command" in
+  api)
+    parser_jar="$ROOT/apps/parser/target/ASTPARSER-1.0-SNAPSHOT.jar"
+    if [[ -z "${BLUEPRINTS_ANALYZER_JAR:-}" && -f "$parser_jar" ]]; then
+      export BLUEPRINTS_ANALYZER_JAR="$parser_jar"
+    elif [[ -z "${BLUEPRINTS_ANALYZER_JAR:-}" ]]; then
+      printf 'Parser JAR not built; analysis will be unavailable. Run ./dev parser-build first.\n' >&2
+    fi
+    run_in apps/api cargo run
+    ;;
+  web-install)
+    run_in apps/web pnpm install
+    ;;
+  web)
+    run_in apps/web pnpm dev
+    ;;
+  parser-build)
+    run_in apps/parser mvn package
+    ;;
+  up)
+    require_tools
+    printf 'Installing frontend dependencies...\n'
+    (cd "$ROOT/apps/web" && pnpm install --frozen-lockfile)
+    printf 'Building Java parser...\n'
+    (cd "$ROOT/apps/parser" && mvn -DskipTests package)
+    printf 'Building Rust API...\n'
+    (cd "$ROOT/apps/api" && cargo build)
+
+    parser_jar="$ROOT/apps/parser/target/ASTPARSER-1.0-SNAPSHOT.jar"
+    if [[ -z "${BLUEPRINTS_ANALYZER_JAR:-}" ]]; then
+      export BLUEPRINTS_ANALYZER_JAR="$parser_jar"
+    fi
+
+    printf '\nAPI: http://localhost:3000\nWeb: http://localhost:3001\nPress Ctrl+C to stop both.\n\n'
+    cd "$ROOT/apps/web"
+    exec pnpm exec concurrently --kill-others --names api,web --prefix-colors blue,green \
+      'cd ../api && cargo run' 'pnpm dev'
+    ;;
+  api-check)
+    cd "$ROOT/apps/api"
+    cargo fmt --check
+    cargo check
+    ;;
+  api-test)
+    run_in apps/api cargo test
+    ;;
+  web-check)
+    cd "$ROOT/apps/web"
+    pnpm lint
+    pnpm build
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    printf 'Unknown command: %s\n\n' "$command" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

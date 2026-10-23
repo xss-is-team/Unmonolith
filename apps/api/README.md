@@ -6,18 +6,7 @@ Java analyzer adapter.
 
 ## Development
 
-```sh
-nix develop
-cargo fmt --check
-cargo check
-cargo test
-```
-
-Run the API:
-
-```sh
-nix develop -c cargo run
-```
+From the repository root, use `./dev api` to run the API, `./dev api-check` for formatting and compile checks, and `./dev api-test` for tests.
 
 By default it listens on `127.0.0.1:3000` and stores state in `./data`.
 Configuration uses these environment variables:
