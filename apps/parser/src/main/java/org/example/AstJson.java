@@ -18,23 +18,24 @@ import org.eclipse.jdt.core.dom.*;
 final class AstJson {
     private final CompilationUnit cu;
     private final String src;
+    private final boolean bindings;
     private final List<Object> methods = new ArrayList<>();
 
-    AstJson(CompilationUnit cu, String src) {
+    /** @param bindings whether the unit was parsed with resolved bindings (semantic information) */
+    AstJson(CompilationUnit cu, String src, boolean bindings) {
         this.cu = cu;
         this.src = src;
+        this.bindings = bindings;
     }
 
     Map<String, Object> convert() {
         Map<String, Object> out = new LinkedHashMap<>();
-        List<Object> diagnostics = diagnostics();
-        boolean hasErrors = false;
-        for (IProblem p : cu.getProblems()) {
-            hasErrors |= p.isError();
-        }
+        List<IProblem> problems = problems();
+        boolean hasErrors = problems.stream().anyMatch(IProblem::isError);
 
         out.put("protocol_version", 1);
         out.put("status", hasErrors ? "partial" : "completed");
+        out.put("semantic", Map.of("bindings", bindings));
         out.put("package", cu.getPackage() == null ? null : cu.getPackage().getName().getFullyQualifiedName());
 
         List<Object> imports = new ArrayList<>();
@@ -54,17 +55,32 @@ final class AstJson {
         }
         out.put("types", types);
         out.put("methods", methods);
-        out.put("diagnostics", diagnostics);
+        out.put("diagnostics", diagnostics(problems));
         return out;
     }
 
     // ---------- diagnostics ----------
 
-    private List<Object> diagnostics() {
-        List<Object> list = new ArrayList<>();
+    /**
+     * The backend stores sources under revision-based file names, so JDT's "public type must be
+     * defined in its own file" check is a storage artifact, not a defect in the user's code.
+     */
+    private List<IProblem> problems() {
+        List<IProblem> list = new ArrayList<>();
         for (IProblem p : cu.getProblems()) {
+            if (p.getID() != IProblem.PublicClassMustMatchFileName) {
+                list.add(p);
+            }
+        }
+        return list;
+    }
+
+    private List<Object> diagnostics(List<IProblem> problems) {
+        List<Object> list = new ArrayList<>();
+        for (IProblem p : problems) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("code", "jdt_" + Integer.toHexString(p.getID()));
+            m.put("category", (p.getID() & IProblem.Syntax) != 0 ? "syntax" : "semantic");
             m.put("severity", p.isError() ? "error" : p.isWarning() ? "warning" : "info");
             m.put("message", p.getMessage());
             Map<String, Object> r = new LinkedHashMap<>();
@@ -83,11 +99,13 @@ final class AstJson {
         String path = parentPath + t.getName().getIdentifier();
         Map<String, Object> m = node(switch (t) {
             case TypeDeclaration td -> td.isInterface() ? "interface" : "class";
-            case EnumDeclaration _ -> "enum";
-            case RecordDeclaration _ -> "record";
+            case EnumDeclaration ignoredEnum -> "enum";
+            case RecordDeclaration ignoredRecord -> "record";
             default -> "annotation_type";
         }, t);
         m.put("name", t.getName().getIdentifier());
+        ITypeBinding tb = t.resolveBinding();
+        m.put("qualified_name", tb == null ? null : tb.getQualifiedName());
         m.put("modifiers", modifiers(t.modifiers()));
 
         if (t instanceof TypeDeclaration td) {
@@ -101,6 +119,7 @@ final class AstJson {
                 Map<String, Object> cm = node("enum_constant", c);
                 cm.put("name", c.getName().getIdentifier());
                 cm.put("arguments", texts(c.arguments()));
+                withCalls(cm, c.arguments());
                 constants.add(cm);
             }
             m.put("constants", constants);
@@ -127,7 +146,7 @@ final class AstJson {
                 m.put("modifiers", modifiers(fd.modifiers()));
                 m.put("var_type", text(fd.getType()));
                 m.put("fragments", fragments(fd.fragments()));
-                return m;
+                return withCalls(m, fd.fragments());
             }
             case Initializer init -> {
                 Map<String, Object> m = node("initializer", init);
@@ -157,8 +176,11 @@ final class AstJson {
         m.put("name", name);
         m.put("modifiers", modifiers(md.modifiers()));
         m.put("return_type", md.getReturnType2() == null ? null : text(md.getReturnType2()));
+        IMethodBinding mb = md.resolveBinding();
+        m.put("resolved_return_type", mb == null ? null : typeInfo(mb.getReturnType()));
         m.put("parameters", parameters(md.parameters()));
         m.put("throws", texts(md.thrownExceptionTypes()));
+        m.put("resolved_throws", mb == null ? null : typeInfos(mb.getExceptionTypes()));
         m.put("body", md.getBody() == null ? null : block(md.getBody()));
 
         Map<String, Object> summary = new LinkedHashMap<>();
@@ -176,6 +198,8 @@ final class AstJson {
             Map<String, Object> pm = new LinkedHashMap<>();
             pm.put("name", p.getName().getIdentifier());
             pm.put("type", text(p.getType()));
+            IVariableBinding vb = p.resolveBinding();
+            pm.put("resolved_type", vb == null ? null : typeInfo(vb.getType()));
             pm.put("varargs", p.isVarargs());
             pm.put("modifiers", modifiers(p.modifiers()));
             list.add(pm);
@@ -191,6 +215,8 @@ final class AstJson {
             fm.put("name", f.getName().getIdentifier());
             fm.put("extra_dimensions", f.getExtraDimensions());
             fm.put("initializer", f.getInitializer() == null ? null : text(f.getInitializer()));
+            IVariableBinding vb = f.resolveBinding();
+            fm.put("resolved_type", vb == null ? null : typeInfo(vb.getType()));
             fm.put("source_range", range(f));
             list.add(fm);
         }
@@ -236,7 +262,7 @@ final class AstJson {
                 m.put("condition", text(st.getExpression()));
                 m.put("then", body(st.getThenStatement()));
                 m.put("else", st.getElseStatement() == null ? null : body(st.getElseStatement()));
-                return m;
+                return withCalls(m, st.getExpression());
             }
             case ForStatement st -> {
                 Map<String, Object> m = node("for", st);
@@ -244,42 +270,46 @@ final class AstJson {
                 m.put("condition", st.getExpression() == null ? null : text(st.getExpression()));
                 m.put("update", texts(st.updaters()));
                 m.put("body", body(st.getBody()));
-                return m;
+                return withCalls(m, st.initializers(), st.getExpression(), st.updaters());
             }
             case EnhancedForStatement st -> {
                 Map<String, Object> m = node("foreach", st);
                 m.put("variable", text(st.getParameter()));
+                IVariableBinding vb = st.getParameter().resolveBinding();
+                m.put("resolved_variable_type", vb == null ? null : typeInfo(vb.getType()));
                 m.put("iterable", text(st.getExpression()));
                 m.put("body", body(st.getBody()));
-                return m;
+                return withCalls(m, st.getExpression());
             }
             case WhileStatement st -> {
                 Map<String, Object> m = node("while", st);
                 m.put("condition", text(st.getExpression()));
                 m.put("body", body(st.getBody()));
-                return m;
+                return withCalls(m, st.getExpression());
             }
             case DoStatement st -> {
                 Map<String, Object> m = node("do_while", st);
                 m.put("body", body(st.getBody()));
                 m.put("condition", text(st.getExpression()));
-                return m;
+                return withCalls(m, st.getExpression());
             }
             case SwitchStatement st -> {
                 Map<String, Object> m = node("switch", st);
                 m.put("selector", text(st.getExpression()));
                 m.put("cases", switchCases(st.statements()));
-                return m;
+                return withCalls(m, st.getExpression());
             }
             case TryStatement st -> {
                 Map<String, Object> m = node("try", st);
                 m.put("resources", texts(st.resources()));
+                withCalls(m, st.resources());
                 m.put("body", block(st.getBody()));
                 List<Object> catches = new ArrayList<>();
                 for (Object o : st.catchClauses()) {
                     CatchClause c = (CatchClause) o;
                     Map<String, Object> cm = node("catch", c);
                     cm.put("exception_type", text(c.getException().getType()));
+                    cm.put("resolved_exception_types", caughtTypes(c.getException().getType()));
                     cm.put("name", c.getException().getName().getIdentifier());
                     cm.put("body", block(c.getBody()));
                     catches.add(cm);
@@ -292,7 +322,7 @@ final class AstJson {
                 Map<String, Object> m = node("synchronized", st);
                 m.put("lock", text(st.getExpression()));
                 m.put("body", block(st.getBody()));
-                return m;
+                return withCalls(m, st.getExpression());
             }
             case LabeledStatement st -> {
                 Map<String, Object> m = node("labeled", st);
@@ -303,12 +333,14 @@ final class AstJson {
             case ReturnStatement st -> {
                 Map<String, Object> m = node("return", st);
                 m.put("value", st.getExpression() == null ? null : text(st.getExpression()));
-                return m;
+                return withCalls(m, st.getExpression());
             }
             case ThrowStatement st -> {
                 Map<String, Object> m = node("throw", st);
                 m.put("value", text(st.getExpression()));
-                return m;
+                ITypeBinding tb = st.getExpression().resolveTypeBinding();
+                m.put("resolved_type", tb == null ? null : typeInfo(tb));
+                return withCalls(m, st.getExpression());
             }
             case BreakStatement st -> {
                 Map<String, Object> m = node("break", st);
@@ -325,31 +357,31 @@ final class AstJson {
                 Map<String, Object> m = node("expression", st);
                 m.put("expression", text(st.getExpression()));
                 m.put("expression_type", st.getExpression().getClass().getSimpleName());
-                return m;
+                return withCalls(m, st.getExpression());
             }
             case YieldStatement st -> {
                 Map<String, Object> m = node("yield", st);
                 m.put("value", text(st.getExpression()));
-                return m;
+                return withCalls(m, st.getExpression());
             }
             case AssertStatement st -> {
                 Map<String, Object> m = node("assert", st);
                 m.put("condition", text(st.getExpression()));
                 m.put("message", st.getMessage() == null ? null : text(st.getMessage()));
-                return m;
+                return withCalls(m, st.getExpression(), st.getMessage());
             }
             case ExpressionStatement st -> {
                 Map<String, Object> m = node("expression", st);
                 m.put("expression", text(st.getExpression()));
                 m.put("expression_type", st.getExpression().getClass().getSimpleName());
-                return m;
+                return withCalls(m, st.getExpression());
             }
             case VariableDeclarationStatement st -> {
                 Map<String, Object> m = node("variable_declaration", st);
                 m.put("modifiers", modifiers(st.modifiers()));
                 m.put("var_type", text(st.getType()));
                 m.put("fragments", fragments(st.fragments()));
-                return m;
+                return withCalls(m, st.fragments());
             }
             case TypeDeclarationStatement st -> {
                 Map<String, Object> m = node("local_type", st);
@@ -359,12 +391,12 @@ final class AstJson {
             case ConstructorInvocation st -> {
                 Map<String, Object> m = node("this_call", st);
                 m.put("arguments", texts(st.arguments()));
-                return m;
+                return withCalls(m, st.arguments());
             }
             case SuperConstructorInvocation st -> {
                 Map<String, Object> m = node("super_call", st);
                 m.put("arguments", texts(st.arguments()));
-                return m;
+                return withCalls(m, st.arguments());
             }
             case EmptyStatement st -> {
                 return node("empty", st);
@@ -410,6 +442,126 @@ final class AstJson {
         m.put("kind", kind);
         m.put("source_range", range(n));
         return m;
+    }
+
+    /**
+     * Adds {@code calls}: every method/constructor invocation in the statement's own expressions,
+     * outermost first, with resolved binding data. Omitted when there are none. Lambda bodies and
+     * anonymous class bodies are not searched.
+     */
+    private Map<String, Object> withCalls(Map<String, Object> m, Object... roots) {
+        List<Object> calls = new ArrayList<>();
+        ASTVisitor collector = new ASTVisitor() {
+            @Override
+            public boolean visit(MethodInvocation n) {
+                calls.add(call("method_call", n, n.getName().getIdentifier(), n.getExpression(), n.resolveMethodBinding()));
+                return true;
+            }
+
+            @Override
+            public boolean visit(SuperMethodInvocation n) {
+                calls.add(call("method_call", n, n.getName().getIdentifier(), null, n.resolveMethodBinding()));
+                return true;
+            }
+
+            @Override
+            public boolean visit(ClassInstanceCreation n) {
+                calls.add(call("constructor_call", n, text(n.getType()), null, n.resolveConstructorBinding()));
+                return true;
+            }
+
+            @Override
+            public boolean visit(LambdaExpression n) {
+                return false;
+            }
+
+            @Override
+            public boolean visit(AnonymousClassDeclaration n) {
+                return false;
+            }
+        };
+        for (Object root : roots) {
+            if (root instanceof ASTNode node) {
+                node.accept(collector);
+            } else if (root instanceof List<?> list) {
+                for (Object o : list) {
+                    ((ASTNode) o).accept(collector);
+                }
+            }
+        }
+        if (!calls.isEmpty()) {
+            m.put("calls", calls);
+        }
+        return m;
+    }
+
+    private Map<String, Object> call(String kind, ASTNode n, String name, Expression receiver, IMethodBinding b) {
+        Map<String, Object> m = node(kind, n);
+        m.put("name", name);
+        m.put("expression", text(n));
+        boolean resolved = b != null && !b.isRecovered();
+        m.put("resolved", resolved);
+        if (receiver != null) {
+            ITypeBinding rt = receiver.resolveTypeBinding();
+            m.put("receiver_type", rt == null ? null : typeInfo(rt));
+        }
+        if (resolved) {
+            m.put("declaring_class", b.getDeclaringClass().getErasure().getQualifiedName());
+            List<Object> ptypes = typeInfos(b.getParameterTypes());
+            List<String> pnames = new ArrayList<>();
+            for (Object o : ptypes) {
+                pnames.add((String) ((Map<?, ?>) o).get("name"));
+            }
+            String shown = kind.equals("constructor_call") ? b.getDeclaringClass().getErasure().getName() : b.getName();
+            m.put("signature", shown + "(" + String.join(", ", pnames) + ")");
+            m.put("parameter_types", ptypes);
+            m.put("return_type", kind.equals("constructor_call") ? null : typeInfo(b.getReturnType()));
+            m.put("static", Modifier.isStatic(b.getModifiers()));
+            m.put("thrown_exceptions", typeInfos(b.getExceptionTypes()));
+        }
+        return m;
+    }
+
+    /** Qualified type name plus a coarse kind; recovered (unresolvable) types are marked "unresolved". */
+    private Map<String, Object> typeInfo(ITypeBinding t) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        if (t.isRecovered()) {
+            m.put("name", t.getName());
+            m.put("kind", "unresolved");
+            return m;
+        }
+        m.put("name", t.getQualifiedName());
+        m.put("kind", t.isPrimitive() ? "primitive"
+                : t.isNullType() ? "null"
+                : t.isArray() ? "array"
+                : t.isTypeVariable() || t.isCapture() ? "type_variable"
+                : t.isAnnotation() ? "annotation"
+                : t.isEnum() ? "enum"
+                : t.isRecord() ? "record"
+                : t.isInterface() ? "interface"
+                : "class");
+        return m;
+    }
+
+    private List<Object> typeInfos(ITypeBinding[] types) {
+        List<Object> list = new ArrayList<>();
+        for (ITypeBinding t : types) {
+            list.add(typeInfo(t));
+        }
+        return list;
+    }
+
+    /** `catch (A | B e)` has two caught types; a plain catch has one. */
+    private List<Object> caughtTypes(Type type) {
+        List<Object> list = new ArrayList<>();
+        List<?> alternatives = type instanceof UnionType u ? u.types() : List.of(type);
+        for (Object o : alternatives) {
+            ITypeBinding tb = ((Type) o).resolveBinding();
+            if (tb != null) {
+                list.add(typeInfo(tb));
+            }
+        }
+        return list;
     }
 
     private Map<String, Object> unknown(ASTNode n) {
