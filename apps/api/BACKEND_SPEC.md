@@ -45,11 +45,11 @@ Data lives under `BLUEPRINTS_DATA_DIR` (default `./data`):
 data/
   sessions/<SHA256(random-cookie-token)>/projects/<UUID>/
     project.json
-    revisions/1/Main.java
-    revisions/2/Main.java
+    revisions/1/<safe-upload-basename>
+    revisions/2/<safe-upload-basename>
     analysis/<revision>.json
 ```
-- Paths are constructed server-side using validated UUIDs and fixed filenames, never client-supplied filesystem paths.
+- Paths are constructed server-side using validated UUIDs and a validated upload basename, never a client-supplied filesystem path.
 - Session token is opaque and high entropy; cookie attributes `HttpOnly`, `SameSite=Lax`, `Secure` in HTTPS deployments. Implement Origin/CSRF checks for cookie-authenticated state changes in production deployment.
 - Create session explicitly with `POST /sessions/guest`; frontend sends credentials on subsequent calls.
 - Store session cookie hash in directory structure; do not log token or source. No auth email/register in MVP.
@@ -58,17 +58,17 @@ data/
 
 ## 3. Project/analysis contracts
 `openapi.yaml` is the public source-of-truth design. Implement only milestone-scoped routes; do not expose nonfunctional handlers as successful responses.
-- Import: one file as multipart key `file` (file name metadata only; normalize to `Main.java` or safe basename).
+- Import: one file as multipart key `file`; preserve only its safe basename for metadata and revision storage.
 - `GET /source`: Java source as `text/plain; charset=utf-8`, `X-Source-Revision` response header.
 - `PUT /source`: `application/json` with `{source, expected_revision}`; return new revision on success.
 - Analysis returns `{revision, status, methods, diagnostics}`. Each method has a stable-in-revision identifier; diagnostics have severity, message, source range; CFG is loaded per selected method in M2.
 - Detailed AST remains internal; don't ship a whole-tree AST for large projects.
 
 ### Java worker protocol, M1 adapter / M2 implementation
-- Worker launched as `java -jar <configured-jar> analyze --input <workspace-file> --output <result-json-file>` using argv, with fixed working directory. Never pass user code as a shell expression.
-- Worker process receives no execution privileges beyond reading the source and writing its own output. Cap runtime, file size and concurrency; capture bounded stderr for diagnostics.
-- Worker writes a single JSON document atomically, `protocol_version: 1`, `status: completed|partial|failed`, `revision`, `methods`, `diagnostics`.
-- Rust validates protocol version, output JSON size and shape before returning success. A missing worker or malformed response is an error. No fake `success` response.
+- Worker launched as `java -jar <configured-jar> <absolute-workspace-file>` using argv, with a fixed working directory. Never pass user code as a shell expression.
+- Worker process receives no execution privileges beyond reading the source. Cap runtime, captured stdout/stderr size and concurrency; drain both streams concurrently.
+- Worker writes exactly one UTF-8 JSON document to stdout with `protocol_version: 1`, `status: completed|partial|failed`, `methods`, `diagnostics`, and its internal AST data. It does not receive or emit the project revision.
+- Rust validates the exit code, protocol version, output JSON size and shape, attaches the trusted project revision, and atomically stores the full parser result under `analysis/<revision>.json`. A missing worker or malformed response is an error. No fake `success` response.
 - Method CFG response uses `{method_id, nodes:[{id,kind,label,source_range}], edges:[{source,target,kind}]}`.
 - Important: don't assume CFG alone can reconstruct Java. Keep source/AST and use AST-aware rewrite for edits.
 
