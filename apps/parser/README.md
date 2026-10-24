@@ -222,3 +222,53 @@ non-boolean condition or unknown name), plus `invalid_operation`, `invalid_argum
 
 The output file is written (atomically) only on success and is never the input file. No new CFG is
 returned; request a fresh analysis of the stored output.
+
+## Complexity and defect analysis
+
+Every method with a body gets an additive `analysis` object next to its `cfg` (`null` for abstract
+methods, or when the analysis itself failed, in which case a warning with code `analysis_failed` is
+added to `diagnostics`). `protocol_version` is unchanged and no existing field is altered.
+
+```json
+"analysis": {
+  "complexity": {"time": "O(n*m)", "confidence": "medium", "reason": "...", "assumptions": ["n = number of elements in orders", "m = ..."]},
+  "fragments": [{"kind": "loop", "statement_kind": "foreach", "source_range": {...}, "node_ids": ["m0.n2"],
+                 "time": "O(n*m)", "confidence": "high", "reason": "...", "assumptions": [...]}],
+  "findings": [{"id": "repeated_collection_scan", "severity": "warning", "message": "...", "explanation": "...",
+                "recommendation": "...", "source_range": {"start": 0, "length": 0, "line": 1, "end_line": 1},
+                "node_ids": ["m0.n2", "m0.n3"]}]
+}
+```
+
+- `time`: `O(1)`, `O(log n)`, `O(n)`, `O(n log n)`, `O(n^k)`, products such as `O(n*m)` and sums such as
+  `O(n + m)`, or `"unknown"`. Symbols (`n`, `m`, ...) are defined per object in `assumptions`
+  (`n = number of elements in items`, or `n = value of n (assumed non-negative)` for an int bound).
+  Different collections are never merged into one `n`.
+- `confidence`: `high` (only collection-size loops and constants), `medium` (int-variable bounds, logarithmic
+  loops or library cost assumptions), `low` (always with `time: "unknown"`; `reason` says why).
+- `fragments`: one entry per outermost loop, with the CFG node id of its condition/head in `node_ids`.
+- `findings[].source_range` is the offending inner loop (UTF-16 offsets as everywhere else); `node_ids` are
+  the CFG nodes of the enclosing loop and the inner loop of the same method.
+
+Recognised loops: `for`/`while`/`do-while` counters with `++`, `--`, `+= c`, `-= c` (linear), `*= c`, `<<=`
+(log, start must be a constant >= 1), `/= c`, `>>=` (log); conjunctions (`i < n && !done`); for-each over
+arrays/iterables; bounds that are constants, int variables, `size()`/`length()`/`.length`, `n +/- c`, or an
+enclosing loop's counter (triangular loops). Constant-bound loops are O(1) whatever the constant.
+Everything else (`while (node != null)`, `Iterator.hasNext()`, counters changed in odd ways, bounds or
+collections modified inside the loop, `continue` in counter `while` loops) is `unknown`, as is any call
+without a cost model: only a small JDK table (Math, boxed types, String/StringBuilder basics, `List`,
+`Set`, `Map`, `Deque`, `PriorityQueue`, `Arrays`/`Collections` sorts) and trivial same-file getters/setters
+are modelled. Recursion, streams, lambdas and user methods are never costed.
+
+Rules:
+- `repeated_collection_scan` (warning): a linear scan of a collection whose body is a key lookup
+  (`if (a == b)` / `a.equals(b)` / `Objects.equals(a, b)` with one side derived from the scanned element
+  and the other not) runs inside a linear loop. The recommendation is a `Map` built once (`putIfAbsent`
+  when the scan stops at the first match, `Map<Key, List<Element>>` otherwise). It switches to
+  "A Map index is not recommended here: ..." when the scanned collection is modified in the enclosing loop,
+  or `==` is used on floats/doubles or on references (identity vs. `equals`).
+- `nested_collection_iteration` (info): the same collection is iterated inside a loop over itself without a
+  lookup shape (and not as a triangular `j < i` pair loop).
+
+Constant-bound loops, loops over different collections without a lookup shape and range predicates are not
+reported. Nothing is transformed or executed.
