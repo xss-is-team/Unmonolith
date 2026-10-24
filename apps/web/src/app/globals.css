@@ -393,6 +393,27 @@ a { color: inherit; text-decoration: none; }
 .project-graph-summary span { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
 .project-graph-summary strong { color: #3c5546; font: 600 10px/1 var(--font-code), monospace; }
 .project-graph-canvas { position: relative; min-height: 250px; flex: 1; background: #f7f7f1; }
+.project-graph-canvas--stacked { display: flex; flex-direction: column; }
+.project-graph-package-nav { display: flex; min-height: 40px; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 12px; border-bottom: 1px solid #e5e8df; background: #f3f5ef; }
+.project-graph-package-crumbs { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 3px; color: #89948a; }
+.project-graph-package-crumbs > span { display: inline-flex; min-width: 0; align-items: center; gap: 3px; }
+.project-graph-package-crumbs button { max-width: 190px; overflow: hidden; border: 0; padding: 4px 5px; border-radius: 4px; color: #516c58; background: transparent; font: 500 9px/1.2 var(--font-code), monospace; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.project-graph-package-crumbs button:hover, .project-graph-package-crumbs button[aria-current="location"] { color: #244d38; background: #e8eee4; }
+.project-graph-package-searching { color: #69796d; font-size: 9px; }
+.project-graph-package-hint { flex: 0 0 auto; color: #90998f; font-size: 8px; }
+.project-graph-canvas__flow { position: relative; display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.project-graph-canvas__flow > .react-flow { min-height: 250px; flex: 1; }
+.project-graph-packages { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr)); gap: 7px; max-height: 126px; overflow: auto; padding: 9px 11px; border-bottom: 1px solid #e5e8df; background: rgba(251,250,246,.76); }
+.project-graph-packages--directory { align-content: center; grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr)); max-height: none; flex: 1; padding: 22px clamp(14px, 4vw, 42px); border: 0; background: transparent; }
+.project-graph-package-intro { grid-column: 1 / -1; margin: 0 0 4px; color: #3d5545; font-size: 12px; font-weight: 600; }
+.project-graph-package-intro span { display: block; margin-top: 4px; color: #7d897e; font-size: 9px; font-weight: 400; }
+.project-graph-package { display: flex; min-width: 0; min-height: 42px; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid #dfe5da; border-radius: 6px; color: #68806c; background: #fffefa; text-align: left; cursor: pointer; transition: border-color .15s, background .15s, transform .15s; }
+.project-graph-package:hover { transform: translateY(-1px); border-color: #9eb4a0; background: #f8faf4; }
+.project-graph-package:focus-visible { outline: 2px solid #315d4b; outline-offset: 2px; }
+.project-graph-package > span { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.project-graph-package strong { overflow: hidden; color: #334c3b; font: 600 10px/1.1 var(--font-code), monospace; text-overflow: ellipsis; white-space: nowrap; }
+.project-graph-package small { color: #7d897e; font-size: 8px; }
+.project-graph-package-limit { grid-column: 1 / -1; margin: 0; color: #788478; font-size: 8px; }
 .project-graph-canvas .react-flow__background pattern circle { fill: #c9d0c6; }
 .project-graph-canvas .react-flow__controls { overflow: hidden; border: 1px solid #d8d9cf; border-radius: 6px; box-shadow: 0 2px 8px rgba(30,43,35,.07); }
 .project-graph-canvas .react-flow__controls-button { width: 26px; height: 26px; border-bottom-color: #e5e7df; background: #fbfaf6; }
@@ -609,6 +630,12 @@ a { color: inherit; text-decoration: none; }
   .workspace-grid { grid-template-columns: minmax(0, 1fr) 285px; }
 }
 @media (max-width: 760px) {
+  .project-graph-package-nav { align-items: flex-start; flex-direction: column; gap: 3px; padding: 6px 8px; }
+  .project-graph-package-hint { padding-left: 5px; }
+  .project-graph-packages:not(.project-graph-packages--directory) { grid-template-columns: repeat(auto-fill, minmax(min(145px, 100%), 1fr)); max-height: 112px; padding: 7px; }
+  .project-graph-packages--directory { grid-template-columns: minmax(0, 1fr); padding: 20px 12px; }
+  .project-graph-package { min-height: 38px; }
+  .project-graph-package-crumbs button { max-width: 130px; }
   .landing-shell { padding: 0 22px; }
   .landing-topbar { height: 70px; }
   .topbar-center { display: none; }

@@ -22,6 +22,8 @@ export type ProjectOverviewType = {
   id: string;
   name: string;
   qualifiedName: string;
+  packageName: string;
+  sourceFile?: string;
   kind: ProjectOverviewTypeKind;
   sourceRange: SourceRange;
   methods: ProjectOverviewMethod[];
@@ -87,11 +89,30 @@ export function toProjectOverviewModel(graph: ProjectGraph): ProjectOverviewMode
       id: node.id,
       name: node.name,
       qualifiedName: node.qualified_name ?? node.name,
+      packageName: "",
+      sourceFile: node.source_range.file ?? undefined,
       kind: node.kind,
       sourceRange: node.source_range,
       methods: methodsByType.get(node.id) ?? [],
       externalSupertypes: (node.external_supertypes ?? []).map(({ name, relation }) => ({ name, relation })),
     }));
+
+  // A file's top-level type gives us its Java package without guessing from the
+  // physical source-root path. Nested types inherit that package by file.
+  const packageByFile = new Map<string, string>();
+  for (const type of types) {
+    const fileName = type.sourceFile?.split(/[\\/]/).at(-1)?.replace(/\.java$/i, "");
+    if (fileName && type.name === fileName && type.sourceFile) {
+      const segments = type.qualifiedName.split(".");
+      packageByFile.set(type.sourceFile, segments.slice(0, -1).join("."));
+    }
+  }
+  for (const type of types) {
+    if (type.sourceFile && packageByFile.has(type.sourceFile)) {
+      type.packageName = packageByFile.get(type.sourceFile) ?? "";
+    }
+  }
+
   const typeIds = new Set(types.map((type) => type.id));
   const relationshipsByKey = new Map<string, ProjectOverviewRelationship>();
 

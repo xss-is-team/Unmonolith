@@ -7,7 +7,7 @@ import { ArrowLeft, CircleHelp } from "lucide-react";
 import { Brand } from "@/components/brand";
 import { ModernizationDemo } from "@/components/modernization-demo";
 import { ProjectFlowchartDemo } from "@/components/project-flowchart-demo";
-import graphFixtureData from "@/fixtures/project-graph.json";
+import graphFixtureData from "@/fixtures/project-graph-project.json";
 import { demoModernizationCatalog } from "@/fixtures/modernization-catalog";
 import { demoProjectFlowCatalog } from "@/fixtures/project-flows";
 import { parseProjectGraph } from "@/lib/api";
@@ -50,7 +50,7 @@ export function ProjectDemoWorkspace() {
           <ModernizationDemo catalog={demo.modernization} onBackToFlows={() => setView("flows")} />
         ) : (
           <div className="project-demo-graph">
-            <div className="project-demo-switch"><span>ПРИМЕР СТРУКТУРЫ</span><button type="button" onClick={() => setView("flows")}><ArrowLeft size={13} /> К блок-схемам</button></div>
+            <div className="project-demo-switch"><span>ПРИМЕР СТРУКТУРЫ ПРОЕКТА</span><button type="button" onClick={() => setView("flows")}><ArrowLeft size={13} /> К блок-схемам</button></div>
             <ProjectGraphViewer
               projectId="demo"
               revision={0}
@@ -58,7 +58,7 @@ export function ProjectDemoWorkspace() {
               onOpenMethod={() => undefined}
               onSourceRangeSelect={() => undefined}
               graphOverride={demo.graph}
-              sourceLabel="ДЕМО · ИСХОДНИК НЕДОСТУПЕН"
+              sourceLabel="ДЕМО · МНОГОФАЙЛОВЫЙ ГРАФ"
             />
           </div>
         )}

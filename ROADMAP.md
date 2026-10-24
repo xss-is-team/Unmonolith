@@ -77,7 +77,7 @@ These tasks validate the product interaction. They do not deliver real project i
 - [ ] Backend accepts a complete Java repository and resolves its project classpath, including Maven/Gradle dependencies.
 - [ ] Backend exposes project-scoped hierarchy and nested behavior-flow data with file-qualified source ranges and explicit completeness/unsupported information.
 - [ ] Frontend navigates project → flow → package/module → type → method → source, opening the correct file before selecting its range.
-- [ ] Large-project navigation supports search and progressive drill-down without rendering every method-level edge at once.
+- [x] Project graph navigation supports global package/type search and package drill-down; the root shows collapsed type-level relationships, not callable-level edges, and caps visible types.
 
 ### M3 — Recommend and model a modernization
 
@@ -97,5 +97,5 @@ These tasks validate the product interaction. They do not deliver real project i
 
 - The API accepts one `.java` file per project; whole-repository import and project-wide classpath analysis are not implemented.
 - The parser emits per-method CFGs and a compilation-unit architectural/dependency graph, now exposed by the revision-bound `/graph` API; it does not produce the hierarchical business-flow diagrams in this roadmap. See `apps/parser/README.md` for graph identity and source-range constraints.
-- The current Project Overview requests the planned API graph; `/demo` supplies a type-graph fixture plus clearly labeled synthetic flowchart and modernization catalogs. Demo data is not analysis of an uploaded source. Real project-flow and project-wide transformation APIs are still required.
+- The current Project Overview requests the API graph; `/demo` supplies a multi-file project graph fixture with package drill-down plus clearly labeled synthetic flowcharts and modernization catalogs. Demo data is not analysis of an uploaded source. Project-scope file opening, real project-flow data, and project-wide transformation APIs are still required.
 - Existing transformations are limited. The BPMN-like plan and Java-version migration are frontend prototypes only; there is no backend operation to apply either one.

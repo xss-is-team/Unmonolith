@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
 import useSWR from "swr";
 import ELK from "elkjs/lib/elk.bundled.js";
@@ -23,7 +23,9 @@ import {
   Boxes,
   Braces,
   CircleHelp,
+  ChevronRight,
   FileCode2,
+  FolderOpen,
   LoaderCircle,
   Search,
 } from "lucide-react";
@@ -119,8 +121,27 @@ export function ProjectGraphViewer({
     { shouldRetryOnError: false, revalidateOnFocus: false },
   );
   const [query, setQuery] = useState("");
-  const [edgeKind, setEdgeKind] = useState("structure");
-  const [selectedTypeId, setSelectedTypeId] = useState<string | null>(null);
+  const [edgeKind, setEdgeKind] = useState("all");
+  const navigationKey = `${projectId}:${revision}`;
+  const [navigation, setNavigation] = useState({ key: navigationKey, packagePath: [] as string[], selectedTypeId: null as string | null });
+  const activeNavigation = navigation.key === navigationKey
+    ? navigation
+    : { key: navigationKey, packagePath: [], selectedTypeId: null };
+  const packagePath = activeNavigation.packagePath;
+  const selectedTypeId = activeNavigation.selectedTypeId;
+  const setPackagePath = useCallback((value: string[] | ((current: string[]) => string[])) => {
+    setNavigation((current) => {
+      const path = current.key === navigationKey ? current.packagePath : [];
+      return { key: navigationKey, packagePath: typeof value === "function" ? value(path) : value, selectedTypeId: null };
+    });
+  }, [navigationKey]);
+  const setSelectedTypeId = useCallback((id: string | null) => {
+    setNavigation((current) => ({
+      key: navigationKey,
+      packagePath: current.key === navigationKey ? current.packagePath : [],
+      selectedTypeId: id,
+    }));
+  }, [navigationKey]);
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
 
   const graph = graphOverride ?? graphRequest.data?.graph ?? null;
@@ -130,12 +151,40 @@ export function ProjectGraphViewer({
     () => overview?.types ?? [],
     [overview],
   );
+  const hasPackageHierarchy = overview?.scope === "project" && typeNodes.some((node) => node.sourceFile);
+  const currentPackage = packagePath.join(".");
+  const packageChildren = useMemo(() => {
+    if (!hasPackageHierarchy || query.trim()) return [];
+    const prefix = currentPackage ? `${currentPackage}.` : "";
+    const packages = new Map<string, { typeCount: number; files: Set<string> }>();
+    for (const node of typeNodes) {
+      if (!node.packageName || (currentPackage && !node.packageName.startsWith(prefix))) continue;
+      const remainder = currentPackage ? node.packageName.slice(prefix.length) : node.packageName;
+      const childName = remainder.split(".")[0];
+      if (!childName) continue;
+      const fullName = currentPackage ? `${currentPackage}.${childName}` : childName;
+      const entry = packages.get(fullName) ?? { typeCount: 0, files: new Set<string>() };
+      entry.typeCount += 1;
+      if (node.sourceFile) entry.files.add(node.sourceFile);
+      packages.set(fullName, entry);
+    }
+    return [...packages.entries()]
+      .filter(([name]) => name !== currentPackage)
+      .sort(([left], [right]) => left.localeCompare(right, "ru"))
+      .map(([name, counts]) => ({ name, label: name.split(".").at(-1) ?? name, ...counts }));
+  }, [currentPackage, hasPackageHierarchy, query, typeNodes]);
+  const packageTypes = useMemo(
+    () => hasPackageHierarchy && !query.trim() && packagePath.length > 0
+      ? typeNodes.filter((node) => node.packageName === currentPackage)
+      : typeNodes,
+    [currentPackage, hasPackageHierarchy, packagePath.length, query, typeNodes],
+  );
   const matchingTypes = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("ru-RU");
     return normalized
-      ? typeNodes.filter((node) => `${node.name} ${node.qualifiedName}`.toLocaleLowerCase("ru-RU").includes(normalized))
-      : typeNodes;
-  }, [query, typeNodes]);
+      ? typeNodes.filter((node) => `${node.name} ${node.qualifiedName} ${node.packageName} ${node.sourceFile ?? ""}`.toLocaleLowerCase("ru-RU").includes(normalized))
+      : packageTypes;
+  }, [packageTypes, query, typeNodes]);
   const filteredTypes = useMemo(() => matchingTypes.slice(0, MAX_VISIBLE_TYPES), [matchingTypes]);
   const visibleTypeKey = useMemo(() => filteredTypes.map((node) => node.id).join("|"), [filteredTypes]);
   const visibleTypeIds = useMemo(() => new Set(filteredTypes.map((node) => node.id)), [filteredTypes]);
@@ -200,7 +249,7 @@ export function ProjectGraphViewer({
     },
     selected: node.id === selectedType?.id,
     deletable: false,
-  })), [filteredTypes, positions, selectedType?.id]);
+  })), [filteredTypes, positions, selectedType?.id, setSelectedTypeId]);
 
   const flowEdges = useMemo<ProjectEdge[]>(() => projectedEdges.map((edge, index) => ({
     id: `${edge.from}-${edge.to}-${edge.kind}-${index}`,
@@ -238,12 +287,13 @@ export function ProjectGraphViewer({
 
   const unresolved = overview.unresolvedCalls;
   const externals = overview.types.flatMap((type) => type.externalSupertypes.map((external) => ({ owner: type, ...external })));
+  const canNavigateToSource = !isLocalFixture && overview.scope === "compilation_unit";
   const truncated = matchingTypes.length > filteredTypes.length;
 
   return (
     <section className="project-graph-panel" aria-label="Обзор структуры проекта">
       <div className="project-graph-toolbar">
-        <label className="project-graph-search"><Search size={15} /><input name="projectGraphSearch" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Найти класс или интерфейс" aria-label="Найти тип" /></label>
+        <label className="project-graph-search"><Search size={15} /><input name="projectGraphSearch" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Найти пакет, класс или интерфейс" aria-label="Найти в проекте" /></label>
         <label className="project-graph-filter"><span>Связи</span><select name="projectGraphEdgeKind" value={edgeKind} onChange={(event) => setEdgeKind(event.target.value)} aria-label="Фильтр типов связей">
           <option value="structure">Структурные</option>
           <option value="all">Все типы</option>
@@ -252,17 +302,43 @@ export function ProjectGraphViewer({
         <span className={`project-graph-source${isLocalFixture ? " project-graph-source--fixture" : ""}`}>{sourceLabel ?? `РЕВИЗИЯ ${revision}`}</span>
       </div>
 
-      {isLocalFixture ? <div className="project-graph-fixture-note"><CircleHelp size={14} /> Тестовые данные из `project-graph.json`; они не относятся к открытому исходнику.</div> : null}
+      {isLocalFixture ? <div className="project-graph-fixture-note"><CircleHelp size={14} /> Синтетический многофайловый пример: связи и пути файлов не взяты из загруженного проекта.</div> : null}
 
       <div className="project-graph-summary">
-        <span><strong>{typeNodes.length}</strong> типов</span>
-        <span><strong>{overview.types.reduce((total, type) => total + type.methods.length, 0)}</strong> методов</span>
+        <span><strong>{typeNodes.length}</strong> типов в проекте</span>
+        {hasPackageHierarchy && !query.trim() && matchingTypes.length > 0 ? <span><strong>{matchingTypes.length}</strong> {packagePath.length ? "в текущем пакете" : "на схеме"}</span> : null}
+        <span><strong>{overview.types.reduce((total, type) => total + type.methods.length, 0)}</strong> методов в проекте</span>
         <span><strong>{overview.stats.resolved_internal_calls}</strong> внутренних вызовов</span>
         <span><strong>{overview.externalCallCount}</strong> внешних вызовов</span>
         <span><strong>{unresolved.length}</strong> неразрешённых</span>
       </div>
 
-      <div className="project-graph-canvas">
+      <div className="project-graph-canvas project-graph-canvas--stacked">
+        {hasPackageHierarchy ? (
+          <nav className="project-graph-package-nav" aria-label="Путь по пакетам">
+            <div className="project-graph-package-crumbs">
+              <button type="button" aria-current={packagePath.length === 0 && !query.trim() ? "location" : undefined} onClick={() => { setQuery(""); setPackagePath([]); setSelectedTypeId(null); }}>Весь проект</button>
+              {!query.trim() ? packagePath.map((segment, index) => (
+                <span key={`${segment}-${index}`}><ChevronRight size={13} /><button type="button" aria-current={index === packagePath.length - 1 ? "location" : undefined} onClick={() => { setPackagePath((path) => path.slice(0, index + 1)); setSelectedTypeId(null); }}>{segment}</button></span>
+              )) : <span className="project-graph-package-searching"><ChevronRight size={13} /> Поиск по всему проекту</span>}
+            </div>
+            {query.trim() ? <span className="project-graph-package-hint">Сбросьте поиск, чтобы вернуться к пакетам</span> : null}
+          </nav>
+        ) : null}
+        <div className="project-graph-canvas__flow">
+        {packageChildren.length ? (
+          <div className={`project-graph-packages${filteredTypes.length ? "" : " project-graph-packages--directory"}`} aria-label="Вложенные пакеты">
+            <p className="project-graph-package-intro">{packagePath.length ? "Вложенные пакеты" : "Пакеты проекта"}<span>Выберите пакет, чтобы перейти к его типам.</span></p>
+            {packageChildren.slice(0, 24).map((pkg) => (
+              <button className="project-graph-package" type="button" key={pkg.name} aria-label={`Открыть пакет ${pkg.name}: ${pkg.typeCount} типов в ${pkg.files.size} файлах`} onClick={() => { setPackagePath(pkg.name.split(".")); setSelectedTypeId(null); }}>
+                <FolderOpen size={17} />
+                <span><strong>{pkg.label}</strong><small>{pkg.typeCount} типов · {pkg.files.size} файлов</small></span>
+                <ChevronRight size={14} />
+              </button>
+            ))}
+            {packageChildren.length > 24 ? <p className="project-graph-package-limit">Показаны первые 24 пакета. Найдите класс через поиск, чтобы перейти к нужному месту.</p> : null}
+          </div>
+        ) : null}
         {filteredTypes.length ? (
           <ReactFlow
             key={layoutKey}
@@ -288,7 +364,9 @@ export function ProjectGraphViewer({
             <Controls showInteractive={false} />
             <MiniMap pannable zoomable nodeColor={(node) => node.id === selectedType?.id ? "#d7ee72" : "#71917a"} />
           </ReactFlow>
-        ) : <div className="project-graph-empty"><Search size={19} /><strong>Типы не найдены</strong><span>Измените запрос или снимите фильтр.</span></div>}
+        ) : !packageChildren.length ? <div className="project-graph-empty"><Search size={19} /><strong>Типы не найдены</strong><span>Измените запрос или снимите фильтр.</span></div>
+          : null}
+        </div>
       </div>
 
       {truncated ? <p className="project-graph-limit">Показаны первые {MAX_VISIBLE_TYPES} типов из {typeNodes.length}. Уточните поиск, чтобы сузить карту.</p> : null}
@@ -297,19 +375,19 @@ export function ProjectGraphViewer({
         <div className="project-graph-inspector">
           <div className="project-graph-inspector__head">
             <div><small>{selectedType.kind.replace("_", " ")} · {selectedType.sourceRange.line ? `строка ${selectedType.sourceRange.line}` : "без диапазона"}</small><h3>{selectedType.qualifiedName}</h3></div>
-            {!isLocalFixture && selectedType.sourceRange ? <Button variant="outline" onClick={() => onSourceRangeSelect(selectedType.sourceRange)}><FileCode2 size={14} /> Исходник</Button> : null}
+            {canNavigateToSource && selectedType.sourceRange ? <Button variant="outline" onClick={() => onSourceRangeSelect(selectedType.sourceRange)}><FileCode2 size={14} /> Исходник</Button> : null}
           </div>
           <div className="project-graph-methods" aria-label={`Методы ${selectedType.name}`}>
             {selectedMethods.length ? selectedMethods.map((method) => {
               const methodId = method.methodId ?? "";
-              const matches = methods.filter((item) => item.id === methodId);
+              const matches = canNavigateToSource ? methods.filter((item) => item.id === methodId) : [];
               const target = matches.find((item) => sameSourceRange(item.source_range, method.sourceRange))
                 ?? (matches.length === 1 ? matches[0] : undefined);
               return (
                 <div className="project-graph-method" key={method.id}>
                   <span><Braces size={13} /><strong>{method.name}</strong><small>{method.kind === "constructor" ? "конструктор" : method.sourceRange.line ? `стр. ${method.sourceRange.line}` : "метод"}</small></span>
                   <div>
-                    {!isLocalFixture && method.sourceRange ? <button type="button" title="Открыть место в исходнике" onClick={() => onSourceRangeSelect(method.sourceRange)}><FileCode2 size={14} /></button> : null}
+                    {canNavigateToSource && method.sourceRange ? <button type="button" title="Открыть место в исходнике" onClick={() => onSourceRangeSelect(method.sourceRange)}><FileCode2 size={14} /></button> : null}
                     {!isLocalFixture && target ? <button type="button" title="Открыть CFG и Big O" onClick={() => onOpenMethod(target.selector)}><ArrowUpRight size={14} /></button> : null}
                     {!isLocalFixture && !target ? <small className="project-graph-no-cfg">CFG недоступен</small> : null}
                   </div>
