@@ -27,10 +27,9 @@ Passing tests is evidence for tested scenarios, not proof of identical behavior 
 
 ## BPMN editor direction
 
-- The current `/demo` plan is a React Flow prototype, not a BPMN 2.0 modeler or BPMN XML document.
-- **Candidate: `bpmn-js`.** Its browser modeler edits BPMN 2.0, imports diagrams, exposes modeling events and supports custom rules/extensions. `bpmn-moddle` reads and writes BPMN XML. This fits the editable process view better than extending the current React Flow prototype. See the [toolkit](https://bpmn.io/toolkit/bpmn-js/) and [walkthrough](https://bpmn.io/toolkit/bpmn-js/walkthrough/).
-- **License gate:** the bpmn.io license requires its watermark to remain visible and unobstructed. Do not adopt `bpmn-js` for the product until that constraint is accepted; if it is not, compare alternatives with suitable licensing. See the [license](https://github.com/bpmn-io/bpmn-js/blob/develop/LICENSE).
-- Keep React Flow for project navigation and dependency graphs. If adopted, load the BPMN modeler client-side in Next.js and replace only the editable process-plan canvas.
+- The `/demo` editable process view now uses the `bpmn-js` modeler and creates BPMN 2.0 XML. A `bp:Operation` extension stores typed demo operation IDs and parameters on supported service tasks; diagram geometry does not change source.
+- `bpmn-js` is used in the demo, not yet approved for production adoption. Its license requires the bpmn.io watermark to remain visible and unobstructed; the demo preserves it. Production adoption depends on accepting that product constraint or choosing another editor. See the [toolkit](https://bpmn.io/toolkit/bpmn-js/) and [license](https://github.com/bpmn-io/bpmn-js/blob/develop/LICENSE).
+- Keep React Flow for project navigation and dependency graphs. Load the BPMN modeler client-side in Next.js; keep transformation preview, apply, diff, build, tests, behavior comparison, and runtime measurement as separate steps.
 - Keep transformation requests separate from diagram geometry: moving a shape changes layout only. Each supported BPMN element must carry a typed operation ID and parameters; the backend receives only explicitly supported operations. Keep BPMN editing, transformation preview/apply, diff, build, tests, behavior comparison, and runtime measurement as separate steps.
 - Regardless of editor, support only a declared BPMN subset and reject unsupported or ambiguous operations visibly.
 
@@ -62,7 +61,7 @@ These tasks validate the product interaction. They do not deliver real project i
 - [x] Feed the flowchart renderer through a typed normalized catalog; the standalone demo supplies its local fixture explicitly.
 - [x] Feed modernization recommendations through a typed catalog supplied explicitly by the demo fixture; keep the React view independent of fixture contents.
 - [x] Demonstrate Java 2 → Java 16, monolith decomposition, and optimization recommendations with a sample diff and visible pending states for build, tests, behavior, and metrics.
-- [x] Demonstrate editable BPMN-style plan steps, transform mapping, local undo/reset, and a preview that makes clear Java was not changed.
+- [x] Demonstrate an editable BPMN 2.0 plan with typed demo operation extensions, XML export, undo/reset, and a preview that makes clear Java was not changed.
 - [x] Make the standalone prototype available at `/demo` without requiring a project upload or graph API.
 - [x] Make partial and failed parser results visually distinct from a complete analysis and direct attention to diagnostics.
 
@@ -85,7 +84,7 @@ These tasks validate the product interaction. They do not deliver real project i
 - [ ] Backend returns actionable findings and migration/decomposition proposals with rationale, affected files, and supported transformation IDs.
 - [ ] Frontend renders proposals through an adapter and lets users inspect scope and edit only supported BPMN process elements.
 - [ ] The selected BPMN model maps to explicit backend operations; unsupported or ambiguous edits are rejected visibly.
-- [ ] The BPMN editor implementation is chosen after checking standard compatibility and the product impact of its license requirements.
+- [ ] Confirm production adoption of `bpmn-js` given its required visible watermark, or choose another BPMN 2.0 editor.
 
 ### M4 — Apply and verify changes
 

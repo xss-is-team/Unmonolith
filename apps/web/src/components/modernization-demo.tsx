@@ -1,117 +1,46 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import dagre from "@dagrejs/dagre";
+import dynamic from "next/dynamic";
+import { useMemo, useRef, useState } from "react";
 import {
-  applyNodeChanges,
-  Background,
-  Controls,
-  Handle,
-  MarkerType,
-  MiniMap,
-  Position,
-  ReactFlow,
-  useNodesState,
-  type Edge,
-  type Node,
-  type NodeChange,
-  type NodeProps,
-  type ReactFlowInstance,
-} from "@xyflow/react";
-import { ArrowLeft, ArrowRight, Boxes, CircleHelp, Code2, GitBranch, Gauge, RotateCcw, ShieldCheck, Undo2, WandSparkles } from "lucide-react";
+  ArrowLeft,
+  ArrowRight,
+  Boxes,
+  CircleHelp,
+  Code2,
+  GitBranch,
+  Gauge,
+  RotateCcw,
+  ShieldCheck,
+  Undo2,
+  WandSparkles,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Download,
+  PanelsLeftBottom,
+} from "lucide-react";
 import type {
   JavaTarget,
   ModernizationCatalog,
   ModernizationOperation,
   ModernizationModuleId,
+  ModernizationPlanStep,
   ModernizationScenario,
   ModernizationScenarioKind,
-  PlanStepKind,
 } from "@/lib/modernization-model";
+import type { BpmnPlanEditorHandle } from "@/components/bpmn-plan-editor";
 
-type PlanNodeData = { label: string; kind: PlanStepKind; detail: string; operation?: ModernizationOperation; selected: boolean; selectStep?: () => void };
-type PlanNode = Node<PlanNodeData, "plan-step">;
-type PlanEdge = Edge;
+const BpmnPlanEditor = dynamic(
+  () => import("@/components/bpmn-plan-editor").then((module) => module.BpmnPlanEditor),
+  { ssr: false, loading: () => <div className="bpmn-plan-loading">Загружаем BPMN 2.0…</div> },
+);
 
-function PlanStepNode({ data }: NodeProps<PlanNode>) {
-  return (
-    <div className={`modernization-node modernization-node--${data.kind}${data.selected ? " modernization-node--selected" : ""}`}>
-      <Handle type="target" position={Position.Left} />
-      <div className="modernization-node__shape">
-        <button
-          className="modernization-node__action"
-          type="button"
-          aria-label={`Выбрать шаг плана: ${data.label}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            data.selectStep?.();
-          }}
-        >
-          <span>{data.label}</span>
-          {data.kind === "call" ? <small>Преобразование</small> : null}
-        </button>
-      </div>
-      <Handle type="source" position={Position.Right} />
-    </div>
-  );
-}
-
-const planNodeTypes = { "plan-step": PlanStepNode };
 const scenarioIcons: Record<ModernizationScenarioKind, typeof Code2> = {
   "java-migration": Code2,
   decomposition: Boxes,
   optimization: Gauge,
 };
-
-function planGraph(scenario: ModernizationScenario, selectedNodeId: string, compact: boolean) {
-  const graph = new dagre.graphlib.Graph();
-  graph.setGraph({ rankdir: compact ? "TB" : "LR", nodesep: compact ? 18 : 28, ranksep: compact ? 28 : 24, marginx: 8, marginy: 16 });
-  graph.setDefaultEdgeLabel(() => ({}));
-
-  for (const step of scenario.steps) {
-    const size = planNodeSize(step.kind, compact);
-    graph.setNode(step.id, size);
-  }
-  for (const edge of scenario.edges) graph.setEdge(edge.source, edge.target, { label: edge.label });
-  dagre.layout(graph);
-
-  const nodes: PlanNode[] = scenario.steps.map((step) => {
-    const size = planNodeSize(step.kind, compact);
-    const point = graph.node(step.id);
-    return {
-      id: step.id,
-      type: "plan-step",
-      position: { x: point.x - size.width / 2, y: point.y - size.height / 2 },
-      ...size,
-      deletable: false,
-      data: { label: step.label, kind: step.kind, detail: step.detail, operation: step.operation, selected: step.id === selectedNodeId },
-    };
-  });
-  const edges: PlanEdge[] = scenario.edges.map((edge, index) => ({
-    id: `${edge.source}-${edge.target}-${index}`,
-    source: edge.source,
-    target: edge.target,
-    type: "smoothstep",
-    label: edge.label,
-    markerEnd: { type: MarkerType.ArrowClosed, color: "#688273" },
-    style: { stroke: "#688273", strokeWidth: 1.7 },
-    labelStyle: { fill: "#526357", fontSize: 10, fontWeight: 600 },
-    labelBgStyle: { fill: "#fbfaf6", fillOpacity: 0.98 },
-    labelBgPadding: [5, 3] as [number, number],
-  }));
-  return { nodes, edges, height: compact ? graph.graph().height ?? 0 : 0 };
-}
-
-function planNodeSize(kind: PlanStepKind, compact: boolean) {
-  if (compact) {
-    if (kind === "start" || kind === "end") return { width: 144, height: 58 };
-    if (kind === "gateway") return { width: 160, height: 96 };
-    return { width: 160, height: 70 };
-  }
-  if (kind === "start" || kind === "end") return { width: 140, height: 58 };
-  if (kind === "gateway") return { width: 160, height: 92 };
-  return { width: 160, height: 72 };
-}
 
 function operationParameterSummary(operation: ModernizationOperation) {
   switch (operation.id) {
@@ -121,22 +50,21 @@ function operationParameterSummary(operation: ModernizationOperation) {
   }
 }
 
-function EditablePlan({ scenario, onBack, compactLayout }: { scenario: ModernizationScenario; onBack: () => void; compactLayout: boolean }) {
-  const initialSelectedId = scenario.steps.find((step) => step.kind === "call")?.id ?? scenario.steps[1].id;
-  const initial = useMemo(() => planGraph(scenario, initialSelectedId, compactLayout), [scenario, initialSelectedId, compactLayout]);
-  const [nodes, setNodes] = useNodesState(initial.nodes);
-  const [edges] = useState(initial.edges);
-  const [planInstance, setPlanInstance] = useState<ReactFlowInstance<PlanNode, PlanEdge> | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState(initialSelectedId);
+function EditablePlan({ scenario, onBack }: { scenario: ModernizationScenario; onBack: () => void }) {
+  const initialSelectedId = scenario.steps.find((step) => step.kind === "call")?.id ?? scenario.steps[1]?.id ?? "";
+  const editorRef = useRef<BpmnPlanEditorHandle | null>(null);
+  const [steps, setSteps] = useState(scenario.steps);
+  const [selectedStepId, setSelectedStepId] = useState(initialSelectedId);
   const [planReady, setPlanReady] = useState(false);
-  const [undoStack, setUndoStack] = useState<PlanNode[][]>([]);
-  const editSnapshot = useRef<PlanNode[] | null>(null);
-  const editSnapshotRecorded = useRef(false);
-  const previousLayout = useRef(compactLayout);
-  const selectedNode = nodes.find((node) => node.id === selectedNodeId);
-  const migrationOperation = nodes.find((node) => node.data.operation?.id === "migration.set_target_java")?.data.operation;
+  const [diagramDirty, setDiagramDirty] = useState(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [resetKey, setResetKey] = useState(0);
+  const [exportError, setExportError] = useState("");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const selectedStep = steps.find((step) => step.id === selectedStepId);
+  const migrationOperation = steps.find((step) => step.operation?.id === "migration.set_target_java")?.operation;
   const targetJava: JavaTarget = migrationOperation?.id === "migration.set_target_java" ? migrationOperation.parameters.targetJava : "16";
-  const decompositionOperation = nodes.find((node) => node.data.operation?.id === "decomposition.extract_modules")?.data.operation;
+  const decompositionOperation = steps.find((step) => step.operation?.id === "decomposition.extract_modules")?.operation;
   const moduleBoundaries = scenario.moduleBoundaries ?? [];
   const selectedModuleIds = decompositionOperation?.id === "decomposition.extract_modules"
     ? decompositionOperation.parameters.modules
@@ -145,93 +73,49 @@ function EditablePlan({ scenario, onBack, compactLayout }: { scenario: Moderniza
     && selectedModuleIds.length === moduleBoundaries.length
     && moduleBoundaries.every((module) => selectedModuleIds.includes(module.id));
   const scenarioTitle = scenario.kind === "java-migration" ? `Миграция на Java ${targetJava}` : scenario.title;
-  const isDirty = nodes.some((node) => {
-    const original = initial.nodes.find((item) => item.id === node.id);
-    return !original
-      || node.position.x !== original.position.x
-      || node.position.y !== original.position.y
-      || node.data.label !== original.data.label
-      || JSON.stringify(node.data.operation) !== JSON.stringify(original.data.operation);
-  }) || nodes.length !== initial.nodes.length;
-  const displayNodes = useMemo(() => nodes.map((node) => ({
-    ...node,
-    data: {
-      ...node.data,
-      ...(scenario.kind === "java-migration" && node.id === "compile" ? { label: `Собрать на Java ${targetJava}` } : {}),
-      selected: node.id === selectedNodeId,
-      selectStep: () => setSelectedNodeId(node.id),
-    },
-  })), [nodes, scenario.kind, selectedNodeId, targetJava]);
-
-  useEffect(() => {
-    if (previousLayout.current === compactLayout) return;
-    previousLayout.current = compactLayout;
-    const layoutNodes = new Map(initial.nodes.map((node) => [node.id, node]));
-    const applyLayout = (current: PlanNode[]) => current.map((node) => {
-      const layout = layoutNodes.get(node.id);
-      return layout ? { ...node, position: layout.position, width: layout.width, height: layout.height } : node;
-    });
-    setNodes(applyLayout);
-    setUndoStack((current) => current.map(applyLayout));
-  }, [compactLayout, initial.nodes, setNodes]);
-
-  useEffect(() => {
-    if (!compactLayout || !planInstance) return;
-    const frame = window.requestAnimationFrame(() => {
-      void planInstance.fitView({ padding: 0.08, minZoom: 0.82, maxZoom: 1 });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [compactLayout, initial.nodes, planInstance]);
-
-  function handleNodeChanges(changes: NodeChange<PlanNode>[]) {
-    setNodes((current) => applyNodeChanges(changes, current) as PlanNode[]);
-  }
-
-  function recordUndo() {
-    setUndoStack((current) => [...current, nodes].slice(-30));
-  }
-
-  function beginFieldEdit() {
-    editSnapshot.current = nodes;
-    editSnapshotRecorded.current = false;
-  }
-
-  function recordFieldEdit() {
-    if (editSnapshotRecorded.current) return;
-    setUndoStack((current) => [...current, editSnapshot.current ?? nodes].slice(-30));
-    editSnapshotRecorded.current = true;
-  }
-
-  function endFieldEdit() {
-    editSnapshot.current = null;
-    editSnapshotRecorded.current = false;
-  }
+  const isDirty = diagramDirty || JSON.stringify(steps) !== JSON.stringify(scenario.steps);
 
   function undoPlanEdit() {
-    const previous = undoStack.at(-1);
-    if (!previous) return;
-    setNodes(previous);
-    setUndoStack((current) => current.slice(0, -1));
+    editorRef.current?.undo();
+  }
+
+  function handleStepsChange(nextSteps: ModernizationPlanStep[]) {
+    setSteps(nextSteps);
+    if (!nextSteps.some((step) => step.id === selectedStepId)) setSelectedStepId(nextSteps[0]?.id ?? "");
   }
 
   function resetPlan() {
-    setNodes(initial.nodes);
-    setUndoStack([]);
-    endFieldEdit();
+    setSteps(scenario.steps);
+    setSelectedStepId(initialSelectedId);
+    setDiagramDirty(false);
+    setCanUndo(false);
     setPlanReady(false);
+    setResetKey((current) => current + 1);
   }
 
-  function renameSelectedNode(label: string) {
-    setNodes((current) => current.map((node) => node.id === selectedNodeId
-      ? { ...node, data: { ...node.data, label } }
-      : node));
+  function changeStep(update: Partial<ModernizationPlanStep>) {
+    if (!selectedStep) return;
+    editorRef.current?.updateStep({ ...selectedStep, ...update });
   }
 
   function updateOperation(operation: ModernizationOperation) {
-    if (!selectedNode) return;
-    setNodes((current) => current.map((node) => node.id === selectedNodeId
-      ? { ...node, data: { ...node.data, operation } }
-      : node));
+    changeStep({ operation });
+  }
+
+  async function exportBpmnXml() {
+    try {
+      const xml = await editorRef.current?.exportXml();
+      if (!xml) return;
+      const url = URL.createObjectURL(new Blob([xml], { type: "application/bpmn+xml;charset=utf-8" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${scenario.id}.bpmn`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setExportError("");
+    } catch {
+      setExportError("Не удалось экспортировать BPMN XML.");
+    }
   }
 
   function toggleModule(moduleId: ModernizationModuleId, checked: boolean) {
@@ -246,7 +130,7 @@ function EditablePlan({ scenario, onBack, compactLayout }: { scenario: Moderniza
   }
 
   const preview = useMemo(() => {
-    const operation = nodes.find((node) => node.data.operation)?.data.operation;
+    const operation = steps.find((step) => step.operation)?.operation;
     if (operation?.id === "migration.set_target_java") {
       return {
         ...scenario.preview,
@@ -256,7 +140,7 @@ function EditablePlan({ scenario, onBack, compactLayout }: { scenario: Moderniza
       };
     }
     return scenario.preview;
-  }, [nodes, scenario.preview]);
+  }, [scenario.preview, steps]);
 
   return (
     <div className="modernization-plan">
@@ -264,56 +148,49 @@ function EditablePlan({ scenario, onBack, compactLayout }: { scenario: Moderniza
         <button type="button" onClick={onBack}><ArrowLeft size={14} /> К вариантам</button>
         <div><small>РЕДАКТИРУЕМЫЙ ПЛАН · DEMO</small><strong>{scenarioTitle}</strong></div>
         <div className="modernization-plan__edit-actions">
-          <button type="button" onClick={undoPlanEdit} disabled={!undoStack.length} aria-label="Отменить последнее изменение плана"><Undo2 size={13} /> Отменить</button>
+          <button type="button" onClick={undoPlanEdit} disabled={!canUndo} aria-label="Отменить последнее изменение плана"><Undo2 size={13} /> Отменить</button>
           <button type="button" onClick={resetPlan} disabled={!isDirty} aria-label="Сбросить изменения плана"><RotateCcw size={13} /> Сбросить</button>
         </div>
         <button type="button" className="modernization-plan__primary" onClick={() => setPlanReady(true)}><WandSparkles size={14} /> Показать состав плана</button>
       </div>
 
-      <div className="modernization-plan__canvas" style={compactLayout ? { height: `${Math.max(760, initial.height + 36)}px` } : undefined}>
-        <ReactFlow
-          nodes={displayNodes}
-          edges={edges}
-          nodeTypes={planNodeTypes}
-          onNodesChange={handleNodeChanges}
-          onNodeDragStart={recordUndo}
-          nodesFocusable={false}
-          edgesFocusable={false}
-          disableKeyboardA11y
-          nodesDraggable
-          nodesConnectable={false}
-          elementsSelectable={false}
-          minZoom={0.2}
-          maxZoom={1.3}
-          panOnScroll
-          zoomOnDoubleClick={false}
-          fitView
-          fitViewOptions={{ padding: compactLayout ? 0.08 : 0.1, minZoom: compactLayout ? 0.82 : 0.68, maxZoom: compactLayout ? 1 : 0.92 }}
-          onInit={setPlanInstance}
-          aria-label={`Редактируемый план: ${scenarioTitle}`}
-        >
-          <Background color="#d0d6cd" gap={24} size={1} />
-          <Controls showInteractive={false} />
-          <MiniMap position="top-right" pannable zoomable nodeColor={(node) => node.id === selectedNodeId ? "#d7ee72" : "#91a18e"} />
-        </ReactFlow>
+      <div className="modernization-plan__canvas modernization-plan__canvas--bpmn">
+        <div className="bpmn-plan-toolbar" aria-label="Управление BPMN-диаграммой">
+          <span>BPMN 2.0 · DEMO</span>
+          <button type="button" onClick={() => editorRef.current?.fitView()} aria-label="Показать всю диаграмму"><Maximize2 size={14} /></button>
+          <button type="button" onClick={() => editorRef.current?.zoomOut()} aria-label="Уменьшить диаграмму"><ZoomOut size={14} /></button>
+          <button type="button" onClick={() => editorRef.current?.zoomIn()} aria-label="Увеличить диаграмму"><ZoomIn size={14} /></button>
+          <button type="button" onClick={() => setPaletteOpen((open) => !open)} aria-label="Показать палитру BPMN" aria-pressed={paletteOpen}><PanelsLeftBottom size={14} /></button>
+          <button type="button" onClick={() => void exportBpmnXml()} aria-label="Скачать BPMN 2.0 XML"><Download size={14} /></button>
+        </div>
+        <BpmnPlanEditor
+          key={`${scenario.id}:${resetKey}`}
+          scenario={scenario}
+          steps={steps}
+          selectedStepId={selectedStepId}
+          paletteOpen={paletteOpen}
+          onReady={(handle) => { editorRef.current = handle; }}
+          onSelectStep={setSelectedStepId}
+          onStepsChange={handleStepsChange}
+          onDirtyChange={setDiagramDirty}
+          onUndoChange={setCanUndo}
+        />
       </div>
+      {exportError ? <p className="bpmn-plan-error" role="alert">{exportError}</p> : null}
 
       <aside className="modernization-plan__inspector">
         <div className="modernization-plan__step-copy">
-          <small>{selectedNode?.data.operation ? "ШАГ ТРАНСФОРМАЦИИ" : "ШАГ ПЛАНА · можно перетаскивать"}</small>
-          <input name="plan-step-title" aria-label="Название шага плана" value={selectedNode?.data.label ?? ""} onFocus={beginFieldEdit} onBlur={endFieldEdit} onChange={(event) => { recordFieldEdit(); renameSelectedNode(event.target.value); }} />
-          <p>{selectedNode?.data.detail ?? "Выберите блок на схеме."}</p>
-          {selectedNode?.data.operation?.id === "migration.set_target_java" ? (
+          <small>{selectedStep?.operation ? "ШАГ ТРАНСФОРМАЦИИ" : "ШАГ BPMN · можно перемещать"}</small>
+          <input name="plan-step-title" aria-label="Название шага плана" value={selectedStep?.label ?? ""} onChange={(event) => changeStep({ label: event.target.value })} />
+          <p>{selectedStep?.detail ?? "Выберите блок на BPMN-схеме."}</p>
+          {selectedStep?.operation?.id === "migration.set_target_java" ? (
             <label className="modernization-plan__parameter">
               <span>Целевая версия Java</span>
               <select
                 name="plan-target-java"
                 aria-label="Целевая версия Java"
-                value={selectedNode.data.operation.parameters.targetJava}
-                onFocus={beginFieldEdit}
-                onBlur={endFieldEdit}
+                value={selectedStep.operation.parameters.targetJava}
                 onChange={(event) => {
-                  recordFieldEdit();
                   updateOperation({ id: "migration.set_target_java", parameters: { targetJava: event.target.value as JavaTarget } });
                 }}
               >
@@ -324,7 +201,7 @@ function EditablePlan({ scenario, onBack, compactLayout }: { scenario: Moderniza
               </select>
             </label>
           ) : null}
-          {selectedNode?.data.operation?.id === "decomposition.extract_modules" ? (
+          {selectedStep?.operation?.id === "decomposition.extract_modules" ? (
             <div className="modernization-plan__modules">
               <strong>Границы декомпозиции</strong>
               <ul>{moduleBoundaries.map((module) => {
@@ -334,10 +211,7 @@ function EditablePlan({ scenario, onBack, compactLayout }: { scenario: Moderniza
                     type="checkbox"
                     checked={checked}
                     disabled={checked && selectedModuleIds.length === 1}
-                    onFocus={beginFieldEdit}
-                    onBlur={endFieldEdit}
                     onChange={(event) => {
-                      recordFieldEdit();
                       toggleModule(module.id, event.target.checked);
                     }}
                   />
@@ -349,8 +223,8 @@ function EditablePlan({ scenario, onBack, compactLayout }: { scenario: Moderniza
           ) : null}
         </div>
         <span className="modernization-plan__mapping"><GitBranch size={14} />
-          {selectedNode?.data.operation
-            ? <>Операция демо: <code>{selectedNode.data.operation.id}</code><small>{operationParameterSummary(selectedNode.data.operation)}</small></>
+          {selectedStep?.operation
+            ? <>Операция демо: <code>{selectedStep.operation.id}</code><small>{operationParameterSummary(selectedStep.operation)}</small></>
             : "Контрольный шаг · без изменения исходников"}
         </span>
       </aside>
@@ -358,9 +232,9 @@ function EditablePlan({ scenario, onBack, compactLayout }: { scenario: Moderniza
       {planReady ? (
         <section className="modernization-plan__preview" aria-live="polite">
           <div><strong>Пример состава изменений</strong><span>Demo · не diff проекта · Java-код не менялся · файлов: {scenario.kind === "decomposition" && !decompositionMatchesFixture ? "не рассчитан" : preview.files.length}</span></div>
-          <ol>{displayNodes.map((node) => <li key={node.id}>
-            <span>{node.data.label}</span>
-            {node.data.operation ? <><code>{node.data.operation.id}</code><code>{operationParameterSummary(node.data.operation)}</code></> : null}
+          <ol>{steps.map((step) => <li key={step.id}>
+            <span>{step.label}</span>
+            {step.operation ? <><code>{step.operation.id}</code><code>{operationParameterSummary(step.operation)}</code></> : null}
           </li>)}</ol>
           {scenario.kind === "decomposition" && !decompositionMatchesFixture ? (
             <p className="modernization-plan__preview-note" role="status">В демо нет diff для выбранного набора границ. Реальный diff должен вернуть backend после анализа и применения операции.</p>
@@ -394,16 +268,7 @@ function EditablePlan({ scenario, onBack, compactLayout }: { scenario: Moderniza
 export function ModernizationDemo({ catalog, onBackToFlows }: { catalog: ModernizationCatalog; onBackToFlows: () => void }) {
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
-  const [compactLayout, setCompactLayout] = useState(false);
   const scenario = catalog.scenarios.find((item) => item.id === selectedScenarioId) ?? catalog.scenarios[0];
-
-  useEffect(() => {
-    const media = window.matchMedia("(max-width: 760px)");
-    const updateLayout = () => setCompactLayout(media.matches);
-    updateLayout();
-    media.addEventListener("change", updateLayout);
-    return () => media.removeEventListener("change", updateLayout);
-  }, []);
 
   if (!scenario) {
     return (
@@ -414,7 +279,7 @@ export function ModernizationDemo({ catalog, onBackToFlows }: { catalog: Moderni
   }
 
   const ScenarioIcon = scenarioIcons[scenario.kind];
-  if (planOpen) return <EditablePlan key={scenario.id} scenario={scenario} onBack={() => setPlanOpen(false)} compactLayout={compactLayout} />;
+  if (planOpen) return <EditablePlan key={scenario.id} scenario={scenario} onBack={() => setPlanOpen(false)} />;
 
   return (
     <section className="modernization-demo" aria-label="Демонстрация модернизации проекта">

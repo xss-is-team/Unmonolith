@@ -47,7 +47,9 @@ flow and modernization catalogs use typed frontend models supplied explicitly
 by local fixtures; they do not analyze or modify the uploaded source.
 
 Open `/demo` to explore those frontend prototypes without uploading a source
-file or calling the project-graph API.
+file or calling the project-graph API. The editable process plan is a BPMN 2.0
+XML model with local operation extensions; it exports `.bpmn` and never applies
+changes to Java. The bpmn.io watermark remains visible as required by its license.
 
 This prototype shows type relationships for one source file. The product target
 is a whole-project hierarchy of read-only flowcharts plus a separate editable
