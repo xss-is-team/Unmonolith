@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
   title: Java Blueprints MVP API
-  version: 0.3.0
+  version: 0.4.0
   description: |
     Guest sessions, revisioned single-file Java projects, JDT analysis, nested per-method CFG access,
-    and the restricted replace_condition transformation workflow.
+    restricted replace_condition transformations, and isolated Java 21 behavioral verification.
 servers:
   - url: /api/v1
 tags:
@@ -12,6 +12,7 @@ tags:
   - name: Projects
   - name: Analysis
   - name: Transformations
+  - name: Verification
   - name: Planned M2+
   - name: System
 paths:
@@ -214,8 +215,11 @@ paths:
       - {$ref: '#/components/parameters/ProjectId'}
     post:
       operationId: verifyBehavior
-      tags: [Planned M2+]
-      description: Planned M4. Separate isolated runner executes controlled tests and compares outcomes.
+      tags: [Verification]
+      description: |
+        Compiles two existing revisions in isolated Java 21 containers, runs the same named stdin
+        fixtures, and compares stdout bytes, stderr bytes, exit codes, timeout and overflow states.
+        A passing result applies only to the supplied fixtures and is not proof of equivalence.
       security: [{guestSession: []}]
       requestBody:
         required: true
@@ -224,10 +228,14 @@ paths:
             schema: {$ref: '#/components/schemas/VerifyRequest'}
       responses:
         '200':
-          description: Verification result for the provided test cases
+          description: Structured compilation and behavioral comparison report
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/VerifyResult'}
+              schema: {$ref: '#/components/schemas/VerificationReport'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
   /projects/{project_id}/export:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -281,7 +289,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ApiError'}
     Unavailable:
-      description: Java worker is not configured or unavailable
+      description: Java analysis/transform worker or isolated runner is not configured or unavailable
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ApiError'}
@@ -423,21 +431,88 @@ components:
         source: {type: string}
     VerifyRequest:
       type: object
-      required: [original_revision, candidate_revision, cases]
+      additionalProperties: false
+      required: [baseline_revision, candidate_revision, test_cases]
       properties:
-        original_revision: {type: integer, minimum: 1}
+        baseline_revision: {type: integer, minimum: 1}
         candidate_revision: {type: integer, minimum: 1}
-        cases:
+        test_cases:
           type: array
+          minItems: 1
+          maxItems: 20
           items:
-            type: object
-            required: [stdin]
-            properties:
-              stdin: {type: string}
-    VerifyResult:
+            $ref: '#/components/schemas/VerifyTestCase'
+    VerifyTestCase:
       type: object
-      required: [status, cases_passed, cases_total]
+      additionalProperties: false
+      required: [name, stdin]
       properties:
-        status: {type: string, enum: [matched, differed, inconclusive]}
-        cases_passed: {type: integer, minimum: 0}
-        cases_total: {type: integer, minimum: 0}
+        name: {type: string, minLength: 1, maxLength: 64}
+        stdin: {type: string, description: 'UTF-8 stdin, at most 65536 bytes'}
+    VerificationReport:
+      type: object
+      required: [status, baseline_revision, candidate_revision, baseline_compilation, candidate_compilation, executed_test_cases, test_cases, explanation]
+      properties:
+        status: {type: string, enum: [passed, failed, compilation_failed]}
+        baseline_revision: {type: integer, minimum: 1}
+        candidate_revision: {type: integer, minimum: 1}
+        baseline_compilation: {$ref: '#/components/schemas/CompilationResult'}
+        candidate_compilation: {$ref: '#/components/schemas/CompilationResult'}
+        executed_test_cases: {type: integer, minimum: 0}
+        test_cases:
+          type: array
+          items: {$ref: '#/components/schemas/TestCaseResult'}
+        explanation: {type: string}
+    CompilationResult:
+      type: object
+      required: [status, exit_code, timed_out, output_overflow, stdout, stderr, main_class, diagnostics]
+      properties:
+        status: {type: string, enum: [completed, failed, timed_out, output_overflow, missing_main]}
+        exit_code: {type: integer, nullable: true}
+        timed_out: {type: boolean}
+        output_overflow: {type: boolean}
+        stdout: {$ref: '#/components/schemas/CapturedStream'}
+        stderr: {$ref: '#/components/schemas/CapturedStream'}
+        main_class: {type: string, nullable: true}
+        diagnostics:
+          type: array
+          items: {$ref: '#/components/schemas/RunnerDiagnostic'}
+    RunnerDiagnostic:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+    CapturedStream:
+      type: object
+      required: [utf8, base64, truncated]
+      properties:
+        utf8: {type: string, nullable: true}
+        base64: {type: string, format: byte}
+        truncated: {type: boolean}
+    TestCaseResult:
+      type: object
+      required: [name, passed, mismatches, baseline, candidate]
+      properties:
+        name: {type: string}
+        passed: {type: boolean}
+        mismatches:
+          type: array
+          items: {$ref: '#/components/schemas/BehaviorMismatch'}
+        baseline: {$ref: '#/components/schemas/ExecutionObservation'}
+        candidate: {$ref: '#/components/schemas/ExecutionObservation'}
+    ExecutionObservation:
+      type: object
+      required: [stdout, stderr, exit_code, timed_out, output_overflow]
+      properties:
+        stdout: {$ref: '#/components/schemas/CapturedStream'}
+        stderr: {$ref: '#/components/schemas/CapturedStream'}
+        exit_code: {type: integer, nullable: true}
+        timed_out: {type: boolean}
+        output_overflow: {type: boolean}
+    BehaviorMismatch:
+      type: object
+      required: [field, explanation]
+      properties:
+        field: {type: string, enum: [stdout, stderr, exit_code, timed_out, output_overflow]}
+        explanation: {type: string}

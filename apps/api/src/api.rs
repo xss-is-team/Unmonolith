@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use axum::{
     body::Body,
@@ -25,6 +25,11 @@ use crate::{
     },
     error::{ApiError, ApiErrorBody},
     project::{self, Project, UpdateSourceRequest},
+    runner::{
+        BehaviorMismatch, CapturedStream, CompilationResult, CompilationStatus,
+        ExecutionObservation, JavaRunner, MismatchField, RunnerDiagnostic, TestCaseResult,
+        VerificationReport, VerificationStatus, VerifyRequest, VerifyTestCase,
+    },
     session, Config,
 };
 
@@ -36,6 +41,7 @@ struct AppStateInner {
     max_project_bytes: usize,
     secure_cookies: bool,
     analyzer: JavaAnalyzer,
+    runner: JavaRunner,
     writes: Mutex<()>,
 }
 
@@ -52,6 +58,13 @@ impl AppState {
                 config.java_bin,
                 config.analyzer_timeout,
                 config.analyzer_output_bytes,
+            ),
+            runner: JavaRunner::new(
+                config.container_bin,
+                config.runner_image,
+                config.runner_compile_timeout,
+                config.runner_case_timeout,
+                config.runner_output_bytes,
             ),
             writes: Mutex::new(()),
         })))
@@ -70,7 +83,8 @@ impl AppState {
         analyze_project,
         list_methods,
         get_method_cfg,
-        transform_project
+        transform_project,
+        verify_project
     ),
     components(schemas(
         HealthResponse,
@@ -92,7 +106,19 @@ impl AppState {
         CfgEdge,
         TransformRequest,
         TransformOperation,
-        TransformResponse
+        TransformResponse,
+        VerifyRequest,
+        VerifyTestCase,
+        VerificationReport,
+        VerificationStatus,
+        CompilationResult,
+        CompilationStatus,
+        RunnerDiagnostic,
+        CapturedStream,
+        TestCaseResult,
+        ExecutionObservation,
+        BehaviorMismatch,
+        MismatchField
     )),
     modifiers(&SecurityAddon),
     tags(
@@ -100,7 +126,8 @@ impl AppState {
         (name = "Sessions"),
         (name = "Projects"),
         (name = "Analysis"),
-        (name = "Transformations")
+        (name = "Transformations"),
+        (name = "Verification")
     )
 )]
 struct ApiDoc;
@@ -138,6 +165,7 @@ pub fn app(state: AppState) -> Router {
             get(get_method_cfg),
         )
         .route("/projects/{project_id}/transform", post(transform_project))
+        .route("/projects/{project_id}/verify", post(verify_project))
         .layer(DefaultBodyLimit::max(body_limit));
 
     Router::new()
@@ -602,6 +630,113 @@ async fn transform_project(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/verify",
+    tag = "Verification",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path)),
+    request_body = VerifyRequest,
+    responses(
+        (status = 200, body = VerificationReport),
+        (status = 400, body = ApiErrorBody),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody),
+        (status = 503, body = ApiErrorBody)
+    )
+)]
+async fn verify_project(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    request: Result<Json<VerifyRequest>, JsonRejection>,
+) -> Result<Json<VerificationReport>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let Json(request) = request.map_err(|_| ApiError::bad_request("invalid verify request"))?;
+    validate_verify_request(&request)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    let baseline_source = revision_source(&directory, &project, request.baseline_revision).await?;
+    let candidate_source =
+        revision_source(&directory, &project, request.candidate_revision).await?;
+    Ok(Json(
+        state
+            .0
+            .runner
+            .verify(
+                &project.filename,
+                request.baseline_revision,
+                &baseline_source,
+                request.candidate_revision,
+                &candidate_source,
+                &request.test_cases,
+            )
+            .await?,
+    ))
+}
+
+fn validate_verify_request(request: &VerifyRequest) -> Result<(), ApiError> {
+    const MAX_CASES: usize = 20;
+    const MAX_STDIN_BYTES: usize = 64 * 1024;
+    const MAX_TOTAL_STDIN_BYTES: usize = 256 * 1024;
+
+    if request.baseline_revision == 0 || request.candidate_revision == 0 {
+        return Err(ApiError::bad_request("revision numbers must be positive"));
+    }
+    if request.test_cases.is_empty() || request.test_cases.len() > MAX_CASES {
+        return Err(ApiError::bad_request(format!(
+            "test_cases must contain between 1 and {MAX_CASES} cases"
+        )));
+    }
+    let mut names = HashSet::new();
+    let mut total = 0_usize;
+    for test_case in &request.test_cases {
+        if test_case.name.trim().is_empty() || test_case.name.len() > 64 {
+            return Err(ApiError::bad_request(
+                "test case names must contain 1 to 64 UTF-8 bytes",
+            ));
+        }
+        if !names.insert(test_case.name.as_str()) {
+            return Err(ApiError::bad_request("test case names must be unique"));
+        }
+        if test_case.stdin.len() > MAX_STDIN_BYTES {
+            return Err(ApiError::bad_request(
+                "a test case stdin exceeds the 65536-byte limit",
+            ));
+        }
+        total = total.saturating_add(test_case.stdin.len());
+    }
+    if total > MAX_TOTAL_STDIN_BYTES {
+        return Err(ApiError::bad_request(
+            "combined test case stdin exceeds the 262144-byte limit",
+        ));
+    }
+    Ok(())
+}
+
+async fn revision_source(
+    directory: &std::path::Path,
+    project: &Project,
+    revision: u64,
+) -> Result<PathBuf, ApiError> {
+    if revision == 0 || revision > project.revision {
+        return Err(revision_not_found());
+    }
+    let path = project::source_path(directory, revision, &project.filename);
+    match fs::metadata(&path).await {
+        Ok(metadata) if metadata.is_file() => Ok(path),
+        Ok(_) | Err(_) => Err(revision_not_found()),
+    }
+}
+
+fn revision_not_found() -> ApiError {
+    ApiError::new(
+        StatusCode::NOT_FOUND,
+        "revision_not_found",
+        "requested source revision does not exist",
+    )
+}
+
 async fn load_analysis(directory: &std::path::Path, revision: u64) -> Result<Value, ApiError> {
     let path = directory.join("analysis").join(format!("{revision}.json"));
     let bytes = match fs::read(path).await {
@@ -808,6 +943,125 @@ else
 fi
 "#;
 
+    #[cfg(unix)]
+    const FAKE_DOCKER: &str = r#"#!/bin/sh
+state="${0}.state"
+mode=
+IFS= read -r mode < "${0}.mode" || :
+mkdir -p "$state"
+
+case "${1:-}" in
+  create)
+    if [ "$mode" = "create-failure" ]; then
+      printf %s 'fake container create failure' >&2
+      exit 1
+    fi
+    shift
+    name=
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--name" ]; then
+        name="$2"
+        break
+      fi
+      shift
+    done
+    [ -n "$name" ] || exit 2
+    mkdir -p "$state/$name/work"
+    printf %s "$name"
+    ;;
+  start)
+    [ -d "$state/$2" ] || exit 1
+    ;;
+  exec)
+    shift
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --interactive) shift ;;
+        --workdir) shift 2 ;;
+        *) break ;;
+      esac
+    done
+    name=$1
+    shift
+    command=$1
+    shift
+    if [ "$command" = "dd" ]; then
+      destination=${1#of=}
+      filename=${destination##*/}
+      cat > "$state/$name/work/$filename" || exit 1
+      printf '%s\n' "$filename" > "$state/$name/filename"
+      exit 0
+    fi
+    filename=
+    IFS= read -r filename < "$state/$name/filename" || exit 1
+    source="$state/$name/work/$filename"
+    stem=${filename%.java}
+    case "$command" in
+      javac)
+        last=
+        for argument in "$@"; do last=$argument; done
+        last=${last##*/}
+        if grep -q 'REQUIRE_EXAMPLE_FILENAME' "$source" && [ "$last" != "Example.java" ]; then
+          printf %s 'wrong Java filename' >&2
+          exit 1
+        fi
+        if grep -q 'COMPILE_ERROR' "$source"; then
+          printf %s 'Example.java:1: error: simulated compiler diagnostic' >&2
+          exit 1
+        fi
+        : > "$state/$name/work/$stem.class"
+        ;;
+      find)
+        printf '/work/%s.class\n' "$stem"
+        ;;
+      javap)
+        if grep -q 'NO_MAIN' "$source"; then
+          printf 'public class %s {}\n' "$stem"
+        else
+          printf 'public class %s { public static void main(java.lang.String[]); }\n' "$stem"
+        fi
+        ;;
+      java)
+        if grep -q 'TIMEOUT' "$source"; then
+          exec sleep 2
+        fi
+        if grep -q 'OVERFLOW' "$source"; then
+          i=0
+          while [ "$i" -lt 256 ]; do
+            printf x
+            i=$((i + 1))
+          done
+          exit 0
+        fi
+        if grep -q 'ECHO_STDOUT' "$source"; then
+          cat
+        elif grep -q 'ECHO_STDERR' "$source"; then
+          cat >&2
+        elif grep -q 'STDOUT_ONE' "$source"; then
+          printf one
+        elif grep -q 'STDOUT_TWO' "$source"; then
+          printf two
+        fi
+        if grep -q 'STDERR_ONE' "$source"; then printf first >&2; fi
+        if grep -q 'STDERR_TWO' "$source"; then printf second >&2; fi
+        if grep -q 'EXIT_7' "$source"; then exit 7; fi
+        if grep -q 'EXIT_8' "$source"; then exit 8; fi
+        ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  rm)
+    name=
+    for argument in "$@"; do name=$argument; done
+    directory="$state/$name"
+    if [ -d "$directory" ]; then
+      find "$directory" -depth -delete
+    fi
+    ;;
+  *) exit 2 ;;
+esac
+"#;
+
     async fn test_app(data: &TestData) -> axum::Router {
         let state = AppState::new(Config {
             bind: "127.0.0.1:0".parse().unwrap(),
@@ -818,6 +1072,11 @@ fi
             java_bin: "java".into(),
             analyzer_timeout: Duration::from_secs(1),
             analyzer_output_bytes: 1024,
+            runner_image: None,
+            container_bin: "docker".into(),
+            runner_compile_timeout: Duration::from_secs(1),
+            runner_case_timeout: Duration::from_secs(1),
+            runner_output_bytes: 1024,
         })
         .await
         .unwrap();
@@ -850,6 +1109,11 @@ fi
             java_bin: java,
             analyzer_timeout,
             analyzer_output_bytes: 16 * 1024,
+            runner_image: None,
+            container_bin: "docker".into(),
+            runner_compile_timeout: Duration::from_secs(1),
+            runner_case_timeout: Duration::from_secs(1),
+            runner_output_bytes: 1024,
         })
         .await
         .unwrap();
@@ -872,6 +1136,52 @@ fi
             java_bin: java,
             analyzer_timeout: Duration::from_secs(10),
             analyzer_output_bytes: 1024 * 1024,
+            runner_image: None,
+            container_bin: "docker".into(),
+            runner_compile_timeout: Duration::from_secs(1),
+            runner_case_timeout: Duration::from_secs(1),
+            runner_output_bytes: 1024,
+        })
+        .await
+        .unwrap();
+        app(state)
+    }
+
+    #[cfg(unix)]
+    async fn test_app_with_runner(
+        data: &TestData,
+        mode: &str,
+        case_timeout: Duration,
+        output_bytes: u64,
+    ) -> axum::Router {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::create_dir_all(&data.0).await.unwrap();
+        let container_bin = data.0.join("fake-docker");
+        fs::write(&container_bin, FAKE_DOCKER).await.unwrap();
+        fs::write(data.0.join("fake-docker.mode"), mode)
+            .await
+            .unwrap();
+        let mut permissions = fs::metadata(&container_bin).await.unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&container_bin, permissions)
+            .await
+            .unwrap();
+
+        let state = AppState::new(Config {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            data_dir: data.0.join("data"),
+            max_project_bytes: 4096,
+            secure_cookies: false,
+            analyzer_jar: None,
+            java_bin: "java".into(),
+            analyzer_timeout: Duration::from_secs(1),
+            analyzer_output_bytes: 1024,
+            runner_image: Some("fake-java21".to_owned()),
+            container_bin,
+            runner_compile_timeout: Duration::from_secs(1),
+            runner_case_timeout: case_timeout,
+            runner_output_bytes: output_bytes,
         })
         .await
         .unwrap();
@@ -1035,6 +1345,66 @@ fi
                 .to_string(),
             ))
             .unwrap()
+    }
+
+    fn verify_request(
+        cookie: &str,
+        project_id: &str,
+        baseline_revision: u64,
+        candidate_revision: u64,
+        cases: Value,
+    ) -> Request<Body> {
+        Request::post(format!("/api/v1/projects/{project_id}/verify"))
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "baseline_revision": baseline_revision,
+                    "candidate_revision": candidate_revision,
+                    "test_cases": cases
+                })
+                .to_string(),
+            ))
+            .unwrap()
+    }
+
+    async fn update_source(
+        app: &axum::Router,
+        cookie: &str,
+        project_id: &str,
+        source: &str,
+        revision: u64,
+    ) -> axum::response::Response {
+        app.clone()
+            .oneshot(
+                Request::put(format!("/api/v1/projects/{project_id}/source"))
+                    .header(header::COOKIE, cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "source": source,
+                            "expected_revision": revision
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn project_with_revisions(
+        app: &axum::Router,
+        cookie: &str,
+        baseline: &str,
+        candidate: &str,
+    ) -> String {
+        let project =
+            response_json(upload_source(app, cookie, "Example.java", baseline).await).await;
+        let project_id = project["id"].as_str().unwrap().to_owned();
+        let response = update_source(app, cookie, &project_id, candidate, 1).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        project_id
     }
 
     #[tokio::test]
@@ -1207,7 +1577,7 @@ fi
     }
 
     #[tokio::test]
-    async fn generated_openapi_documents_cfg_and_transform_routes() {
+    async fn generated_openapi_documents_cfg_transform_and_verify_routes() {
         let data = TestData::new();
         let app = test_app(&data).await;
         let response = app
@@ -1226,7 +1596,9 @@ fi
                 .is_object()
         );
         assert!(document["paths"]["/api/v1/projects/{project_id}/transform"]["post"].is_object());
+        assert!(document["paths"]["/api/v1/projects/{project_id}/verify"]["post"].is_object());
         assert!(document["components"]["schemas"]["TransformRequest"].is_object());
+        assert!(document["components"]["schemas"]["VerificationReport"].is_object());
     }
 
     #[tokio::test]
@@ -1792,6 +2164,292 @@ fi
         assert!(!project_directory(&data, &cookie, &project_id)
             .join("revisions/3/Example.java")
             .exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn verify_compiles_original_filename_and_handles_multiple_utf8_inputs() {
+        let data = TestData::new();
+        let app = test_app_with_runner(&data, "", Duration::from_secs(1), 4096).await;
+        let cookie = guest_cookie(&app).await;
+        let source = "// ECHO_STDOUT REQUIRE_EXAMPLE_FILENAME\npublic class Example { public static void main(String[] args) {} }\n";
+        let project_id = project_with_revisions(&app, &cookie, source, source).await;
+        let cases = serde_json::json!([
+            {"name": "positive", "stdin": "5\n"},
+            {"name": "negative", "stdin": "-3\n"},
+            {"name": "cyrillic", "stdin": "Привет, мир!\n"}
+        ]);
+
+        let response = app
+            .oneshot(verify_request(&cookie, &project_id, 1, 2, cases))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let report = response_json(response).await;
+        assert_eq!(report["status"], "passed");
+        assert_eq!(report["baseline_compilation"]["status"], "completed");
+        assert_eq!(report["candidate_compilation"]["main_class"], "Example");
+        assert_eq!(report["executed_test_cases"], 3);
+        assert_eq!(
+            report["test_cases"][2]["baseline"]["stdout"]["utf8"],
+            "Привет, мир!\n"
+        );
+        let state = data.0.join("fake-docker.state");
+        assert_eq!(std::fs::read_dir(state).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn verify_reports_compilation_failure_and_missing_main_without_running_cases() {
+        for (candidate, expected_status, expected_code) in [
+            (
+                "// COMPILE_ERROR\npublic class Example {}\n",
+                "failed",
+                "javac_failed",
+            ),
+            (
+                "// NO_MAIN\npublic class Example {}\n",
+                "missing_main",
+                "main_method_not_found",
+            ),
+        ] {
+            let data = TestData::new();
+            let app = test_app_with_runner(&data, "", Duration::from_secs(1), 4096).await;
+            let cookie = guest_cookie(&app).await;
+            let baseline = "public class Example { public static void main(String[] args) {} }\n";
+            let project_id = project_with_revisions(&app, &cookie, baseline, candidate).await;
+            let response = app
+                .oneshot(verify_request(
+                    &cookie,
+                    &project_id,
+                    1,
+                    2,
+                    serde_json::json!([{"name": "case", "stdin": ""}]),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let report = response_json(response).await;
+            assert_eq!(report["status"], "compilation_failed");
+            assert_eq!(report["candidate_compilation"]["status"], expected_status);
+            assert_eq!(
+                report["candidate_compilation"]["diagnostics"][0]["code"],
+                expected_code
+            );
+            assert_eq!(report["executed_test_cases"], 0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn verify_reports_stdout_stderr_and_exit_code_differences() {
+        for (baseline, candidate, field) in [
+            (
+                "// STDOUT_ONE\nclass Example {}",
+                "// STDOUT_TWO\nclass Example {}",
+                "stdout",
+            ),
+            (
+                "// STDERR_ONE\nclass Example {}",
+                "// STDERR_TWO\nclass Example {}",
+                "stderr",
+            ),
+            (
+                "// EXIT_7\nclass Example {}",
+                "// EXIT_8\nclass Example {}",
+                "exit_code",
+            ),
+        ] {
+            let data = TestData::new();
+            let app = test_app_with_runner(&data, "", Duration::from_secs(1), 4096).await;
+            let cookie = guest_cookie(&app).await;
+            let project_id = project_with_revisions(&app, &cookie, baseline, candidate).await;
+            let response = app
+                .oneshot(verify_request(
+                    &cookie,
+                    &project_id,
+                    1,
+                    2,
+                    serde_json::json!([{"name": "different", "stdin": ""}]),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let report = response_json(response).await;
+            assert_eq!(report["status"], "failed");
+            assert_eq!(report["test_cases"][0]["passed"], false);
+            assert_eq!(report["test_cases"][0]["mismatches"][0]["field"], field);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn verify_records_timeout_and_output_overflow_and_cleans_up() {
+        for (marker, timeout, output_bytes, observation_field) in [
+            ("TIMEOUT", Duration::from_millis(30), 4096, "timed_out"),
+            ("OVERFLOW", Duration::from_secs(1), 32, "output_overflow"),
+        ] {
+            let data = TestData::new();
+            let app = test_app_with_runner(&data, "", timeout, output_bytes).await;
+            let cookie = guest_cookie(&app).await;
+            let source = format!("// {marker}\nclass Example {{}}\n");
+            let project_id = project_with_revisions(&app, &cookie, &source, &source).await;
+            let response = app
+                .oneshot(verify_request(
+                    &cookie,
+                    &project_id,
+                    1,
+                    2,
+                    serde_json::json!([{"name": "bounded", "stdin": ""}]),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let report = response_json(response).await;
+            assert_eq!(report["status"], "failed");
+            assert_eq!(report["test_cases"][0]["baseline"][observation_field], true);
+            assert_eq!(
+                std::fs::read_dir(data.0.join("fake-docker.state"))
+                    .unwrap()
+                    .count(),
+                0
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn verify_rejects_missing_revision_and_cross_session_access() {
+        let data = TestData::new();
+        let app = test_app_with_runner(&data, "", Duration::from_secs(1), 4096).await;
+        let owner = guest_cookie(&app).await;
+        let other = guest_cookie(&app).await;
+        let project = response_json(upload(&app, &owner, "Example.java").await).await;
+        let project_id = project["id"].as_str().unwrap();
+        let cases = serde_json::json!([{"name": "case", "stdin": ""}]);
+
+        let missing = app
+            .clone()
+            .oneshot(verify_request(&owner, project_id, 1, 2, cases.clone()))
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(missing).await["code"], "revision_not_found");
+
+        let forbidden = app
+            .oneshot(verify_request(&other, project_id, 1, 1, cases))
+            .await
+            .unwrap();
+        assert_eq!(forbidden.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(forbidden).await["code"], "project_not_found");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn verify_reports_container_failure_as_infrastructure_error() {
+        let data = TestData::new();
+        let app = test_app_with_runner(&data, "create-failure", Duration::from_secs(1), 4096).await;
+        let cookie = guest_cookie(&app).await;
+        let source = "class Example {}\n";
+        let project_id = project_with_revisions(&app, &cookie, source, source).await;
+        let response = app
+            .oneshot(verify_request(
+                &cookie,
+                &project_id,
+                1,
+                2,
+                serde_json::json!([{"name": "case", "stdin": ""}]),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response_json(response).await["code"], "runner_failed");
+    }
+
+    #[tokio::test]
+    async fn verify_reports_unconfigured_runner_without_host_fallback() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let source = "class Example {}\n";
+        let project_id = project_with_revisions(&app, &cookie, source, source).await;
+        let response = app
+            .oneshot(verify_request(
+                &cookie,
+                &project_id,
+                1,
+                2,
+                serde_json::json!([{"name": "case", "stdin": ""}]),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response_json(response).await["code"], "runner_unavailable");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker and a built Java 21 runner image via BLUEPRINTS_REAL_RUNNER_IMAGE"]
+    async fn real_container_http_verification() {
+        let Some(image) = std::env::var("BLUEPRINTS_REAL_RUNNER_IMAGE").ok() else {
+            eprintln!("SKIPPED: BLUEPRINTS_REAL_RUNNER_IMAGE is not set");
+            return;
+        };
+        let container_bin = std::env::var_os("BLUEPRINTS_REAL_CONTAINER_BIN")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("docker"));
+        let available = tokio::process::Command::new(&container_bin)
+            .args(["image", "inspect", &image])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .is_ok_and(|status| status.success());
+        if !available {
+            eprintln!("SKIPPED: Docker is unavailable or the configured runner image is missing");
+            return;
+        }
+
+        let data = TestData::new();
+        let state = AppState::new(Config {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            data_dir: data.0.clone(),
+            max_project_bytes: 4096,
+            secure_cookies: false,
+            analyzer_jar: None,
+            java_bin: "java".into(),
+            analyzer_timeout: Duration::from_secs(1),
+            analyzer_output_bytes: 1024,
+            runner_image: Some(image),
+            container_bin,
+            runner_compile_timeout: Duration::from_secs(15),
+            runner_case_timeout: Duration::from_secs(2),
+            runner_output_bytes: 64 * 1024,
+        })
+        .await
+        .unwrap();
+        let app = app(state);
+        let cookie = guest_cookie(&app).await;
+        let baseline = "import java.io.*; public class Example { public static void main(String[] args) throws Exception { System.out.print(new BufferedReader(new InputStreamReader(System.in)).readLine()); } }\n";
+        let candidate = "import java.io.*; public class Example { public static void main(String[] args) throws Exception { String value = new BufferedReader(new InputStreamReader(System.in)).readLine(); System.out.print(value); } }\n";
+        let project_id = project_with_revisions(&app, &cookie, baseline, candidate).await;
+        let response = app
+            .oneshot(verify_request(
+                &cookie,
+                &project_id,
+                1,
+                2,
+                serde_json::json!([{"name": "utf8", "stdin": "Привет\n"}]),
+            ))
+            .await
+            .unwrap();
+        let status = response.status();
+        let report = response_json(response).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(report["status"], "passed");
+        assert_eq!(
+            report["test_cases"][0]["baseline"]["stdout"]["utf8"],
+            "Привет"
+        );
     }
 
     #[tokio::test]

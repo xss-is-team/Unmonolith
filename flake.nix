@@ -17,7 +17,7 @@
               rustc
               rustfmt
               clippy
-              jdk25
+              jdk21
               maven
               nodejs_22
               pnpm

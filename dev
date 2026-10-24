@@ -11,6 +11,8 @@ Java Blueprints commands (run from the repository root):
   ./dev web-install   Install frontend dependencies
   ./dev web           Start Next.js on :3001
   ./dev parser-build  Build the Java parser CLI
+  ./dev runner-build  Build the isolated Java 21 runner image
+  ./dev runner-test   Run the opt-in real-container verification test
   ./dev up            Install project deps, build, and start the app
   ./dev api-check     Run Rust format and compile checks
   ./dev api-test      Run Rust tests
@@ -58,6 +60,13 @@ case "$command" in
     ;;
   parser-build)
     run_in apps/parser mvn package
+    ;;
+  runner-build)
+    exec docker build -t java-blueprints-runner:java21 "$ROOT/apps/runner"
+    ;;
+  runner-test)
+    export BLUEPRINTS_REAL_RUNNER_IMAGE="${BLUEPRINTS_REAL_RUNNER_IMAGE:-java-blueprints-runner:java21}"
+    run_in apps/api cargo test api::tests::real_container_http_verification -- --ignored --exact --nocapture
     ;;
   up)
     require_tools
