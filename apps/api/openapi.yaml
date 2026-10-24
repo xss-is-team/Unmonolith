@@ -1,16 +1,17 @@
 openapi: 3.0.3
 info:
   title: Java Blueprints MVP API
-  version: 0.1.0
+  version: 0.3.0
   description: |
-    M1: guest sessions, single-Java-file projects, revisioned source, analyzer adapter.
-    Paths marked 'Planned M2+' are future contract only and MUST NOT be implemented as successful M1 endpoints.
+    Guest sessions, revisioned single-file Java projects, JDT analysis, nested per-method CFG access,
+    and the restricted replace_condition transformation workflow.
 servers:
   - url: /api/v1
 tags:
   - name: Sessions
   - name: Projects
   - name: Analysis
+  - name: Transformations
   - name: Planned M2+
   - name: System
 paths:
@@ -141,17 +142,35 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/Unavailable'}
         '504': {$ref: '#/components/responses/Timeout'}
-  /projects/{project_id}/methods/{method_id}/cfg:
+  /projects/{project_id}/methods:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
-      - name: method_id
+    get:
+      operationId: listMethods
+      tags: [Analysis]
+      description: Lists methods and constructors with CFGs in the current revision's analysis artifact.
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Revision-local CFG method selectors
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MethodsResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /projects/{project_id}/methods/{method_selector}/cfg:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - name: method_selector
         in: path
         required: true
-        schema: {type: string}
+        description: Opaque, URL-safe, revision-local selector returned by the methods endpoint.
+        schema: {type: string, example: m1}
     get:
       operationId: getMethodCfg
-      tags: [Planned M2+]
-      description: Planned M2. Do NOT implement in M1.
+      tags: [Analysis]
+      description: Returns the selected CFG object exactly as emitted inside the current revision's nested AST.
       security: [{guestSession: []}]
       responses:
         '200':
@@ -159,13 +178,18 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Cfg'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /projects/{project_id}/transform:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
     post:
       operationId: transformProject
-      tags: [Planned M2+]
-      description: Planned M3. Only allow AST-backed typed changes; no arbitrary CFG graph-to-Java generation.
+      tags: [Transformations]
+      description: |
+        Applies replace_condition through the Java AST worker, reparses the result, and commits it as a
+        new revision only when parsing and semantic validation complete without errors.
       security: [{guestSession: []}]
       requestBody:
         required: true
@@ -177,7 +201,14 @@ paths:
           description: New source revision
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Project'}
+              schema: {$ref: '#/components/schemas/TransformResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        '504': {$ref: '#/components/responses/Timeout'}
   /projects/{project_id}/verify:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -235,12 +266,12 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ApiError'}
     NotFound:
-      description: Project does not exist or not owned by current session
+      description: Project, current analysis, method, or node does not exist
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ApiError'}
     Conflict:
-      description: Stale source revision
+      description: Stale source revision or mismatched analysis artifact
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ApiError'}
@@ -255,7 +286,12 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ApiError'}
     Timeout:
-      description: Java worker timeout
+      description: Java analysis or transformation worker timeout
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    Unprocessable:
+      description: Transformation target or worker result is invalid
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ApiError'}
@@ -285,9 +321,10 @@ components:
       required: [start, length]
       properties:
         file: {type: string}
-        start: {type: integer, minimum: 0, description: 'Source offset in worker-defined units; choose UTF-16 for JDT and document mapping'}
-        length: {type: integer, minimum: 0}
+        start: {type: integer, minimum: 0, description: 'UTF-16 code-unit offset, matching JDT String indices'}
+        length: {type: integer, minimum: 0, description: 'UTF-16 code-unit length'}
         line: {type: integer, minimum: 1}
+        end_line: {type: integer, minimum: 1}
     Method:
       type: object
       required: [id, name, source_range]
@@ -316,26 +353,49 @@ components:
         diagnostics:
           type: array
           items: {$ref: '#/components/schemas/Diagnostic'}
+    MethodsResponse:
+      type: object
+      required: [revision, methods]
+      properties:
+        revision: {type: integer, minimum: 1}
+        methods:
+          type: array
+          items: {$ref: '#/components/schemas/CfgMethod'}
+    CfgMethod:
+      type: object
+      required: [selector, id, name, kind, source_range]
+      properties:
+        selector: {type: string, example: m1, description: 'Opaque and valid only for this analyzed revision'}
+        id: {type: string, example: 'Example.process(int)'}
+        name: {type: string, example: process}
+        kind: {type: string, enum: [method, constructor]}
+        source_range: {$ref: '#/components/schemas/SourceRange'}
     CfgNode:
       type: object
-      required: [id, kind, label, source_range]
+      required: [id, kind, source_range]
       properties:
         id: {type: string}
-        kind: {type: string, example: condition}
-        label: {type: string}
+        kind: {type: string, example: branch}
+        statement_kind: {type: string, example: if}
+        text: {type: string, example: 'count > 0'}
         source_range: {$ref: '#/components/schemas/SourceRange'}
+        reachable: {type: boolean, description: 'Omitted when true; false marks an unreachable node'}
     CfgEdge:
       type: object
-      required: [source, target, kind]
+      required: [from, to, kind]
       properties:
-        source: {type: string}
-        target: {type: string}
+        from: {type: string}
+        to: {type: string}
         kind: {type: string, example: 'true'}
+        label: {type: string}
+        back: {type: boolean, description: 'Present and true for a cycle-closing edge'}
     Cfg:
       type: object
-      required: [method_id, nodes, edges]
+      required: [method_id, entry, exit, nodes, edges]
       properties:
         method_id: {type: string}
+        entry: {type: string, example: m1.n0}
+        exit: {type: string, example: m1.n1}
         nodes:
           type: array
           items: {$ref: '#/components/schemas/CfgNode'}
@@ -344,12 +404,23 @@ components:
           items: {$ref: '#/components/schemas/CfgEdge'}
     TransformRequest:
       type: object
-      required: [expected_revision, operation, node_id, expression]
+      required: [base_revision, method_id, node_id, operation]
       properties:
-        expected_revision: {type: integer, minimum: 1}
-        operation: {type: string, enum: [replace_expression, replace_condition]}
-        node_id: {type: string}
-        expression: {type: string}
+        base_revision: {type: integer, minimum: 1}
+        method_id: {type: string, example: 'Example.process(int)'}
+        node_id: {type: string, example: m1.n2}
+        operation:
+          type: object
+          required: [type, expression]
+          properties:
+            type: {type: string, enum: [replace_condition]}
+            expression: {type: string, example: 'count >= 0'}
+    TransformResponse:
+      type: object
+      required: [revision, source]
+      properties:
+        revision: {type: integer, minimum: 2}
+        source: {type: string}
     VerifyRequest:
       type: object
       required: [original_revision, candidate_revision, cases]

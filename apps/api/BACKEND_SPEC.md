@@ -39,6 +39,14 @@ Official brief's initial scale is about 1,000 lines in a Java monolith. Support 
 **M5 — Case completeness**
 - Extend covered Java subset to the mandatory categories (core syntax, java.lang, console IO, java.util, exceptions), improve Big-O diagnostics and recommendations, and demonstrate end-to-end coverage on an organizer-style monolith.
 
+### Current implemented slice
+
+M1 is complete. The API now also implements the M2 CFG read path and the single
+M3 operation `replace_condition`. No other M3 operation or M4/M5 behavior is
+implemented. The parser CFG is nested on each method/constructor member in
+`types[].members[]` (including nested types); the flat root `methods[]` list is
+only a summary and is not the CFG source.
+
 ## 2. Persistence without DB
 Data lives under `BLUEPRINTS_DATA_DIR` (default `./data`):
 ```
@@ -61,7 +69,9 @@ data/
 - Import: one file as multipart key `file`; preserve only its safe basename for metadata and revision storage.
 - `GET /source`: Java source as `text/plain; charset=utf-8`, `X-Source-Revision` response header.
 - `PUT /source`: `application/json` with `{source, expected_revision}`; return new revision on success.
-- Analysis returns `{revision, status, methods, diagnostics}`. Each method has a stable-in-revision identifier; diagnostics have severity, message, source range; CFG is loaded per selected method in M2.
+- Analysis returns `{revision, status, methods, diagnostics}`. Each method has a stable-in-revision identifier; diagnostics have severity, message, source range.
+- `GET /projects/{project_id}/methods` reads only `analysis/<current revision>.json`, traverses nested AST members, and returns methods/constructors with CFGs plus an opaque revision-local URL selector.
+- `GET /projects/{project_id}/methods/{selector}/cfg` returns the selected nested parser CFG unchanged. CFG node and source-range offsets are UTF-16 code units.
 - Detailed AST remains internal; don't ship a whole-tree AST for large projects.
 
 ### Java worker protocol, M1 adapter / M2 implementation
@@ -69,8 +79,16 @@ data/
 - Worker process receives no execution privileges beyond reading the source. Cap runtime, captured stdout/stderr size and concurrency; drain both streams concurrently.
 - Worker writes exactly one UTF-8 JSON document to stdout with `protocol_version: 1`, `status: completed|partial|failed`, `methods`, `diagnostics`, and its internal AST data. It does not receive or emit the project revision.
 - Rust validates the exit code, protocol version, output JSON size and shape, attaches the trusted project revision, and atomically stores the full parser result under `analysis/<revision>.json`. A missing worker or malformed response is an error. No fake `success` response.
-- Method CFG response uses `{method_id, nodes:[{id,kind,label,source_range}], edges:[{source,target,kind}]}`.
+- Method CFG response uses the worker's exact shape: `{method_id, entry, exit, nodes:[{id,kind,statement_kind?,text?,source_range,reachable?}], edges:[{from,to,kind,label?,back?}]}`.
 - Important: don't assume CFG alone can reconstruct Java. Keep source/AST and use AST-aware rewrite for edits.
+
+### Java worker transform protocol
+
+- Rust invokes `java -jar <jar> transform --input <absolute source> --operation <absolute JSON> --output <absolute output>` with direct argv. The positional analysis CLI is unchanged.
+- The operation JSON is `{method_id, node_id, operation:{type:"replace_condition", expression}}`. `base_revision` remains Rust-owned concurrency metadata. Rust validates the revision, method and branch node against that revision's stored analysis before invocation.
+- A successful worker exits zero, writes the transformed UTF-8 Java source to the output file, and emits a JSON document with `status: "completed"` on stdout. A rejected change exits nonzero with `{"status":"failed","error":{"code":"...","message":"..."}}`.
+- Rust uses an isolated temporary directory, bounded stdout/stderr, kill-on-drop and the configured analyzer timeout. It reparses the candidate and rejects partial analysis or a missing selected method CFG.
+- The accepted source and complete new-revision analysis artifact are written before atomically advancing project metadata. Transformations share the source-write lock, so concurrent requests based on the same revision cannot both commit.
 
 ## 4. Safety
 - All uploaded source is untrusted. Java analysis must not run the submitted program, `main`, build scripts or annotation processors.
