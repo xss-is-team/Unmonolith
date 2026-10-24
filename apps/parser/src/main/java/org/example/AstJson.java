@@ -172,7 +172,9 @@ final class AstJson {
         m.put("throws", texts(md.thrownExceptionTypes()));
         m.put("resolved_throws", mb == null ? null : typeInfos(mb.getExceptionTypes()));
         m.put("body", md.getBody() == null ? null : block(md.getBody()));
-        m.put("cfg", md.getBody() == null ? null : cfg(md, id));
+        Map<String, Object> cfg = md.getBody() == null ? null : cfg(md, id);
+        m.put("cfg", cfg);
+        m.put("analysis", md.getBody() == null ? null : analysis(md, id, cfg));
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("id", id);
@@ -180,6 +182,22 @@ final class AstJson {
         summary.put("source_range", range(md));
         methods.add(summary);
         return m;
+    }
+
+    /** Complexity analysis is best effort: a failure becomes a warning and `analysis: null`, never a failed parse. */
+    private Map<String, Object> analysis(MethodDeclaration md, String methodId, Map<String, Object> cfg) {
+        try {
+            return new ComplexityAnalyzer(this, cu, md, cfg).analyze();
+        } catch (RuntimeException | StackOverflowError e) {
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("code", "analysis_failed");
+            d.put("category", "analysis");
+            d.put("severity", "warning");
+            d.put("message", "Complexity analysis could not be completed for " + methodId + ": " + e);
+            d.put("source_range", range(md));
+            cfgFailures.add(d);
+            return null;
+        }
     }
 
     /** A CFG failure must not invalidate the AST: report it as a warning and emit `cfg: null`. */
