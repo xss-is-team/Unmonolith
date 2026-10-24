@@ -12,14 +12,6 @@ const nextConfig: NextConfig = {
       { source: "/swagger-ui/:path*", destination: `${apiOrigin}/swagger-ui/:path*` },
     ];
   },
-  turbopack: {
-    rules: {
-      "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
-        as: "*.css",
-      },
-    },
-  },
 };
 
 export default nextConfig;

@@ -1,10 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
 import useSWR from "swr";
-import ELK from "elkjs/lib/elk.bundled.js";
-import dagre from "@dagrejs/dagre";
 import {
   Background,
   Controls,
@@ -22,7 +20,6 @@ import {
   ArrowUpRight,
   Boxes,
   Braces,
-  CircleHelp,
   ChevronRight,
   FileCode2,
   FolderOpen,
@@ -34,7 +31,6 @@ import {
   ApiError,
   getProjectGraph,
   type CfgMethod,
-  type ProjectGraph,
   type ProjectGraphResponse,
   type SourceRange,
 } from "@/lib/api";
@@ -43,7 +39,6 @@ import { toProjectOverviewModel, type ProjectOverviewType } from "@/lib/project-
 const NODE_WIDTH = 224;
 const NODE_HEIGHT = 90;
 const MAX_VISIBLE_TYPES = 250;
-const elk = new ELK();
 const EDGE_LABELS: Record<string, string> = {
   calls: "Вызовы",
   constructs: "Создание объектов",
@@ -63,13 +58,13 @@ type TypeNodeData = {
 type FlowNode = Node<TypeNodeData, "project-type">;
 type ProjectEdge = Edge & { data: { kind: string; count: number } };
 
-function ProjectTypeNode({ data }: NodeProps<FlowNode>) {
+const ProjectTypeNode = memo(function ProjectTypeNode({ data }: NodeProps<FlowNode>) {
   const TypeIcon = data.kind === "interface" ? Braces : Boxes;
   return (
-    <div className={`project-type-node${data.selected ? " project-type-node--selected" : ""}`}>
+    <div className={`h-[90px] w-56 rounded-lg border bg-slate-900 shadow-lg ${data.selected ? "border-cyan-400 ring-2 ring-cyan-400/20" : "border-slate-600"}`}>
       <Handle type="target" position={Position.Left} />
       <button
-        className="project-type-node__action nodrag nopan"
+        className="nodrag nopan flex size-full flex-col gap-1.5 border-0 bg-transparent p-2.5 text-left text-slate-300"
         type="button"
         aria-label={`Выбрать ${data.kind === "interface" ? "интерфейс" : "класс"} ${data.qualifiedName}; методов: ${data.methodCount}`}
         onClick={(event) => {
@@ -77,42 +72,38 @@ function ProjectTypeNode({ data }: NodeProps<FlowNode>) {
           data.selectType();
         }}
       >
-        <span className="project-type-node__top">
-          <span className="project-type-node__icon"><TypeIcon size={14} /></span>
+        <span className="flex w-full items-center gap-1.5 text-[8px] text-slate-500">
+          <span className="grid size-[21px] place-items-center rounded bg-violet-400/10 text-violet-400"><TypeIcon size={14} /></span>
           <small>{data.kind.replace("_", " ")}</small>
-          <span className="project-type-node__count">{data.methodCount} методов</span>
+          <span className="ml-auto">{data.methodCount} методов</span>
         </span>
-        <strong title={data.qualifiedName}>{data.name}</strong>
-        <span className="project-type-node__path">{data.qualifiedName}</span>
+        <strong className="text-[11px] text-slate-200" title={data.qualifiedName}>{data.name}</strong>
+        <span className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[8px] text-slate-500">{data.qualifiedName}</span>
       </button>
       <Handle type="source" position={Position.Right} />
     </div>
   );
-}
+});
 
 const nodeTypes = { "project-type": ProjectTypeNode };
 
 export function ProjectGraphViewer({
   projectId,
   revision,
+  enabled,
   methods,
   onOpenMethod,
   onSourceRangeSelect,
-  graphOverride,
-  sourceLabel,
-  fixtureFiles,
 }: {
   projectId: string;
   revision: number;
+  enabled: boolean;
   methods: CfgMethod[];
   onOpenMethod: (selector: string) => void;
   onSourceRangeSelect: (range: SourceRange) => void;
-  graphOverride?: ProjectGraph;
-  sourceLabel?: string;
-  fixtureFiles?: Record<string, string>;
 }) {
   const graphRequest = useSWR<ProjectGraphResponse, unknown>(
-    graphOverride ? null : `project-graph:${projectId}:${revision}`,
+    enabled ? `project-graph:${projectId}:${revision}` : null,
     async () => {
       const response = await getProjectGraph(projectId);
       if (response.revision !== revision) {
@@ -124,7 +115,6 @@ export function ProjectGraphViewer({
   );
   const [query, setQuery] = useState("");
   const [edgeKind, setEdgeKind] = useState("all");
-  const [activeSourceRange, setActiveSourceRange] = useState<SourceRange | null>(null);
   const navigationKey = `${projectId}:${revision}`;
   const [navigation, setNavigation] = useState({ key: navigationKey, packagePath: [] as string[], selectedTypeId: null as string | null });
   const activeNavigation = navigation.key === navigationKey
@@ -147,9 +137,8 @@ export function ProjectGraphViewer({
   }, [navigationKey]);
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
 
-  const graph = graphOverride ?? graphRequest.data?.graph ?? null;
+  const graph = graphRequest.data?.graph ?? null;
   const overview = useMemo(() => graph ? toProjectOverviewModel(graph) : null, [graph]);
-  const isLocalFixture = Boolean(sourceLabel);
   const typeNodes = useMemo(
     () => overview?.types ?? [],
     [overview],
@@ -201,30 +190,10 @@ export function ProjectGraphViewer({
   );
   const selectedType = filteredTypes.find((node) => node.id === selectedTypeId) ?? filteredTypes[0] ?? null;
   const selectedMethods = selectedType?.methods ?? [];
-  const sourcePreview = useMemo(() => {
-    const file = activeSourceRange?.file;
-    const contents = file ? fixtureFiles?.[file] : undefined;
-    if (!activeSourceRange || !file || contents === undefined) return null;
-    const lines = contents.split("\n");
-    const first = Math.max(1, (activeSourceRange.line ?? 1) - 2);
-    const last = Math.min(lines.length, (activeSourceRange.end_line ?? activeSourceRange.line ?? first) + 2);
-    return {
-      file,
-      first,
-      range: activeSourceRange,
-      lines: lines.slice(first - 1, last).map((text, index) => ({
-        number: first + index,
-        text,
-        selected: first + index >= (activeSourceRange.line ?? first)
-          && first + index <= (activeSourceRange.end_line ?? activeSourceRange.line ?? first),
-      })),
-    };
-  }, [activeSourceRange, fixtureFiles]);
-
   useEffect(() => {
     let cancelled = false;
     if (!filteredTypes.length) return;
-    void elk.layout({
+    void import("elkjs/lib/elk.bundled.js").then(({ default: ELK }) => new ELK().layout({
       id: "project-overview",
       layoutOptions: {
         "elk.algorithm": "layered",
@@ -240,12 +209,12 @@ export function ProjectGraphViewer({
         sources: [edge.from],
         targets: [edge.to],
       })),
-    }).then((layout) => {
+    })).then((layout) => {
       if (!cancelled) {
         setPositions(new Map(layout.children?.map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]) ?? []));
       }
     }).catch(() => {
-      if (!cancelled) setPositions(layoutFallback(filteredTypes, projectedEdges));
+      if (!cancelled) setPositions(layoutFallback(filteredTypes));
     });
     return () => { cancelled = true; };
   }, [filteredTypes, projectedEdges]);
@@ -292,6 +261,7 @@ export function ProjectGraphViewer({
   }
 
   if (!graph || !overview) {
+    const waitingForAnalysis = !enabled;
     const error = graphRequest.error;
     const message = graphRequest.data?.graph === null
       ? "Парсер не построил граф проекта для этой ревизии. Проверьте диагностику project_graph_failed."
@@ -299,11 +269,11 @@ export function ProjectGraphViewer({
         ? "Граф появится после завершения анализа текущей ревизии."
         : error instanceof Error ? error.message : "Граф проекта недоступен.";
     return (
-      <section className="project-graph-panel" aria-label="Обзор проекта">
-        <div className="project-graph-state">
-          {graphRequest.isLoading ? <LoaderCircle className="spin" /> : <AlertCircle />}
-          <strong>{graphRequest.isLoading ? "Загружаем граф проекта" : "Обзор проекта пока недоступен"}</strong>
-          <p>{graphRequest.isLoading ? "Запрашиваем структуру текущей ревизии." : message}</p>
+      <section className="flex size-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#080f1b]" aria-label="Обзор проекта">
+        <div className="flex min-h-48 flex-col items-center justify-center gap-2 p-5 text-center text-slate-500">
+          {waitingForAnalysis || graphRequest.isLoading ? <LoaderCircle className="spin" /> : <AlertCircle />}
+          <strong>{waitingForAnalysis ? "Ожидаем анализ проекта" : graphRequest.isLoading ? "Загружаем граф проекта" : "Обзор проекта пока недоступен"}</strong>
+          <p>{waitingForAnalysis ? "Граф будет загружен после завершения анализа сохранённой ревизии." : graphRequest.isLoading ? "Запрашиваем структуру текущей ревизии." : message}</p>
         </div>
       </section>
     );
@@ -311,33 +281,26 @@ export function ProjectGraphViewer({
 
   const unresolved = overview.unresolvedCalls;
   const externals = overview.types.flatMap((type) => type.externalSupertypes.map((external) => ({ owner: type, ...external })));
-  const canNavigateToSource = !isLocalFixture && overview.scope === "compilation_unit";
-  const canOpenSource = canNavigateToSource || (isLocalFixture && Boolean(fixtureFiles));
+  const canNavigateToSource = overview.scope === "compilation_unit";
   const truncated = matchingTypes.length > filteredTypes.length;
 
   function openSourceRange(range: SourceRange) {
-    if (isLocalFixture) {
-      if (range.file && fixtureFiles?.[range.file] !== undefined) setActiveSourceRange(range);
-      return;
-    }
     onSourceRangeSelect(range);
   }
 
   return (
-    <section className="project-graph-panel" aria-label="Обзор структуры проекта">
-      <div className="project-graph-toolbar">
-        <label className="project-graph-search"><Search size={15} /><input name="projectGraphSearch" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Найти пакет, класс или интерфейс" aria-label="Найти в проекте" /></label>
-        <label className="project-graph-filter"><span>Связи</span><select name="projectGraphEdgeKind" value={edgeKind} onChange={(event) => setEdgeKind(event.target.value)} aria-label="Фильтр типов связей">
+    <section className="flex size-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#080f1b]" aria-label="Обзор структуры проекта">
+      <div className="flex min-h-[43px] items-center gap-2.5 border-b border-slate-800 bg-[#0d1625] p-2">
+        <label className="flex h-7 min-w-44 flex-1 items-center gap-1.5 rounded border border-slate-700 bg-[#08101d] px-2 text-slate-500"><Search size={15} /><input className="w-full border-0 bg-transparent text-[9px] text-slate-300 outline-none" name="projectGraphSearch" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Найти пакет, класс или интерфейс" aria-label="Найти в проекте" /></label>
+        <label className="flex items-center gap-1.5 text-[8px] text-slate-500"><span>Связи</span><select className="h-7 min-w-28 rounded border border-slate-700 bg-[#0c1422] px-2 font-mono text-[9px] text-slate-300 outline-none" name="projectGraphEdgeKind" value={edgeKind} onChange={(event) => setEdgeKind(event.target.value)} aria-label="Фильтр типов связей">
           <option value="structure">Структурные</option>
           <option value="all">Все типы</option>
           {Object.entries(EDGE_LABELS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}
         </select></label>
-        <span className={`project-graph-source${isLocalFixture ? " project-graph-source--fixture" : ""}`}>{sourceLabel ?? `РЕВИЗИЯ ${revision}`}</span>
+        <span className="whitespace-nowrap rounded border border-cyan-900 bg-cyan-400/5 px-1.5 py-1 font-mono text-[8px] font-semibold text-cyan-300">РЕВИЗИЯ {revision}</span>
       </div>
 
-      {isLocalFixture ? <div className="project-graph-fixture-note"><CircleHelp size={14} /> Синтетический многофайловый пример: связи и пути файлов не взяты из загруженного проекта.</div> : null}
-
-      <div className="project-graph-summary">
+      <div className="flex min-h-[34px] items-center gap-3 overflow-x-auto border-b border-slate-800 px-2.5 text-[8px] whitespace-nowrap text-slate-500 [&_strong]:font-mono [&_strong]:text-slate-300">
         <span><strong>{typeNodes.length}</strong> типов в проекте</span>
         {hasPackageHierarchy && !query.trim() && matchingTypes.length > 0 ? <span><strong>{matchingTypes.length}</strong> {packagePath.length ? "в текущем пакете" : "на схеме"}</span> : null}
         <span><strong>{overview.types.reduce((total, type) => total + type.methods.length, 0)}</strong> методов в проекте</span>
@@ -346,30 +309,30 @@ export function ProjectGraphViewer({
         <span><strong>{unresolved.length}</strong> неразрешённых</span>
       </div>
 
-      <div className="project-graph-canvas project-graph-canvas--stacked">
+      <div className="flex min-h-0 flex-1 flex-col">
         {hasPackageHierarchy ? (
-          <nav className="project-graph-package-nav" aria-label="Путь по пакетам">
-            <div className="project-graph-package-crumbs">
+          <nav className="flex min-h-[31px] items-center justify-between gap-2.5 border-b border-slate-800 bg-[#0b1321] px-2.5 text-[8px] text-slate-500" aria-label="Путь по пакетам">
+            <div className="flex items-center gap-1 [&_span]:flex [&_span]:items-center [&_span]:gap-1 [&_button]:border-0 [&_button]:bg-transparent [&_button]:p-0.5 [&_button]:text-[8px] [&_button]:text-slate-400">
               <button type="button" aria-current={packagePath.length === 0 && !query.trim() ? "location" : undefined} onClick={() => { setQuery(""); setPackagePath([]); setSelectedTypeId(null); }}>Весь проект</button>
               {!query.trim() ? packagePath.map((segment, index) => (
                 <span key={`${segment}-${index}`}><ChevronRight size={13} /><button type="button" aria-current={index === packagePath.length - 1 ? "location" : undefined} onClick={() => { setPackagePath((path) => path.slice(0, index + 1)); setSelectedTypeId(null); }}>{segment}</button></span>
-              )) : <span className="project-graph-package-searching"><ChevronRight size={13} /> Поиск по всему проекту</span>}
+              )) : <span className="text-slate-600"><ChevronRight size={13} /> Поиск по всему проекту</span>}
             </div>
-            {query.trim() ? <span className="project-graph-package-hint">Сбросьте поиск, чтобы вернуться к пакетам</span> : null}
+            {query.trim() ? <span className="text-slate-600">Сбросьте поиск, чтобы вернуться к пакетам</span> : null}
           </nav>
         ) : null}
-        <div className="project-graph-canvas__flow">
+        <div className="relative min-h-0 flex-1 bg-[#080f1b] [background-image:linear-gradient(rgba(51,65,85,.16)_1px,transparent_1px),linear-gradient(90deg,rgba(51,65,85,.16)_1px,transparent_1px)] [background-size:24px_24px]">
         {packageChildren.length ? (
-          <div className={`project-graph-packages${filteredTypes.length ? "" : " project-graph-packages--directory"}`} aria-label="Вложенные пакеты">
-            <p className="project-graph-package-intro">{packagePath.length ? "Вложенные пакеты" : "Пакеты проекта"}<span>Выберите пакет, чтобы перейти к его типам.</span></p>
+          <div className="absolute top-2.5 left-2.5 z-10 grid max-h-[calc(100%-20px)] w-[min(300px,calc(100%-20px))] gap-1 overflow-auto rounded-md border border-slate-700 bg-[#0a121f]/95 p-2" aria-label="Вложенные пакеты">
+            <p className="mb-1 flex justify-between text-[9px] text-slate-300">{packagePath.length ? "Вложенные пакеты" : "Пакеты проекта"}<span className="text-[8px] text-slate-500">Выберите пакет, чтобы перейти к его типам.</span></p>
             {packageChildren.slice(0, 24).map((pkg) => (
-              <button className="project-graph-package" type="button" key={pkg.name} aria-label={`Открыть пакет ${pkg.name}: ${pkg.typeCount} типов в ${pkg.files.size} файлах`} onClick={() => { setPackagePath(pkg.name.split(".")); setSelectedTypeId(null); }}>
+              <button className="flex items-center gap-2 rounded border border-slate-700 bg-slate-900 p-2 text-left text-slate-400" type="button" key={pkg.name} aria-label={`Открыть пакет ${pkg.name}: ${pkg.typeCount} типов в ${pkg.files.size} файлах`} onClick={() => { setPackagePath(pkg.name.split(".")); setSelectedTypeId(null); }}>
                 <FolderOpen size={17} />
-                <span><strong>{pkg.label}</strong><small>{pkg.typeCount} типов · {pkg.files.size} файлов</small></span>
+                <span className="grid min-w-0 flex-1 gap-0.5"><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[9px] text-slate-300">{pkg.label}</strong><small className="overflow-hidden text-ellipsis whitespace-nowrap text-[8px] text-slate-500">{pkg.typeCount} типов · {pkg.files.size} файлов</small></span>
                 <ChevronRight size={14} />
               </button>
             ))}
-            {packageChildren.length > 24 ? <p className="project-graph-package-limit">Показаны первые 24 пакета. Найдите класс через поиск, чтобы перейти к нужному месту.</p> : null}
+            {packageChildren.length > 24 ? <p className="text-[8px] text-slate-500">Показаны первые 24 пакета. Найдите класс через поиск, чтобы перейти к нужному месту.</p> : null}
           </div>
         ) : null}
         {filteredTypes.length ? (
@@ -397,61 +360,44 @@ export function ProjectGraphViewer({
             <Controls showInteractive={false} />
             <MiniMap style={{ width: 128, height: 74 }} pannable zoomable nodeColor={(node) => node.id === selectedType?.id ? "#d7ee72" : "#71917a"} />
           </ReactFlow>
-        ) : !packageChildren.length ? <div className="project-graph-empty"><Search size={19} /><strong>Типы не найдены</strong><span>Измените запрос или снимите фильтр.</span></div>
+        ) : !packageChildren.length ? <div className="grid h-full place-content-center gap-1.5 text-center text-slate-500"><Search className="mx-auto" size={19} /><strong className="text-slate-300">Типы не найдены</strong><span>Измените запрос или снимите фильтр.</span></div>
           : null}
         </div>
       </div>
 
-      {truncated ? <p className="project-graph-limit">Показаны первые {MAX_VISIBLE_TYPES} типов из {typeNodes.length}. Уточните поиск, чтобы сузить карту.</p> : null}
+      {truncated ? <p className="m-0 bg-amber-950/40 px-2.5 py-1 text-[8px] text-amber-300">Показаны первые {MAX_VISIBLE_TYPES} типов из {typeNodes.length}. Уточните поиск, чтобы сузить карту.</p> : null}
 
       {selectedType ? (
-        <div className="project-graph-inspector">
-          <div className="project-graph-inspector__head">
-            <div><small>{selectedType.kind.replace("_", " ")} · {selectedType.sourceRange.line ? `строка ${selectedType.sourceRange.line}` : "без диапазона"}</small><h3>{selectedType.qualifiedName}</h3></div>
-            {canOpenSource && selectedType.sourceRange ? <Button variant="outline" onClick={() => openSourceRange(selectedType.sourceRange)}><FileCode2 size={14} /> {isLocalFixture ? "Показать файл" : "Исходник"}</Button> : null}
+        <div className="grid max-h-[135px] grid-cols-[minmax(190px,.45fr)_minmax(260px,1fr)] gap-2.5 overflow-auto border-t border-slate-800 bg-[#0d1625] px-2.5 py-2">
+          <div className="flex items-start justify-between gap-2">
+            <div><small className="text-[8px] text-slate-500">{selectedType.kind.replace("_", " ")} · {selectedType.sourceRange.line ? `строка ${selectedType.sourceRange.line}` : "без диапазона"}</small><h3 className="mt-1 font-mono text-[10px] leading-tight text-slate-300 break-words">{selectedType.qualifiedName}</h3></div>
+            {canNavigateToSource && selectedType.sourceRange ? <Button variant="outline" onClick={() => openSourceRange(selectedType.sourceRange)}><FileCode2 size={14} /> Исходник</Button> : null}
           </div>
-          <div className="project-graph-methods" aria-label={`Методы ${selectedType.name}`}>
+          <div className="grid content-start gap-0.5" aria-label={`Методы ${selectedType.name}`}>
             {selectedMethods.length ? selectedMethods.map((method) => {
               const methodId = method.methodId ?? "";
               const matches = canNavigateToSource ? methods.filter((item) => item.id === methodId) : [];
               const target = matches.find((item) => sameSourceRange(item.source_range, method.sourceRange))
                 ?? (matches.length === 1 ? matches[0] : undefined);
               return (
-                <div className="project-graph-method" key={method.id}>
-                  <span><Braces size={13} /><strong>{method.name}</strong><small>{method.kind === "constructor" ? "конструктор" : method.sourceRange.line ? `стр. ${method.sourceRange.line}` : "метод"}</small></span>
-                  <div>
-                    {canOpenSource && method.sourceRange ? <button type="button" title={isLocalFixture ? "Показать файл и строки метода" : "Открыть место в исходнике"} onClick={() => openSourceRange(method.sourceRange)}><FileCode2 size={14} /></button> : null}
-                    {!isLocalFixture && target ? <button type="button" title="Открыть CFG и Big O" onClick={() => onOpenMethod(target.selector)}><ArrowUpRight size={14} /></button> : null}
-                    {!isLocalFixture && !target ? <small className="project-graph-no-cfg">CFG недоступен</small> : null}
+                <div className="flex items-center justify-between gap-2 rounded bg-slate-900 px-1.5 py-1" key={method.id}>
+                  <span className="flex min-w-0 items-center gap-1.5"><Braces size={13} /><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[8px] text-slate-300">{method.name}</strong><small className="text-[7px] text-slate-500">{method.kind === "constructor" ? "конструктор" : method.sourceRange.line ? `стр. ${method.sourceRange.line}` : "метод"}</small></span>
+                  <div className="flex items-center gap-1 [&_button]:grid [&_button]:size-[22px] [&_button]:place-items-center [&_button]:rounded [&_button]:border-0 [&_button]:bg-transparent [&_button]:text-slate-500 hover:[&_button]:bg-slate-800 hover:[&_button]:text-cyan-300">
+                    {canNavigateToSource && method.sourceRange ? <button type="button" title="Открыть место в исходнике" onClick={() => openSourceRange(method.sourceRange)}><FileCode2 size={14} /></button> : null}
+                    {target ? <button type="button" title="Открыть CFG и Big O" onClick={() => onOpenMethod(target.selector)}><ArrowUpRight size={14} /></button> : null}
+                    {!target ? <small className="text-[8px] text-slate-500">CFG недоступен</small> : null}
                   </div>
                 </div>
               );
-            }) : <p className="project-graph-no-methods">Методы не найдены.</p>}
-            {isLocalFixture ? <p className="project-graph-fixture-footnote">Файлы — синтетические. Переходы к CFG и реальному исходнику не выполняются.</p> : null}
+            }) : <p className="text-[8px] text-slate-500">Методы не найдены.</p>}
           </div>
         </div>
       ) : null}
 
-      {sourcePreview ? (
-        <aside className="project-graph-source-preview" aria-label="Фрагмент файла демо-проекта">
-          <header>
-            <span><FileCode2 size={13} /><strong title={sourcePreview.file}>{sourcePreview.file}</strong><small>ДЕМО-ФАЙЛ · СТРОКИ {sourcePreview.range.line ?? 1}–{sourcePreview.range.end_line ?? sourcePreview.range.line ?? 1}</small></span>
-            <button type="button" aria-label="Закрыть просмотр файла" onClick={() => setActiveSourceRange(null)}>Закрыть</button>
-          </header>
-          <pre tabIndex={0} aria-label={`Исходник ${sourcePreview.file}`}>
-            {sourcePreview.lines.map((line) => (
-              <span className={line.selected ? "project-graph-source-line project-graph-source-line--selected" : "project-graph-source-line"} key={line.number}>
-                <i aria-hidden="true">{line.number}</i><code>{line.text || " "}</code>
-              </span>
-            ))}
-          </pre>
-        </aside>
-      ) : null}
-
-      <div className="project-graph-details">
+      <div className="grid max-h-[90px] grid-cols-2 gap-1.5 overflow-auto border-t border-slate-800 bg-[#0b1321] px-2.5 py-1.5 [&_details]:min-w-0 [&_details]:rounded [&_details]:border [&_details]:border-slate-700 [&_details]:bg-slate-900 [&_details]:px-2 [&_details]:py-1.5 [&_details]:text-[8px] [&_details]:text-slate-400 [&_summary]:flex [&_summary]:cursor-pointer [&_summary]:justify-between [&_summary]:text-slate-300">
         <details>
           <summary>Внешние типы и вызовы <span>{externals.length + overview.externalCallCount}</span></summary>
-          <div className="project-graph-detail-list">
+          <div className="mt-1 grid gap-1 [&>div]:flex [&>div]:min-w-0 [&>div]:justify-between [&>div]:gap-1.5 [&>div>span]:overflow-hidden [&>div>span]:text-ellipsis [&>div>span]:whitespace-nowrap [&>p]:m-0 [&>p]:text-slate-500">
             {externals.map((item, index) => <div key={`${item.owner.id}-${item.name}-${index}`}><span>{item.owner.name} <i>→</i> {item.name}</span><small>{item.relation}</small></div>)}
             <div><span>Вызовы библиотек и JDK</span><small>{overview.externalCallCount}</small></div>
             {!externals.length && !overview.externalCallCount ? <p>Внешних зависимостей не найдено.</p> : null}
@@ -459,7 +405,7 @@ export function ProjectGraphViewer({
         </details>
         <details>
           <summary>Неразрешённые вызовы <span>{unresolved.length}</span></summary>
-          <div className="project-graph-detail-list">
+          <div className="mt-1 grid gap-1 [&>div]:flex [&>div]:min-w-0 [&>div]:justify-between [&>div]:gap-1.5 [&>div>span]:overflow-hidden [&>div>span]:text-ellipsis [&>div>span]:whitespace-nowrap [&>p]:m-0 [&>p]:text-slate-500">
             {unresolved.slice(0, 40).map((call) => <div key={call.id}><span title={call.expression}>{call.expression}</span><small>{call.reason}{call.sourceRange.line ? ` · стр. ${call.sourceRange.line}` : ""}</small></div>)}
             {unresolved.length > 40 ? <p>Показаны первые 40 из {unresolved.length} вызовов.</p> : null}
             {!unresolved.length ? <p>Неразрешённых вызовов нет.</p> : null}
@@ -486,15 +432,10 @@ function edgeColor(kind: string) {
   }
 }
 
-function layoutFallback(nodes: ProjectOverviewType[], edges: { from: string; to: string }[]) {
-  const graph = new dagre.graphlib.Graph();
-  graph.setGraph({ rankdir: "LR", nodesep: 54, ranksep: 88, marginx: 24, marginy: 24 });
-  graph.setDefaultEdgeLabel(() => ({}));
-  for (const node of nodes) graph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
-  for (const edge of edges) graph.setEdge(edge.from, edge.to);
-  dagre.layout(graph);
-  return new Map(nodes.map((node) => {
-    const point = graph.node(node.id);
-    return [node.id, { x: point.x - NODE_WIDTH / 2, y: point.y - NODE_HEIGHT / 2 }];
-  }));
+function layoutFallback(nodes: ProjectOverviewType[]) {
+  const columns = Math.max(1, Math.ceil(Math.sqrt(nodes.length)));
+  return new Map(nodes.map((node, index) => [
+    node.id,
+    { x: (index % columns) * (NODE_WIDTH + 88), y: Math.floor(index / columns) * (NODE_HEIGHT + 54) },
+  ]));
 }

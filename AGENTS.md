@@ -82,7 +82,17 @@ script already sets it); bare `cargo`/`java`/`mvn` are not on PATH outside the N
   `node_modules/`, `target/`, `.next/`, build outputs.
 - `explore`/`review` are read-only responsibilities of the current session: no automatic subagents,
   plugins, packages, or extensions, ever.
-- No image reading, generation, attachment, or processing. For the case PDF use `docs/case-brief.md`.
+- For the case PDF use `docs/case-brief.md`.
+
+## Image inspection (frontend)
+
+- Allow reading screenshots, UI references, and browser captures.
+- Use images only for frontend visual inspection and comparison.
+- Use screenshots to check layout, alignment, spacing, typography, and visual regressions.
+- Prefer DOM inspection and browser diagnostics for functional testing.
+- Do not generate or modify images unless explicitly requested.
+- Do not attach unnecessary screenshots to conversations.
+- Keep images small to minimize context usage.
 
 ## Known limitations (detail in docs/CASE_COMPLIANCE.md)
 

@@ -299,7 +299,7 @@ export async function getProjectGraph(projectId: string): Promise<ProjectGraphRe
   return { revision: response.revision as number, graph };
 }
 
-/** Validate parser-shaped graph data at both the API and fixture boundaries. */
+/** Validate parser-shaped project graph data at the API boundary. */
 export function parseProjectGraph(value: unknown): ProjectGraph {
   if (!isProjectGraph(value)) {
     throw new ApiError("API вернул некорректный граф проекта.", 502, "invalid_response");
