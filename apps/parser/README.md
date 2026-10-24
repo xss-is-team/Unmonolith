@@ -272,3 +272,25 @@ Rules:
 
 Constant-bound loops, loops over different collections without a lookup shape and range predicates are not
 reported. Nothing is transformed or executed.
+
+## Acceptance coverage
+
+`AcceptanceTest` runs the whole pipeline on `src/test/resources/acceptance/Organizer.java` (~1000 lines: classes,
+interfaces, enums, records, generics, collections, console I/O, custom exceptions, Cyrillic and emoji text). It checks
+that the fixture compiles with `javac --release 21`, parses with zero diagnostics, has structurally valid CFGs for every
+method, and survives `replace_condition` (the result is compiled, reparsed and compared byte-for-byte). Nothing is run.
+
+| Area | Status | Notes |
+|---|---|---|
+| Classes, interfaces, abstract classes, inheritance, nested/inner/static classes | supported | |
+| Enums (fields, constructors, switch), records (incl. compact constructors), generics | supported | |
+| `if`/`else if`, `for`, for-each, `while`, `do/while`, labeled `break`/`continue`, ternary | supported | CFG verified, incl. labeled jumps |
+| `switch` statements (old and arrow), switch expressions with `yield` | supported | |
+| `try`/`catch`/multi-catch/`finally`, try-with-resources, custom checked/unchecked exceptions | supported | `finally` is duplicated per exit path in the CFG |
+| `java.util` collections, `java.lang`, `System.in/out/err`, `Scanner`, `BufferedReader`, `printf` | supported | calls and types resolved against the running JDK |
+| Semantic diagnostics (type mismatch, unresolved symbol, unhandled exception) | supported | single file, JDK classpath only |
+| Source ranges / Cyrillic and emoji | supported | UTF-16 offsets, verified by slicing the source |
+| `replace_condition` on `if`/`while`/`do-while`/`for` | supported | other nodes rejected with `unsupported_node` |
+| Complexity: counted loops, log loops, nested loops, repeated scan finding | partial | `gcd`, binary search, two-pointer loops, user/interface calls give `unknown` |
+| Lambdas, anonymous classes, local class bodies, switch expressions inside expressions | partial | kept as text; local-class methods appear only in `methods[]` (`local.X.m()`, ids may repeat) |
+| Streams, `Iterator` loops, recursion, other files/classpath | unsupported | complexity `unknown`; types outside the JDK unresolved |
