@@ -125,6 +125,93 @@ const diagnosticGutter = gutter({
   },
 });
 
+const diagnosticOverviewRuler = (container: HTMLDivElement) => ViewPlugin.fromClass(class {
+  private readonly resizeObserver: ResizeObserver;
+  private readonly onClick = (event: MouseEvent) => {
+    const marker = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-diagnostic-line]");
+    if (!marker) return;
+    const line = Number(marker.dataset.diagnosticLine);
+    if (!Number.isInteger(line) || line < 1 || line > this.view.state.doc.lines) return;
+    this.view.dispatch({ effects: EditorView.scrollIntoView(this.view.state.doc.line(line).from, { y: "center" }) });
+    this.view.focus();
+  };
+
+  constructor(private view: EditorView) {
+    container.addEventListener("click", this.onClick);
+    this.resizeObserver = new ResizeObserver(() => this.build());
+    this.resizeObserver.observe(container);
+    this.build();
+  }
+
+  update(update: import("@codemirror/view").ViewUpdate) {
+    if (update.docChanged || update.geometryChanged
+        || update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(setDiagnostics)))) {
+      this.build();
+    }
+  }
+
+  destroy() {
+    container.removeEventListener("click", this.onClick);
+    this.resizeObserver.disconnect();
+    container.replaceChildren();
+  }
+
+  private build() {
+    const height = Math.max(1, Math.floor(container.clientHeight));
+    const lineCount = this.view.state.doc.lines;
+    const buckets = new Map<number, { firstLine: number; lastLine: number; count: number; severities: Set<Diagnostic["severity"]> }>();
+    for (const diagnostic of this.view.state.field(diagnosticsField)) {
+      const line = this.view.state.doc.lineAt(diagnostic.from).number;
+      const bucket = Math.min(height - 1, Math.floor(((line - 1) / lineCount) * height));
+      const current = buckets.get(bucket);
+      if (current) {
+        current.lastLine = line;
+        current.count += 1;
+        current.severities.add(diagnostic.severity);
+      } else {
+        buckets.set(bucket, { firstLine: line, lastLine: line, count: 1, severities: new Set([diagnostic.severity]) });
+      }
+    }
+
+    const colors: Record<Diagnostic["severity"], string> = {
+      error: "#b6533d",
+      warning: "#c18a3d",
+      info: "#4a7790",
+    };
+    const severityLabels: Record<Diagnostic["severity"], string> = {
+      error: "ошибка",
+      warning: "предупреждение",
+      info: "информация",
+    };
+    const fragment = document.createDocumentFragment();
+    for (const [position, bucket] of buckets) {
+      const marker = document.createElement("button");
+      marker.type = "button";
+      marker.className = "cm-diagnostic-overview-marker";
+      marker.dataset.diagnosticLine = String(bucket.firstLine);
+      marker.style.top = `${Math.min(position, Math.max(0, height - 3))}px`;
+      const severities = ["error", "warning", "info"].filter((severity) => bucket.severities.has(severity as Diagnostic["severity"])) as Diagnostic["severity"][];
+      const stops = severities.map((severity, index) => {
+        const from = Math.round((index / severities.length) * 100);
+        const to = Math.round(((index + 1) / severities.length) * 100);
+        return `${colors[severity]} ${from}% ${to}%`;
+      });
+      marker.style.background = `linear-gradient(to right, ${stops.join(", ")})`;
+      const lineLabel = bucket.firstLine === bucket.lastLine ? `строка ${bucket.firstLine}` : `строки ${bucket.firstLine}–${bucket.lastLine}`;
+      const count = bucket.count;
+      const noun = count % 10 === 1 && count % 100 !== 11
+        ? "диагностика"
+        : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14)
+          ? "диагностики"
+          : "диагностик";
+      marker.title = `${lineLabel}: ${severities.map((severity) => severityLabels[severity]).join(", ")} · ${count} ${noun}`;
+      marker.setAttribute("aria-label", marker.title);
+      fragment.append(marker);
+    }
+    container.replaceChildren(fragment);
+  }
+});
+
 const diagnosticDecorations = ViewPlugin.fromClass(class {
   decorations;
   constructor(private view: EditorView) { this.decorations = this.build(); }
@@ -182,9 +269,9 @@ function diagnosticMarkClass(severity: Diagnostic["severity"]) {
   return `cm-diagnosticMark cm-diagnosticMark--${severity}`;
 }
 
-function buildExtensions() {
+function buildExtensions(overviewRuler: HTMLDivElement) {
   return [
-    lineNumbers(), diagnosticGutter, diagnosticsField, diagnosticDecorations, diagnosticHover,
+    lineNumbers(), diagnosticGutter, diagnosticOverviewRuler(overviewRuler), diagnosticsField, diagnosticDecorations, diagnosticHover,
     EditorView.contentAttributes.of({ "aria-label": "Исходный код Java" }),
     highlightSpecialChars(), history(), foldGutter(), drawSelection(), dropCursor(),
     EditorState.allowMultipleSelections.of(true), indentOnInput(),
@@ -221,6 +308,7 @@ export const JavaEditor = forwardRef<JavaEditorHandle, {
   onSourceSelection?: (range: SourceRange | null) => void;
 }>(function JavaEditor({ value, diagnostics = [], readOnly = false, focusRange, onDirtyChange, onMetricsChange, onSourceSelection }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const overviewRulerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const savedDocRef = useRef<Text | null>(null);
   const metricsTimerRef = useRef<number | undefined>(undefined);
@@ -239,12 +327,12 @@ export const JavaEditor = forwardRef<JavaEditorHandle, {
   }), [value]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || !overviewRulerRef.current) return;
     const view = new EditorView({
       state: EditorState.create({
         doc: value,
         extensions: [
-          ...buildExtensions(),
+          ...buildExtensions(overviewRulerRef.current),
           EditorState.readOnly.of(readOnly),
           EditorView.updateListener.of((update) => {
             const callbacks = callbacksRef.current;
@@ -298,5 +386,10 @@ export const JavaEditor = forwardRef<JavaEditorHandle, {
     view.focus();
   }, [focusRange]);
 
-  return <div ref={containerRef} className="java-editor" aria-label="Исходный код Java" style={{ height: "100%" }} />;
+  return (
+    <div className="java-editor" aria-label="Исходный код Java" style={{ height: "100%" }}>
+      <div ref={containerRef} className="java-editor-surface" />
+      <div ref={overviewRulerRef} className="cm-diagnostic-overview" aria-label="Обзор диагностик по файлу" />
+    </div>
+  );
 });

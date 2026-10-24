@@ -6,12 +6,12 @@
 
 ## Слой 1 — Редактор и визуализация (UI)
 
-### A — Inline-диагностики — IN PROGRESS
+### A — Inline-диагностики — DONE
 
 - [x] Иконки severity в gutter CodeMirror.
 - [x] Подчёркивания через `Decoration.mark` и tooltip при наведении.
 - [x] Маркеры различают `error` / `warning` / `info`.
-- [ ] **Overview ruler** — вертикальная полоса справа от скроллбара с отметками по severity (как в VS Code). Сейчас её нет.
+- [x] **Overview ruler** — вертикальная полоса справа от скроллбара с отметками по severity; клик прокручивает редактор к строке.
 - [x] CFG-узел → выделение диапазона в редакторе; выделение в редакторе → подсветка узла в CFG.
 - [x] Decorations строятся только для видимого диапазона (`visibleRanges`).
 - [x] Проверен файл на 100 001 строку.
@@ -131,6 +131,7 @@ JavaNCSS расхождение: `Pair.equals(Object)` даёт CCN 8 в JavaNCS
 | Rust API | ✓ `cargo check`, 16 тестов |
 | Frontend | ✓ ESLint и production build |
 | Complexity UI | ✓ Chromium: анализ файла, значения метрик и CFG-вклад; API analysis/CFG HTTP 200 |
+| Overview ruler | ✓ Chromium: severity-маркер рядом со скроллбаром; клик прокрутил длинный файл к строке 122 |
 | ELK vs Dagre на 5 больших CFG | ELK выиграл 4/5; суммарная ширина −10% |
 | Commons Math: 100 методов одного файла | 1 756 узлов, 1 925 рёбер; анализ partial (нет classpath) |
 | Commons Math с Maven classpath | ✗ Не проверено — задача H |
