@@ -1,10 +1,11 @@
 openapi: 3.0.3
 info:
   title: Java Blueprints MVP API
-  version: 0.4.0
+  version: 0.5.0
   description: |
     Guest sessions, revisioned single-file Java projects, JDT analysis, nested per-method CFG access,
-    restricted replace_condition transformations, and isolated Java 21 behavioral verification.
+    revision history, SSE analysis lifecycle, restricted replace_condition transformations,
+    and isolated Java 21 behavioral verification.
 servers:
   - url: /api/v1
 tags:
@@ -143,6 +144,58 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/Unavailable'}
         '504': {$ref: '#/components/responses/Timeout'}
+  /projects/{project_id}/analyze/stream:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      operationId: analyzeProjectStream
+      tags: [Analysis]
+      description: Streams the lifecycle of the same real analyzer invocation used by the synchronous endpoint.
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Server-sent `started`, `progress`, and `completed` or `failed` events.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/revisions:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: listProjectRevisions
+      tags: [Projects]
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Published source revisions, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/RevisionSummary'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/revisions/{revision}:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - name: revision
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+    get:
+      operationId: getProjectRevision
+      tags: [Projects]
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Source text and analysis availability for one owned revision.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RevisionDetail'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /projects/{project_id}/methods:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -370,6 +423,19 @@ components:
       properties:
         source: {type: string}
         expected_revision: {type: integer, minimum: 1}
+    RevisionSummary:
+      type: object
+      required: [revision, has_analysis]
+      properties:
+        revision: {type: integer, minimum: 1}
+        has_analysis: {type: boolean}
+    RevisionDetail:
+      type: object
+      required: [revision, source, has_analysis]
+      properties:
+        revision: {type: integer, minimum: 1}
+        source: {type: string}
+        has_analysis: {type: boolean}
     SourceRange:
       type: object
       required: [start, length]

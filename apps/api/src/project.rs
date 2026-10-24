@@ -25,6 +25,78 @@ pub struct UpdateSourceRequest {
     pub expected_revision: u64,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RevisionSummary {
+    #[schema(minimum = 1)]
+    pub revision: u64,
+    pub has_analysis: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RevisionDetail {
+    #[schema(minimum = 1)]
+    pub revision: u64,
+    pub source: String,
+    pub has_analysis: bool,
+}
+
+pub async fn list_revisions(
+    directory: &Path,
+    current: u64,
+    filename: &str,
+) -> Result<Vec<RevisionSummary>, ApiError> {
+    let mut revisions = Vec::new();
+    for revision in (1..=current).rev() {
+        let source = source_path(directory, revision, filename);
+        if !matches!(fs::metadata(source).await, Ok(metadata) if metadata.is_file()) {
+            continue;
+        }
+        let has_analysis = matches!(
+            fs::metadata(directory.join("analysis").join(format!("{revision}.json"))).await,
+            Ok(metadata) if metadata.is_file()
+        );
+        revisions.push(RevisionSummary {
+            revision,
+            has_analysis,
+        });
+    }
+    Ok(revisions)
+}
+
+pub async fn read_revision(
+    directory: &Path,
+    revision: u64,
+    current: u64,
+    filename: &str,
+) -> Result<RevisionDetail, ApiError> {
+    if revision == 0 || revision > current {
+        return Err(revision_not_found());
+    }
+    let bytes = match fs::read(source_path(directory, revision, filename)).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(revision_not_found());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let source = String::from_utf8(bytes).map_err(|_| {
+        ApiError::new(
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "stored source is not valid UTF-8",
+        )
+    })?;
+    let has_analysis = matches!(
+        fs::metadata(directory.join("analysis").join(format!("{revision}.json"))).await,
+        Ok(metadata) if metadata.is_file()
+    );
+    Ok(RevisionDetail {
+        revision,
+        source,
+        has_analysis,
+    })
+}
+
 pub async fn create(
     session_dir: &Path,
     filename: &str,
@@ -185,5 +257,13 @@ fn revision_conflict(expected: u64, current: u64) -> ApiError {
         axum::http::StatusCode::CONFLICT,
         "revision_conflict",
         format!("expected revision {expected} but current revision is {current}"),
+    )
+}
+
+fn revision_not_found() -> ApiError {
+    ApiError::new(
+        axum::http::StatusCode::NOT_FOUND,
+        "revision_not_found",
+        "requested source revision does not exist",
     )
 }

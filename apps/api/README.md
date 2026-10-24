@@ -52,6 +52,13 @@ ranges remain UTF-16. These endpoints return `404 analysis_not_found` until the
 current source revision is analyzed; a method without analysis returns
 `404 method_analysis_not_found`.
 
+`POST /api/v1/projects/{project_id}/analyze/stream` invokes that same analyzer
+and emits SSE lifecycle events. The current parser returns its complete JSON
+atomically, so the stream reports real start/progress/completion or failure but
+does not fabricate per-method partial results. Owned published revisions are
+listed by `GET .../revisions`; `GET .../revisions/{revision}` returns stored
+source for the UI's text diff without interpreting historical parser JSON.
+
 The transform endpoint accepts only this contract:
 
 ```http
@@ -170,7 +177,7 @@ OpenAPI document at <http://127.0.0.1:3000/api/v1/openapi.json>.
 
 Implemented: health, guest sessions, single `.java` projects, owned metadata and
 source access, revision-checked source updates, external analysis, CFG listing
-and retrieval, method complexity/findings retrieval, `replace_condition`, and
+and retrieval, SSE analysis lifecycle, revision source history, method complexity/findings retrieval, `replace_condition`, and
 persisted isolated behavioral verification of two stored revisions. If no real worker JAR is configured, analysis and
 transformation return `503 analyzer_unavailable`; if no runner image is
 configured, verification returns `503 runner_unavailable`.

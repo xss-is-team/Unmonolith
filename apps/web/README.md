@@ -16,9 +16,11 @@ From the repository root, install dependencies and build the parser once:
 Then start the API and web app in separate terminals:
 
 ```sh
-./dev api
+BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21 ./dev api
 ./dev web
-After installing host tools, start the whole app from the repository root with:
+```
+
+Or start the whole app from the repository root with:
 
 ```sh
 ./dev up
@@ -30,8 +32,11 @@ The command installs frontend packages, builds the parser and API, and starts
 both services. Press Ctrl+C to stop them.
 
 The current UI supports one `.java` file per project, source viewing and
-revision-checked saving. With the parser built, analysis shows returned methods
-and diagnostics. CFG visualization is not implemented yet; without a parser
-JAR, the API returns `analyzer_unavailable`.
+revision-checked autosaving. With the parser built, analysis starts
+automatically and shows source-linked diagnostics, actual nested per-method CFG,
+Big O findings, and `replace_condition` through ASTRewrite. Revision text diff
+and isolated behavioral comparison are separate views. Verification requires
+`./dev runner-build` and `BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21`;
+without it the API truthfully returns `runner_unavailable`.
 
-Run frontend lint and production build with `./dev web-check`.
+Run frontend typecheck, lint and production build with `./dev web-check`.

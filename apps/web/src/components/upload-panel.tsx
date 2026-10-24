@@ -3,9 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowUpRight, FileCode2, FileUp, LoaderCircle, LockKeyhole } from "lucide-react";
-import { ApiError, uploadJavaFile } from "@/lib/api";
-
-const MAX_BYTES = 2 * 1024 * 1024;
+import { ApiError, MAX_SOURCE_BYTES, uploadJavaFile } from "@/lib/api";
 
 export function UploadPanel() {
   const router = useRouter();
@@ -21,7 +19,7 @@ export function UploadPanel() {
       setError("Выберите исходный файл с расширением .java.");
       return;
     }
-    if (file.size > MAX_BYTES) {
+    if (file.size > MAX_SOURCE_BYTES) {
       setError("Файл больше лимита 2 МБ.");
       return;
     }
@@ -31,13 +29,7 @@ export function UploadPanel() {
       const project = await uploadJavaFile(file);
       router.push(`/projects/${project.id}`);
     } catch (cause) {
-      setError(
-        cause instanceof ApiError
-          ? cause.code === "request_failed"
-            ? "Сервер недоступен. Запустите API и попробуйте снова."
-            : cause.message
-          : "Не удалось загрузить файл. Проверьте соединение с API.",
-      );
+      setError(uploadErrorMessage(cause));
     } finally {
       setBusy(false);
     }
@@ -88,4 +80,15 @@ export function UploadPanel() {
       </div>
     </div>
   );
+}
+
+function uploadErrorMessage(cause: unknown) {
+  if (!(cause instanceof ApiError)) return "Не удалось загрузить файл. Проверьте соединение с API.";
+  switch (cause.code) {
+    case "project_too_large": return "Файл превышает лимит 2 МиБ.";
+    case "invalid_request": return "API не принял файл. Проверьте расширение и кодировку UTF-8.";
+    case "unauthorized": return "Не удалось создать гостевую сессию. Попробуйте ещё раз.";
+    case "request_failed": return "Сервер недоступен. Запустите API и попробуйте снова.";
+    default: return cause.message || `Не удалось загрузить файл (HTTP ${cause.status}).`;
+  }
 }

@@ -2,7 +2,7 @@
 
 ## Current application
 
-The web client lives in `apps/web/` and uses Next.js App Router. It provides a Java source upload and editing workspace; the Rust/Axum service in `apps/api/` remains the API and owns guest sessions, project storage, revisions, and analysis. Next proxies `/api/v1/*` to Axum so browser requests and the session cookie stay same-origin.
+The web client lives in `apps/web/` and uses Next.js App Router. It provides source-linked diagnostics, per-method CFG and Big O views, revision diff, `replace_condition`, and behavioral verification. The Rust/Axum service in `apps/api/` remains the API and owns guest sessions, project storage, revisions, analysis and runner reports. Next proxies `/api/v1/*` to Axum so browser requests and the session cookie stay same-origin.
 
 The three application folders share one Git repository: `apps/api/` (Rust), `apps/parser/` (Java/Maven), and `apps/web/` (Next.js). Install the tools with your OS package manager, or use the optional root `flake.nix` with `nix develop`.
 
@@ -35,10 +35,10 @@ The root `./dev` wrapper keeps routine commands short. Install web dependencies 
 ./dev runner-build
 ```
 
-Then start API and web in separate terminals:
+Then start API and web in separate terminals (verification is enabled only when the runner image is configured):
 
 ```sh
-./dev api
+BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21 ./dev api
 ./dev web
 ```
 
@@ -51,7 +51,7 @@ After installing the host tools listed above, run one command from the repositor
 ./dev up
 ```
 
-It installs frontend packages, builds the parser and API, then starts both services. Open <http://localhost:3001>; the API is at <http://localhost:3000>. Press Ctrl+C to stop both. `./dev` lists individual build and check commands. Frontend details are in `apps/web/README.md`.
+It installs frontend packages, builds the parser and API, then starts both services. Open <http://localhost:3001>; the API is at <http://localhost:3000>. Press Ctrl+C to stop both. To include behavioral verification, first run `./dev runner-build`, then start with `BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21 ./dev up`. `./dev` lists individual build and check commands. Frontend details are in `apps/web/README.md`.
 
 ## Parser integration
 
