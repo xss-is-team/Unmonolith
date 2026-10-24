@@ -1,7 +1,7 @@
 # Java Blueprints parser
 
-Parses one Java file with Eclipse JDT Core and prints a nested JSON AST with resolved types,
-resolved method calls and compiler diagnostics. No CFG or complexity analysis yet (Phases 3–5).
+Parses one Java file with Eclipse JDT Core and prints a nested JSON AST, a statement-level CFG,
+resolved types and calls, and compiler diagnostics. Complexity analysis is not implemented yet.
 The submitted program is never executed.
 
 ## Build and run
@@ -43,7 +43,16 @@ imports[]         {name, static, on_demand}
 types[]           class | interface | enum | record | annotation_type
 methods[]         flat list {id, name, source_range} of every method/constructor
 diagnostics[]     {code, category: syntax|semantic, severity: error|warning|info, message, source_range}
+cfgs[]            {method_id, nodes[], edges[]} for methods with bodies
 ```
+
+Each CFG node has `id`, `kind`, `label`, and `source_range`; each edge has `source`, `target`,
+and `kind` (`true`, `false`, `back`, `break`, `continue`, `exception`, `finally`, `case: …`, etc.).
+The graph is statement-level: control statements are explicit, and unsupported statement forms remain
+visible as opaque nodes. Exception edges represent resolved declared exceptions caught by surrounding
+handlers; unresolved calls connect conservatively to handlers and method exit. Unchecked exceptions are
+not exhaustively modeled, so this is an analysis view, not a proof of every runtime path.
+AST remains the source of truth for source text and future transformations; CFG alone cannot regenerate Java.
 
 Every node carries `kind` and `source_range {start, length, line, end_line}` (`start`/`length` are
 character offsets into the source, lines are 1-based). Expressions are exact source text.

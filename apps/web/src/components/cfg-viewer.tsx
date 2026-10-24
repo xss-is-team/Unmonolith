@@ -1,19 +1,24 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import useSWR from "swr";
+import ELK from "elkjs/lib/elk.bundled.js";
 import dagre from "@dagrejs/dagre";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import {
   Background,
   Controls,
   Handle,
+  MiniMap,
   MarkerType,
   Position,
   ReactFlow,
   type Edge,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import { AlertCircle, Beaker, GitBranch, LoaderCircle, RefreshCw } from "lucide-react";
 import { ApiError, getMethodCfg, type AnalysisResult, type Cfg, type CfgNode } from "@/lib/api";
@@ -21,6 +26,8 @@ import { Button } from "@/components/ui/button";
 
 const NODE_WIDTH = 220;
 const NODE_HEIGHT = 82;
+const elkLayout = new ELK();
+gsap.registerPlugin(useGSAP);
 
 const fixtureCfg: Cfg = {
   method_id: "fixture:calculateTotal",
@@ -78,6 +85,10 @@ export function CfgViewer({
 }) {
   const methods = useMemo(() => analysis?.methods ?? [], [analysis]);
   const [conditionValue, setConditionValue] = useState("");
+  const [activeBranch, setActiveBranch] = useState<{ source: string; target: string; kind: string } | null>(null);
+  const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const reactFlowRef = useRef<ReactFlowInstance<FlowNode, Edge> | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
   const methodId = methods.some((method) => method.id === selectedMethodId)
     ? selectedMethodId
     : methods[0]?.id ?? "";
@@ -97,13 +108,13 @@ export function CfgViewer({
       ? "empty"
       : isLoading || (!apiCfg && !apiError)
         ? "loading"
-        : apiError instanceof ApiError && apiError.status === 404 && apiError.code === "request_failed"
+        : apiError instanceof ApiError && apiError.status === 404 && apiError.code === "cfg_not_found"
           ? "unsupported"
           : apiError
             ? "error"
             : "ready";
   const errorMessage = state === "unsupported"
-    ? "API пока не отдаёт граф для этого файла. Разбор и диагностики доступны в отчёте."
+    ? "Для текущей ревизии или выбранного метода граф не найден. Запустите анализ и проверьте, что метод содержит поддерживаемый код."
     : apiError instanceof ApiError
       ? apiError.message
       : "Не удалось загрузить CFG метода.";
@@ -117,10 +128,102 @@ export function CfgViewer({
     onSourceRangeSelect(node.data.source_range);
   }, [mode, onSourceRangeSelect]);
 
+  const onEdgeClick = useCallback((_event: MouseEvent, edge: Edge) => {
+    if (edge.label !== "Да" && edge.label !== "Нет") return;
+    const index = Number(edge.id.slice(edge.id.lastIndexOf("-") + 1));
+    const selected = cfg?.edges[index];
+    if (!selected) return;
+    setActiveBranch((current) => current?.source === selected.source && current.target === selected.target && current.kind === selected.kind
+      ? null
+      : selected);
+  }, [cfg]);
+
   const selectedCondition = mode === "api" && cfg && selectedSourceRange
     ? matchingNode(cfg, selectedSourceRange)
     : null;
-  const flow = useMemo(() => cfg ? toFlow(cfg, selectedCondition?.id) : { nodes: [], edges: [] }, [cfg, selectedCondition?.id]);
+
+  const activeEdges = useMemo(() => cfg && activeBranch ? branchFootprint(cfg, activeBranch) : new Set<number>(), [cfg, activeBranch]);
+  const flow = useMemo(() => ({
+    nodes: cfg?.nodes.map((node) => ({
+      id: node.id,
+      type: "cfg" as const,
+      width: NODE_WIDTH,
+      height: NODE_HEIGHT,
+      position: positions.get(node.id) ?? { x: 0, y: 0 },
+      data: node,
+      selected: node.id === selectedCondition?.id,
+    })) ?? [],
+    edges: cfg?.edges.map((edge, index) => {
+      const highlighted = activeEdges.has(index);
+      return {
+        id: `${edge.source}-${edge.target}-${index}`,
+        source: edge.source,
+        target: edge.target,
+        type: "smoothstep" as const,
+        label: formatEdgeKind(edge.kind),
+        markerEnd: { type: MarkerType.ArrowClosed, color: highlighted ? "#bb613e" : "#69786d" },
+        style: {
+          stroke: highlighted ? "#bb613e" : edge.kind.startsWith("back") ? "#b56e41" : "#69786d",
+          strokeWidth: highlighted ? 2.8 : edge.kind.startsWith("back") ? 2 : 1.5,
+          strokeDasharray: edge.kind.startsWith("back") ? "5 4" : undefined,
+        },
+        labelStyle: { fill: "#f6f5ed", fontSize: 11, fontWeight: 600 },
+        labelBgStyle: { fill: highlighted ? "#9b4a2f" : "#263b31", fillOpacity: 0.98 },
+        labelBgPadding: [4, 2] as [number, number],
+        labelBgBorderRadius: 2,
+      };
+    }) ?? [],
+  }), [cfg, positions, selectedCondition?.id, activeEdges]);
+
+  useGSAP(() => {
+    const media = gsap.matchMedia();
+    media.add("(prefers-reduced-motion: no-preference)", () => {
+      gsap.fromTo(canvasRef.current, { autoAlpha: 0, y: 8 }, {
+        autoAlpha: 1,
+        y: 0,
+        duration: 0.24,
+        ease: "power2.out",
+      });
+    });
+    return () => media.revert();
+  }, { scope: canvasRef, dependencies: [cfg?.method_id, revision], revertOnUpdate: true });
+  useEffect(() => {
+    let cancelled = false;
+    if (!cfg || cfg.nodes.length === 0) return;
+    const layout = elkLayout.layout({
+      id: "cfg",
+      layoutOptions: {
+        "elk.algorithm": "layered",
+        "elk.direction": "DOWN",
+        "elk.edgeRouting": "ORTHOGONAL",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "64",
+        "elk.spacing.nodeNode": "36",
+        "elk.layered.cycleBreaking.strategy": "GREEDY",
+      },
+      children: cfg.nodes.map((node) => ({ id: node.id, width: NODE_WIDTH, height: NODE_HEIGHT })),
+      edges: cfg.edges.map((edge, index) => ({ id: `e${index}`, sources: [edge.source], targets: [edge.target] })),
+    }).then((graph) => {
+      if (cancelled) return;
+      setPositions(new Map(graph.children?.map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]) ?? []));
+    }).catch((cause: unknown) => {
+      if (!cancelled) {
+        console.error("ELK CFG layout failed; using Dagre fallback", cause);
+        setPositions(layoutDagre(cfg));
+      }
+    });
+    return () => {
+      cancelled = true;
+      void layout;
+    };
+  }, [cfg]);
+
+  useEffect(() => {
+    if (positions.size === 0 || !reactFlowRef.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      void reactFlowRef.current?.fitView({ padding: 0.18, minZoom: 0.04, maxZoom: 1.6 });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [positions]);
 
   return (
     <section className="cfg-panel" aria-label="Граф потока управления">
@@ -130,12 +233,13 @@ export function CfgViewer({
           <label htmlFor="cfg-method">Метод</label>
           <select id="cfg-method" value={mode === "fixture" ? fixtureCfg.method_id : methodId} onChange={(event) => {
             setConditionValue("");
+            setActiveBranch(null);
             onSourceRangeSelect(null);
             if (event.target.value === fixtureCfg.method_id) onModeChange("fixture");
             else { onModeChange("api"); onSelectedMethodIdChange(event.target.value); }
           }}>
             <option value="" disabled>{methods.length ? "Выберите метод" : "Сначала запустите анализ"}</option>
-            {methods.map((method) => <option key={method.id} value={method.id}>{method.name}</option>)}
+            {methods.map((method) => <option key={method.id} value={method.id}>{method.id}</option>)}
             <option value={fixtureCfg.method_id}>Тестовый пример (fixture)</option>
           </select>
           {mode === "fixture" ? <span className="cfg-fixture-badge"><Beaker size={13} /> ТЕСТОВЫЕ ДАННЫЕ</span> : null}
@@ -150,15 +254,25 @@ export function CfgViewer({
         {state === "empty" ? <div className="cfg-state" role="status"><GitBranch /><strong>{analysis ? "Выберите метод" : "Сначала разберите исходник"}</strong><span>{analysis ? "Для каждого метода строится отдельный граф." : "Запустите анализ, затем откройте граф метода."}</span>{!analysis ? <Button variant="outline" size="sm" onClick={() => { onSourceRangeSelect(null); onModeChange("fixture"); }}><Beaker size={14} /> Посмотреть пример</Button> : null}</div> : null}
         {state === "ready" && cfg?.nodes.length === 0 ? <div className="cfg-state"><GitBranch /><strong>Граф пуст</strong><span>Для этого метода backend не вернул узлов CFG.</span></div> : null}
         {state === "ready" && cfg?.nodes.length ? (
-          <div className="cfg-canvas">
+          <div className="cfg-canvas" ref={canvasRef}>
             {mode === "fixture" ? <div className="cfg-demo-notice"><Beaker size={14} /> Пример для знакомства с графом. Он не построен из этого файла.</div> : null}
-            <ReactFlow nodes={flow.nodes} edges={flow.edges} nodeTypes={nodeTypes} onNodeClick={onNodeClick} fitView fitViewOptions={{ padding: 0.2 }} minZoom={0.2} maxZoom={1.6} nodesDraggable={false} nodesConnectable={false} elementsSelectable>
+            <ReactFlow nodes={flow.nodes} edges={flow.edges} nodeTypes={nodeTypes} onNodeClick={onNodeClick} onEdgeClick={onEdgeClick} onInit={(instance) => { reactFlowRef.current = instance as ReactFlowInstance<FlowNode, Edge>; }} fitView fitViewOptions={{ padding: 0.18, minZoom: 0.04 }} minZoom={0.04} maxZoom={1.6} nodesDraggable={false} nodesConnectable={false} elementsSelectable>
               <Background color="#d7dbd3" gap={20} size={1} />
               <Controls showInteractive={false} />
+              {cfg && cfg.nodes.length >= 24 ? <MiniMap pannable zoomable nodeStrokeWidth={3} nodeColor="#86a08f" nodeStrokeColor="#466450" maskColor="rgba(32, 49, 39, .14)" style={{ background: "#fffefa", border: "1px solid #d8d9cf", borderRadius: 6 }} /> : null}
             </ReactFlow>
           </div>
         ) : null}
       </div>
+
+      {state === "ready" && mode === "api" && cfg && selectedCondition && isCondition(selectedCondition.kind) ? (
+        <div className="cfg-branch-controls" aria-label="Подсветка ветви условия">
+          <span>Подсветить путь от выбранного условия</span>
+          <Button variant="outline" size="sm" onClick={() => selectBranch(cfg, selectedCondition.id, "true", setActiveBranch)}>Ветка «Да»</Button>
+          <Button variant="outline" size="sm" onClick={() => selectBranch(cfg, selectedCondition.id, "false", setActiveBranch)}>Ветка «Нет»</Button>
+          {activeBranch ? <Button variant="ghost" size="sm" onClick={() => setActiveBranch(null)}>Сбросить</Button> : null}
+        </div>
+      ) : null}
 
       {state === "ready" && mode === "api" && selectedCondition && isCondition(selectedCondition.kind) ? (
         <div className="cfg-transform" aria-label="Редактирование условия">
@@ -199,43 +313,55 @@ function matchingNode(cfg: Cfg, range: { start: number; length: number }) {
     .sort((a, b) => (a.end - a.start) - (b.end - b.start))[0]?.node ?? null;
 }
 
-function toFlow(cfg: Cfg, selectedNodeId?: string): { nodes: FlowNode[]; edges: Edge[] } {
+function branchFootprint(cfg: Cfg, branch: { source: string; target: string; kind: string }) {
+  const highlighted = new Set<number>();
+  const firstEdge = cfg.edges.findIndex((edge) => edge.source === branch.source && edge.target === branch.target && edge.kind === branch.kind);
+  if (firstEdge < 0) return highlighted;
+  highlighted.add(firstEdge);
+  const nodes = new Map(cfg.nodes.map((node) => [node.id, node]));
+  const visited = new Set([branch.source]);
+  const queue = [branch.target];
+  while (queue.length) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const kind = nodes.get(current)?.kind;
+    if (["merge", "exit", "return", "throw"].includes(kind ?? "")) continue;
+    cfg.edges.forEach((edge, index) => {
+      if (edge.source !== current) return;
+      highlighted.add(index);
+      queue.push(edge.target);
+    });
+  }
+  return highlighted;
+}
+
+function layoutDagre(cfg: Cfg) {
   const graph = new dagre.graphlib.Graph();
   graph.setGraph({ rankdir: "TB", nodesep: 38, ranksep: 64, marginx: 32, marginy: 32 });
   graph.setDefaultEdgeLabel(() => ({}));
   cfg.nodes.forEach((node) => graph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
   cfg.edges.forEach((edge) => graph.setEdge(edge.source, edge.target));
   dagre.layout(graph);
+  return new Map(cfg.nodes.map((node) => {
+    const position = graph.node(node.id);
+    return [node.id, { x: position.x - NODE_WIDTH / 2, y: position.y - NODE_HEIGHT / 2 }];
+  }));
+}
 
-  return {
-    nodes: cfg.nodes.map((node) => {
-      const position = graph.node(node.id);
-      return {
-        id: node.id,
-        type: "cfg",
-        position: { x: position.x - NODE_WIDTH / 2, y: position.y - NODE_HEIGHT / 2 },
-        data: node,
-        selected: node.id === selectedNodeId,
-      };
-    }),
-    edges: cfg.edges.map((edge, index) => ({
-      id: `${edge.source}-${edge.target}-${index}`,
-      source: edge.source,
-      target: edge.target,
-      type: "smoothstep",
-      label: formatEdgeKind(edge.kind),
-      markerEnd: { type: MarkerType.ArrowClosed, color: "#69786d" },
-      style: { stroke: "#69786d", strokeWidth: 1.5 },
-      labelStyle: { fill: "#d2deea", fontSize: 11, fontWeight: 600 },
-      labelBgStyle: { fill: "#1a2530", fillOpacity: 0.98 },
-      labelBgPadding: [4, 2],
-      labelBgBorderRadius: 2,
-    })),
-  };
+function selectBranch(
+  cfg: Cfg,
+  source: string,
+  kind: "true" | "false",
+  setActiveBranch: (branch: { source: string; target: string; kind: string } | null) => void,
+) {
+  const edge = cfg.edges.find((candidate) => candidate.source === source
+    && (candidate.kind === kind || (kind === "true" && candidate.kind === "back_true")));
+  if (edge) setActiveBranch(edge);
 }
 
 function safeKind(kind: string) {
-  return kind.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+  return kind.toLowerCase().replace(/[_/]/g, "-").replace(/[^a-z0-9-]/g, "-");
 }
 
 function isCondition(kind: string) {
@@ -261,6 +387,20 @@ function formatNodeKind(kind: string) {
 }
 
 function formatEdgeKind(kind: string) {
-  const translations: Record<string, string> = { true: "Да", false: "Нет", next: "Далее" };
+  if (kind === "next") return "";
+  const translations: Record<string, string> = {
+    true: "Да",
+    false: "Нет",
+    back: "Повтор",
+    back_true: "Повтор · да",
+    break: "Выход из цикла",
+    continue: "Следующий проход",
+    return: "Возврат",
+    exception: "Исключение",
+    finally: "finally",
+    default: "По умолчанию",
+    "no-match": "Совпадений нет",
+    case: "Ветка",
+  };
   return translations[kind.toLowerCase()] ?? kind;
 }

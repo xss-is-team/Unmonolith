@@ -20,6 +20,7 @@ final class AstJson {
     private final String src;
     private final boolean bindings;
     private final List<Object> methods = new ArrayList<>();
+    private final List<Object> cfgs = new ArrayList<>();
 
     /** @param bindings whether the unit was parsed with resolved bindings (semantic information) */
     AstJson(CompilationUnit cu, String src, boolean bindings) {
@@ -55,6 +56,7 @@ final class AstJson {
         }
         out.put("types", types);
         out.put("methods", methods);
+        out.put("cfgs", cfgs);
         out.put("diagnostics", diagnostics(problems));
         return out;
     }
@@ -174,6 +176,7 @@ final class AstJson {
         summary.put("name", name);
         summary.put("source_range", range(md));
         methods.add(summary);
+        if (md.getBody() != null) cfgs.add(new CfgBuilder(cu, src).build(id, md));
         return m;
     }
 

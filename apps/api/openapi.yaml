@@ -150,8 +150,8 @@ paths:
         schema: {type: string}
     get:
       operationId: getMethodCfg
-      tags: [Planned M2+]
-      description: Planned M2. Do NOT implement in M1.
+      tags: [Analysis]
+      description: Implemented in M2. Returns only the CFG stored for the project's current analyzed revision.
       security: [{guestSession: []}]
       responses:
         '200':
@@ -159,6 +159,8 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Cfg'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /projects/{project_id}/transform:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}

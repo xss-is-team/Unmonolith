@@ -1,8 +1,9 @@
 # Java Blueprints backend
 
-Milestone M1 is a single-process Axum API with guest-cookie sessions, local
-file-backed Java projects, optimistic source revisions, and an optional external
-Java analyzer adapter.
+The Axum API provides guest-cookie sessions, local file-backed Java projects,
+optimistic source revisions, and an external Java/JDT analyzer adapter. M2 adds
+per-method CFG retrieval from the immutable analysis artifact for the current
+source revision.
 
 ## Development
 
@@ -29,14 +30,15 @@ Uploaded Java files retain only their safe basename so JDT filename diagnostics
 match the source the user supplied.
 
 Swagger UI is served at <http://127.0.0.1:3000/swagger-ui/> and the generated
-M1 OpenAPI document at <http://127.0.0.1:3000/api/v1/openapi.json>.
+OpenAPI document at <http://127.0.0.1:3000/api/v1/openapi.json>.
 
 ## Scope
 
-Implemented in M1: health, guest session creation, single `.java` upload,
-owned project metadata/source reads, revision-checked source updates, and the
-external analyzer endpoint. If no real worker JAR is configured, analysis
-returns `503 analyzer_unavailable`.
+Implemented: health, guest sessions, single `.java` upload, owned project and
+source routes, revision-checked source updates, analysis, and
+`GET /api/v1/projects/{project_id}/methods/{method_id}/cfg`. CFG reads are
+session-owned and revision-scoped; absent or unsupported graphs return
+`404 cfg_not_found`. Without a configured parser JAR, analysis returns
+`503 analyzer_unavailable`.
 
-`openapi.yaml` also preserves planned contracts for CFG, transformations,
-verification, and export. Those paths are intentionally not routed in M1.
+Transformations, isolated verification, and export remain planned contracts.

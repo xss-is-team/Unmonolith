@@ -19,8 +19,8 @@ use uuid::Uuid;
 
 use crate::{
     analyzer::{
-        AnalysisResult, AnalysisStatus, Diagnostic, DiagnosticSeverity, JavaAnalyzer, Method,
-        SourceRange,
+        AnalysisResult, AnalysisStatus, Cfg, CfgEdge, CfgNode, Diagnostic, DiagnosticSeverity,
+        JavaAnalyzer, Method, SourceRange,
     },
     error::{ApiError, ApiErrorBody},
     project::{self, Project, UpdateSourceRequest},
@@ -66,7 +66,8 @@ impl AppState {
         get_project,
         get_project_source,
         update_project_source,
-        analyze_project
+        analyze_project,
+        get_method_cfg
     ),
     components(schemas(
         HealthResponse,
@@ -80,7 +81,10 @@ impl AppState {
         Method,
         Diagnostic,
         DiagnosticSeverity,
-        SourceRange
+        SourceRange,
+        Cfg,
+        CfgNode,
+        CfgEdge
     )),
     modifiers(&SecurityAddon),
     tags(
@@ -119,6 +123,10 @@ pub fn app(state: AppState) -> Router {
             get(get_project_source).put(update_project_source),
         )
         .route("/projects/{project_id}/analyze", post(analyze_project))
+        .route(
+            "/projects/{project_id}/methods/{method_id}/cfg",
+            get(get_method_cfg),
+        )
         .layer(DefaultBodyLimit::max(body_limit));
 
     Router::new()
@@ -392,6 +400,34 @@ async fn analyze_project(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/methods/{method_id}/cfg",
+    tag = "Analysis",
+    security(("guestSession" = [])),
+    params(
+        ("project_id" = Uuid, Path),
+        ("method_id" = String, Path, description = "Method identifier returned by analysis")
+    ),
+    responses(
+        (status = 200, body = Cfg),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody)
+    )
+)]
+async fn get_method_cfg(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, method_id)): Path<(String, String)>,
+) -> Result<Json<Cfg>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    Ok(Json(
+        crate::analyzer::read_cfg(directory, project.revision, &method_id).await?,
+    ))
+}
+
 fn parse_project_id(value: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(value).map_err(|_| ApiError::bad_request("project_id must be a UUID"))
 }
@@ -406,6 +442,7 @@ mod tests {
     };
     use serde_json::Value;
     use tower::ServiceExt;
+    use uuid::Uuid;
 
     use super::{app, normalize_java_filename, AppState};
     use crate::Config;
@@ -485,6 +522,102 @@ mod tests {
     async fn response_json(response: axum::response::Response) -> Value {
         let bytes = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn cfg_route_returns_only_the_current_owned_analysis_artifact() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let project_json = response_json(upload(&app, &cookie, "Main.java").await).await;
+        let id = Uuid::parse_str(project_json["id"].as_str().unwrap()).unwrap();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(header::COOKIE, cookie.parse().unwrap());
+        let session_dir = crate::session::authenticate(&data.0, &headers)
+            .await
+            .unwrap();
+        let (_, directory) = crate::project::load(&session_dir, id).await.unwrap();
+        let artifact = serde_json::json!({
+            "protocol_version": 1,
+            "status": "completed",
+            "methods": [{"id": "Main.run()", "name": "run", "source_range": {"start": 13, "length": 20, "line": 1}}],
+            "diagnostics": [],
+            "cfgs": [{
+                "method_id": "Main.run()",
+                "nodes": [{"id": "n1", "kind": "entry", "label": "Вход", "source_range": {"start": 13, "length": 20, "line": 1}}],
+                "edges": []
+            }],
+            "revision": 1
+        });
+        crate::project::atomic_write(
+            &directory.join("analysis/1.json"),
+            &serde_json::to_vec(&artifact).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{id}/methods/Main.run()/cfg"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_json(response).await["method_id"], "Main.run()");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{id}/methods/Other.run()/cfg"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::put(format!("/api/v1/projects/{id}/source"))
+                    .header(header::COOKIE, &cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"source":"class Main { void run() {} }","expected_revision":1}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{id}/methods/Main.run()/cfg"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let other_cookie = guest_cookie(&app).await;
+        let response = app
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{id}/methods/Main.run()/cfg"))
+                    .header(header::COOKIE, other_cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

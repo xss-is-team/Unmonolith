@@ -32,12 +32,36 @@ pub struct AnalysisResult {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct Cfg {
+    pub method_id: String,
+    pub nodes: Vec<CfgNode>,
+    pub edges: Vec<CfgEdge>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct CfgNode {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub source_range: SourceRange,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct CfgEdge {
+    pub source: String,
+    pub target: String,
+    pub kind: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct ParserResult {
     protocol_version: u32,
     status: AnalysisStatus,
     methods: Vec<Method>,
     diagnostics: Vec<Diagnostic>,
+    #[serde(default)]
+    cfgs: Vec<Cfg>,
 }
 
 struct CapturedOutput {
@@ -76,7 +100,7 @@ pub enum DiagnosticSeverity {
     Info,
 }
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct SourceRange {
     pub file: Option<String>,
     pub start: u64,
@@ -189,6 +213,7 @@ impl JavaAnalyzer {
         if parsed.protocol_version != 1 || matches!(parsed.status, AnalysisStatus::Failed) {
             return Err(invalid_output());
         }
+        validate_cfgs(&parsed.methods, &parsed.cfgs)?;
 
         raw.as_object_mut()
             .ok_or_else(invalid_output)?
@@ -205,6 +230,58 @@ impl JavaAnalyzer {
         };
         Ok(result)
     }
+}
+
+pub async fn read_cfg(
+    project_dir: PathBuf,
+    revision: u64,
+    method_id: &str,
+) -> Result<Cfg, ApiError> {
+    let path = project_dir
+        .join("analysis")
+        .join(format!("{revision}.json"));
+    let bytes = match fs::read(path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(cfg_not_found(
+                "CFG is not available for the current revision",
+            ));
+        }
+        Err(error) => return Err(ApiError::io(error)),
+    };
+    let parsed: ParserResult = serde_json::from_slice(&bytes).map_err(|_| invalid_output())?;
+    parsed
+        .cfgs
+        .into_iter()
+        .find(|cfg| cfg.method_id == method_id)
+        .ok_or_else(|| cfg_not_found("CFG is not available for this method"))
+}
+
+fn validate_cfgs(methods: &[Method], cfgs: &[Cfg]) -> Result<(), ApiError> {
+    let method_ids: std::collections::HashSet<_> =
+        methods.iter().map(|method| method.id.as_str()).collect();
+    let mut cfg_methods = std::collections::HashSet::new();
+    for cfg in cfgs {
+        if !method_ids.contains(cfg.method_id.as_str())
+            || !cfg_methods.insert(cfg.method_id.as_str())
+        {
+            return Err(invalid_output());
+        }
+        let mut node_ids = std::collections::HashSet::new();
+        if cfg
+            .nodes
+            .iter()
+            .any(|node| node.id.is_empty() || !node_ids.insert(node.id.as_str()))
+        {
+            return Err(invalid_output());
+        }
+        if cfg.edges.iter().any(|edge| {
+            !node_ids.contains(edge.source.as_str()) || !node_ids.contains(edge.target.as_str())
+        }) {
+            return Err(invalid_output());
+        }
+    }
+    Ok(())
 }
 
 async fn read_bounded(
@@ -251,6 +328,10 @@ fn analyzer_failed() -> ApiError {
         "analyzer_failed",
         "Java analyzer exited unsuccessfully",
     )
+}
+
+fn cfg_not_found(message: &'static str) -> ApiError {
+    ApiError::new(StatusCode::NOT_FOUND, "cfg_not_found", message)
 }
 
 #[cfg(all(test, unix))]

@@ -20,6 +20,11 @@ const outcomes = [
     title: "Диагностики с привязкой к коду",
     description: "Откройте исходник прямо с нужной строки.",
   },
+  {
+    icon: ListTree,
+    title: "CFG выбранного метода",
+    description: "Переходите между графом и исходным диапазоном.",
+  },
 ];
 
 export default function Home() {
@@ -38,7 +43,7 @@ export default function Home() {
           <div className="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО / JAVA</div>
           <h1>Разберите<br /><em>Java-код.</em></h1>
           <p className="hero-description">
-            Загрузите один Java-файл. Получите список методов и диагностики с переходом к исходному коду.
+            Загрузите один Java-файл. Изучайте методы, диагностики и реальный граф потока с привязкой к коду.
           </p>
           <UploadPanel />
           <div className="privacy-line"><ShieldCheck size={15} /><span>Исходник доступен только в вашей гостевой сессии</span></div>
@@ -56,17 +61,12 @@ export default function Home() {
               <span className="outcome-copy"><strong>{title}</strong><small>{description}</small></span>
             </div>
           ))}
-          <div className="outcome-next">
-            <span className="outcome-number">03</span>
-            <span className="outcome-copy"><strong>Граф потока управления</strong><small>Следующий этап · M2</small></span>
-            <ArrowRight size={16} />
-          </div>
-          <p className="outcomes-note"><FileCode2 size={15} /> Анализ не меняет исходный файл.</p>
+          <p className="outcomes-note"><FileCode2 size={15} /> В графе выберите метод, ветвь или узел — он связан с исходником.</p>
         </aside>
       </section>
 
       <footer className="landing-bottom">
-        <span>JAVA BLUEPRINTS <i>·</i> M1</span>
+        <span>JAVA BLUEPRINTS <i>·</i> M2</span>
         <a className="bottom-link" href="/api/v1/openapi.json" target="_blank" rel="noreferrer">Контракт API <ArrowRight size={16} /></a>
       </footer>
     </main>

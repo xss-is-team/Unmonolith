@@ -230,6 +230,10 @@ a { color: inherit; text-decoration: none; }
 .cfg-transform input { height: 34px; min-width: 0; padding: 0 10px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: #fffefa; font-family: var(--font-code), monospace; font-size: 10px; }
 .cfg-transform .button { height: 34px; font-size: 10px; }
 .cfg-transform .button:disabled { cursor: not-allowed; opacity: .55; }
+.cfg-branch-controls { display: flex; align-items: center; gap: 8px; padding: 10px 17px; border-top: 1px solid #e7e7df; color: var(--soft-ink); font-size: 10px; }
+.cfg-branch-controls .button { min-height: 30px; padding: 0 9px; font-size: 10px; }
+.cfg-canvas .react-flow__edge-label { cursor: pointer; }
+.cfg-canvas .react-flow__edge-interaction { cursor: pointer; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 17px; border-bottom: 1px solid #e7e7df; }
 .panel-kicker { color: #8b948a; font-family: var(--font-code), monospace; font-size: 8px; letter-spacing: .13em; }
 .panel-heading h2 { margin: 5px 0 0; font-size: 14px; font-weight: 700; letter-spacing: -.035em; }
@@ -485,6 +489,8 @@ a { color: inherit; text-decoration: none; }
 .workspace-screen--ide .cfg-transform { border-color: #e4e4da; background: #fbfaf5; }
 .workspace-screen--ide .cfg-transform strong { color: #34493d; font-size: 10px; }
 .workspace-screen--ide .cfg-transform span { color: #778379; font-size: 9px; }
+.workspace-screen--ide .cfg-branch-controls { flex-wrap: wrap; border-color: #e4e4da; background: #fbfaf5; }
+.workspace-screen--ide .cfg-branch-controls .button { min-height: 30px; }
 .workspace-screen--ide .cfg-transform input { border-color: #d8ddd1; background: #fffefa; }
 .workspace-screen--ide .analysis-panel { display: flex; min-height: 0; flex-direction: column; padding: 18px 18px 14px; }
 .workspace-screen--ide .panel-heading { min-height: 50px; padding-bottom: 13px; border-color: #e5e5dc; }
