@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { diffLines } from "diff";
 import gsap from "gsap";
@@ -176,6 +176,12 @@ function WorkspaceEditor({
         diagnostics: partialAnalysis.diagnostics,
       }
       : null;
+  const revisionDiffRows = useMemo(
+    () => showRevisionDiff && historicalRevision && !dirty
+      ? buildRevisionDiffRows(historicalRevision.source, savedSource)
+      : [],
+    [showRevisionDiff, historicalRevision, savedSource, dirty],
+  );
   const selectSourceRange = useCallback((range: { start: number; length: number } | null) => {
     setSelectedSourceRange(range);
   }, []);
@@ -443,7 +449,19 @@ function WorkspaceEditor({
               {historicalRevision?.analysis ? <small>В выбранной версии {historicalRevision.analysis.methods.length} методов и {historicalRevision.analysis.diagnostics.length} диагностик.</small> : null}
             </div>
           )}
-          {showRevisionDiff && historicalRevision && !dirty ? <div className="revision-diff" aria-label="Различия исходников">{diffLines(historicalRevision.source, savedSource).map((part, index) => part.value.split("\n").filter((line, lineIndex, rows) => line || lineIndex < rows.length - 1).map((line, lineIndex) => <div className={`revision-diff__line revision-diff__line--${part.added ? "added" : part.removed ? "removed" : "same"}`} key={`${index}-${lineIndex}`}><span>{part.added ? "+" : part.removed ? "−" : " "}</span><code>{line || " "}</code></div>))}</div> : null}
+          {showRevisionDiff && historicalRevision && !dirty ? (
+            <div className="revision-diff" aria-label="Сравнение исходников: старая версия слева, текущая справа">
+              <div className="revision-diff__header"><span>РЕВИЗИЯ {selectedHistoryRevision}</span><span>РЕВИЗИЯ {revision}</span></div>
+              <div className="revision-diff__body">
+                {revisionDiffRows.map((row, index) => row.kind === "gap"
+                  ? <div className="revision-diff__gap" key={`gap-${index}`}>··· ещё {row.hidden} неизменённых строк ···</div>
+                  : <div className={`revision-diff__row revision-diff__row--${row.kind}`} key={`row-${index}`}>
+                    <span className="revision-diff__number">{row.oldLine ?? ""}</span><code className="revision-diff__old">{row.oldText ?? ""}</code>
+                    <span className="revision-diff__number">{row.newLine ?? ""}</span><code className="revision-diff__new">{row.newText ?? ""}</code>
+                  </div>)}
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -511,9 +529,10 @@ function WorkspaceEditor({
 
           {displayedAnalysis ? (
             <div className={`analysis-result${analysisState === "loading" ? " analysis-result--streaming" : ""}`}>
-              <div className="result-banner"><span className="result-check">{analysisState === "loading" ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}</span><div><strong>{analysisState === "loading" ? "Промежуточные результаты" : displayedAnalysis.status === "completed" ? "Анализ завершён" : "Частичный результат"}</strong><small>{analysisState === "loading" ? `Ревизия ${displayedAnalysis.revision} · анализ продолжается` : `Ревизия ${displayedAnalysis.revision} · протокол ${displayedAnalysis.protocol_version}`}</small></div></div>
+              <div className="result-banner" aria-live="polite"><span className={`result-check${analysisState === "loading" ? " result-check--streaming" : ""}`}>{analysisState === "loading" ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}</span><div><strong>{analysisState === "loading" ? "Промежуточные результаты" : displayedAnalysis.status === "completed" ? "Анализ завершён" : "Частичный результат"}</strong><small>{analysisState === "loading" ? `Ревизия ${displayedAnalysis.revision} · анализ продолжается` : `Ревизия ${displayedAnalysis.revision} · протокол ${displayedAnalysis.protocol_version}`}</small></div>{analysisState === "loading" ? <span className="analysis-live-badge"><i />АНАЛИЗ ИДЁТ</span> : null}</div>
               <div className="result-stats"><div><strong>{displayedAnalysis.methods.length}</strong><span>{analysisState === "loading" ? "найдено методов" : russianNoun(displayedAnalysis.methods.length, "метод", "метода", "методов")}</span></div><div><strong>{displayedAnalysis.diagnostics.length}</strong><span>{analysisState === "loading" ? "замечаний пока" : russianNoun(displayedAnalysis.diagnostics.length, "замечание", "замечания", "замечаний")}</span></div></div>
-              {displayedAnalysis.methods.length ? <div className="method-list"><span className="list-label">МЕТОДЫ <i>·</i> НАЖМИТЕ, ЧТОБЫ ОТКРЫТЬ В КОДЕ</span>{displayedAnalysis.methods.slice(0, 12).map((method) => <button className={`method-row${selectedSourceRange?.start === method.source_range.start ? " method-row--active" : ""}`} type="button" key={method.id} onClick={() => { setViewMode("source"); setSelectedSourceRange(method.source_range); }}><Code2 size={14} /><span className="method-row-copy"><span title={method.id}>{method.id}</span>{method.complexity ? <small className={`method-complexity${method.complexity.cyclomatic_complexity > 20 ? " method-complexity--high" : method.complexity.cyclomatic_complexity > 10 ? " method-complexity--medium" : ""}`} title="Цикломатическая · когнитивная · макс. вложенность">CC {method.complexity.cyclomatic_complexity} · Cog {method.complexity.cognitive_complexity} · D {method.complexity.max_nesting_depth}</small> : null}</span><small>стр. {method.source_range.line ?? "—"}</small><ArrowUpRight className="method-jump" size={13} /></button>)}{displayedAnalysis.methods.length > 12 ? <small className="more-methods">Показаны первые 12 из {displayedAnalysis.methods.length}</small> : null}</div> : null}
+              {analysisState === "loading" ? <p className="analysis-stream-note">Список методов и замечаний пополняется по мере разбора. Итог появится после завершения анализа.</p> : null}
+              {displayedAnalysis.methods.length ? <div className="method-list"><span className="list-label">МЕТОДЫ <i>·</i> НАЖМИТЕ, ЧТОБЫ ОТКРЫТЬ В КОДЕ</span>{displayedAnalysis.methods.slice(0, 12).map((method) => <button className={`method-row${selectedSourceRange?.start === method.source_range.start ? " method-row--active" : ""}`} type="button" key={method.id} onClick={() => { setViewMode("source"); setSelectedSourceRange(method.source_range); }}><Code2 size={14} /><span className="method-row-copy"><span title={method.id}>{method.id}</span>{method.complexity ? <span className="complexity-summary"><strong className={`complexity-badge complexity-badge--${complexityTier(method.complexity.cyclomatic_complexity)}`} title="Цикломатическая сложность: число независимых путей выполнения">CC {method.complexity.cyclomatic_complexity} · {complexityTierLabel(method.complexity.cyclomatic_complexity)}</strong><small>Cog {method.complexity.cognitive_complexity} · вложенность {method.complexity.max_nesting_depth}</small></span> : null}</span><small>стр. {method.source_range.line ?? "—"}</small><ArrowUpRight className="method-jump" size={13} /></button>)}{displayedAnalysis.methods.some((method) => method.complexity) ? <div className="complexity-legend"><strong>Цикломатическая сложность</strong><span><i className="complexity-dot complexity-dot--low" /> ≤5 низкая <i className="complexity-dot complexity-dot--medium" /> 6–10 внимание <i className="complexity-dot complexity-dot--high" /> &gt;10 высокая</span></div> : null}{displayedAnalysis.methods.length > 12 ? <small className="more-methods">Показаны первые 12 из {displayedAnalysis.methods.length}</small> : null}</div> : null}
               {displayedAnalysis.diagnostics.length ? <div className="diagnostic-list"><span className="list-label">ДИАГНОСТИКИ <i>·</i> ПЕРЕЙТИ К СТРОКЕ</span>{displayedAnalysis.diagnostics.map((item, index) => <button className={`diagnostic-item diagnostic-item--${item.severity}${selectedSourceRange?.start === item.source_range.start ? " diagnostic-item--active" : ""}`} type="button" key={`${item.code}-${index}`} onClick={() => { setViewMode("source"); setSelectedSourceRange(item.source_range); }}><span className={`diagnostic-dot diagnostic-dot--${item.severity}`} /><span className="diagnostic-copy"><strong>{item.code}</strong><span>{item.message}</span><small>Строка {item.source_range.line ?? "—"}</small></span><ArrowUpRight className="diagnostic-jump" size={14} /></button>)}</div> : analysisState === "loading" ? <div className="empty-diagnostics">Ожидаем диагностики по завершении разбора.</div> : <div className="empty-diagnostics"><Check size={15} /> Замечаний нет</div>}
             </div>
           ) : analysisState === "unavailable" ? (
@@ -521,7 +540,7 @@ function WorkspaceEditor({
           ) : analysisState === "error" ? (
             <div className="worker-state worker-state--error"><span className="state-icon"><AlertCircle /></span><strong>Анализ не выполнен</strong><p>{analysisError}</p><Button variant="outline" onClick={() => void runAnalysis()}><RefreshCw /> Попробовать снова</Button></div>
           ) : (
-            <div className="worker-state"><span className="state-icon"><ShieldCheck /></span><strong>{analysisState === "loading" ? "Разбираем исходник" : dirty ? "Отчёт устарел" : "Анализ запустится автоматически"}</strong><p>{analysisState === "loading" ? (analysisError || "Ищем методы и диагностики.") : dirty ? `Результат относится к сохранённой ревизии ${analysis?.revision ?? revision}. После автосохранения он обновится.` : "Результаты появятся здесь после завершения разбора."}</p>{analysisState === "loading" ? <div className="state-footnote"><span className="status-pip status-pip--pulse" />Редакция {revision}</div> : null}</div>
+            <div className="worker-state"><span className="state-icon"><ShieldCheck /></span><strong>{analysisState === "loading" ? "Разбираем исходник" : dirty ? "Отчёт устарел" : "Анализ запустится автоматически"}</strong><p>{analysisState === "loading" ? (analysisError || "Ищем методы и диагностики.") : dirty ? `Результат относится к сохранённой ревизии ${analysis?.revision ?? revision}. После автосохранения он обновится.` : "После загрузки и сохранения анализ запускается автоматически; результат появится здесь."}</p>{analysisState === "loading" ? <div className="state-footnote"><span className="status-pip status-pip--pulse" />Редакция {revision}</div> : null}</div>
           )}
 
         </aside>
@@ -595,4 +614,73 @@ function sourceMetrics(source: string) {
     lineCount: source.length ? source.split("\n").length : 0,
     byteLength: new TextEncoder().encode(source).byteLength,
   };
+}
+
+function complexityTier(score: number) {
+  return score <= 5 ? "low" : score <= 10 ? "medium" : "high";
+}
+
+function complexityTierLabel(score: number) {
+  return score <= 5 ? "низкая" : score <= 10 ? "внимание" : "высокая";
+}
+
+type RevisionDiffRow = {
+  kind: "same" | "changed" | "added" | "removed" | "gap";
+  oldLine?: number;
+  newLine?: number;
+  oldText?: string;
+  newText?: string;
+  hidden?: number;
+};
+
+function buildRevisionDiffRows(oldSource: string, newSource: string): RevisionDiffRow[] {
+  const rows: RevisionDiffRow[] = [];
+  let oldLine = 1;
+  let newLine = 1;
+  let removed: string[] = [];
+  let added: string[] = [];
+  const lines = (value: string) => value.length === 0 ? [] : value.replace(/\n$/, "").split("\n");
+  const flushChanges = () => {
+    const count = Math.max(removed.length, added.length);
+    for (let index = 0; index < count; index += 1) {
+      const oldText = removed[index];
+      const newText = added[index];
+      rows.push({
+        kind: oldText !== undefined && newText !== undefined ? "changed" : oldText !== undefined ? "removed" : "added",
+        oldLine: oldText === undefined ? undefined : oldLine++,
+        newLine: newText === undefined ? undefined : newLine++,
+        oldText,
+        newText,
+      });
+    }
+    removed = [];
+    added = [];
+  };
+
+  for (const part of diffLines(oldSource, newSource)) {
+    if (part.removed) removed.push(...lines(part.value));
+    else if (part.added) added.push(...lines(part.value));
+    else {
+      flushChanges();
+      for (const text of lines(part.value)) {
+        rows.push({ kind: "same", oldLine: oldLine++, newLine: newLine++, oldText: text, newText: text });
+      }
+    }
+  }
+  flushChanges();
+
+  const compact: RevisionDiffRow[] = [];
+  for (let index = 0; index < rows.length;) {
+    if (rows[index].kind !== "same") {
+      compact.push(rows[index++]);
+      continue;
+    }
+    let end = index + 1;
+    while (end < rows.length && rows[end].kind === "same") end += 1;
+    const run = rows.slice(index, end);
+    if (run.length <= 8) compact.push(...run);
+    else compact.push(...run.slice(0, 3), { kind: "gap", hidden: run.length - 6 }, ...run.slice(-3));
+    index = end;
+  }
+  return compact;
 }

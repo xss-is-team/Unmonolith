@@ -389,7 +389,7 @@ export const JavaEditor = forwardRef<JavaEditorHandle, {
   return (
     <div className="java-editor" aria-label="Исходный код Java" style={{ height: "100%" }}>
       <div ref={containerRef} className="java-editor-surface" />
-      <div ref={overviewRulerRef} className="cm-diagnostic-overview" aria-label="Обзор диагностик по файлу" />
+      <div ref={overviewRulerRef} className="cm-diagnostic-overview" role="group" aria-label="Обзор диагностик по файлу" />
     </div>
   );
 });

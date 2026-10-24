@@ -54,14 +54,18 @@ function CfgFlowNode({ data }: NodeProps<FlowNode>) {
       ? "medium"
       : "low";
   const hasComplexity = data.cognitiveContribution > 0 || data.cyclomaticContribution > 0;
+  const condition = isCondition(data.kind);
   return (
     <div
       className={`cfg-node cfg-node--${safeKind(data.kind)}${hasComplexity ? ` cfg-node--complexity-${complexityLevel}` : ""}`}
-      title={isCondition(data.kind) ? "Клик: подсветить ветвь «Да»; повторный клик переключает «Да» / «Нет»." : undefined}
+      data-tooltip={condition ? "Кликните: подсветить ветвь «Да»; повторный клик переключит на «Нет»." : undefined}
+      role={condition ? "group" : undefined}
+      aria-label={condition ? `${data.label}. Нажмите, чтобы подсветить ветвь Да или Нет.` : undefined}
     >
       <Handle type="target" position={Position.Top} />
       <span>{formatNodeKind(data.kind)}</span>
       <strong>{data.label}</strong>
+      {condition ? <small className="cfg-node__click-hint">↵ нажмите для подсветки ветви</small> : null}
       {data.cognitiveContribution > 0 || data.cyclomaticContribution > 0 ? (
         <small className="cfg-complexity-mark" title="Вклад узла в структурную сложность метода">
           +{data.cognitiveContribution} Cog · +{data.cyclomaticContribution} CC
@@ -321,6 +325,7 @@ export function CfgViewer({
         {state === "ready" && cfg?.nodes.length === 0 ? <div className="cfg-state"><GitBranch /><strong>Граф пуст</strong><span>Для этого метода backend не вернул узлов CFG.</span></div> : null}
         {state === "ready" && cfg?.nodes.length ? (
           <div className="cfg-canvas" ref={canvasRef}>
+            <p className="cfg-canvas-help"><GitBranch size={12} /> Нажмите на условие, чтобы подсветить ветвь «Да»; повторный клик переключит на «Нет».</p>
             <ReactFlow nodes={flow.nodes} edges={flow.edges} nodeTypes={nodeTypes} onNodeClick={onNodeClick} onEdgeClick={onEdgeClick} onInit={(instance) => { reactFlowRef.current = instance as ReactFlowInstance<FlowNode, Edge>; }} fitView fitViewOptions={{ padding: 0.18, minZoom: 0.04 }} minZoom={0.04} maxZoom={1.6} nodesDraggable={false} nodesConnectable={false} elementsSelectable>
               <Background color="#d7dbd3" gap={20} size={1} />
               <Controls showInteractive={false} />

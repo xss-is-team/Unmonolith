@@ -43,7 +43,7 @@ export default function Home() {
           <div className="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО / JAVA</div>
           <h1>Разберите<br /><em>Java-код.</em></h1>
           <p className="hero-description">
-            Загрузите один Java-файл. Изучайте методы, диагностики и реальный граф потока с привязкой к коду.
+            Загрузите один Java-файл — анализ начнётся автоматически. Изучайте методы, диагностики и реальный граф потока с привязкой к коду.
           </p>
           <UploadPanel />
           <div className="privacy-line"><ShieldCheck size={15} /><span>Исходник доступен только в вашей гостевой сессии</span></div>
