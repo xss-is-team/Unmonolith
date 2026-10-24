@@ -55,7 +55,10 @@ function CfgFlowNode({ data }: NodeProps<FlowNode>) {
       : "low";
   const hasComplexity = data.cognitiveContribution > 0 || data.cyclomaticContribution > 0;
   return (
-    <div className={`cfg-node cfg-node--${safeKind(data.kind)}${hasComplexity ? ` cfg-node--complexity-${complexityLevel}` : ""}`}>
+    <div
+      className={`cfg-node cfg-node--${safeKind(data.kind)}${hasComplexity ? ` cfg-node--complexity-${complexityLevel}` : ""}`}
+      title={isCondition(data.kind) ? "Клик: подсветить ветвь «Да»; повторный клик переключает «Да» / «Нет»." : undefined}
+    >
       <Handle type="target" position={Position.Top} />
       <span>{formatNodeKind(data.kind)}</span>
       <strong>{data.label}</strong>
@@ -86,14 +89,16 @@ export function CfgViewer({
   selectedSourceRange: { start: number; length: number } | null;
   selectedMethodId: string;
   onSelectedMethodIdChange: (methodId: string) => void;
-  onSourceRangeSelect: (range: { start: number; length: number } | null) => void;
+  onSourceRangeSelect: (range: { start: number; length: number } | null, keepGraphVisible?: boolean) => void;
 }) {
   const methods = useMemo(() => analysis?.methods ?? [], [analysis]);
   const [conditionValue, setConditionValue] = useState("");
   const [activeBranch, setActiveBranch] = useState<{ source: string; target: string; kind: string } | null>(null);
+  const [methodSwitching, setMethodSwitching] = useState(false);
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
   const reactFlowRef = useRef<ReactFlowInstance<FlowNode, Edge> | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const exitTweenRef = useRef<gsap.core.Tween | null>(null);
   const methodId = methods.some((method) => method.id === selectedMethodId)
     ? selectedMethodId
     : methods[0]?.id ?? "";
@@ -126,8 +131,18 @@ export function CfgViewer({
 
   const onNodeClick = useCallback((_event: MouseEvent, node: FlowNode) => {
     setConditionValue(node.data.label);
-    onSourceRangeSelect(node.data.source_range);
-  }, [onSourceRangeSelect]);
+    onSourceRangeSelect(node.data.source_range, isCondition(node.data.kind));
+    if (!isCondition(node.data.kind) || !cfg) {
+      setActiveBranch(null);
+      return;
+    }
+    setActiveBranch((current) => {
+      if (current?.source === node.id) {
+        return findConditionBranch(cfg, node.id, current.kind === "false" ? "true" : "false");
+      }
+      return findConditionBranch(cfg, node.id, "true") ?? findConditionBranch(cfg, node.id, "false");
+    });
+  }, [cfg, onSourceRangeSelect]);
 
   const onEdgeClick = useCallback((_event: MouseEvent, edge: Edge) => {
     if (edge.label !== "Да" && edge.label !== "Нет") return;
@@ -141,6 +156,9 @@ export function CfgViewer({
 
   const selectedCondition = cfg && selectedSourceRange
     ? matchingNode(cfg, selectedSourceRange)
+    : null;
+  const selectedBranchKind = selectedCondition && activeBranch?.source === selectedCondition.id
+    ? activeBranch.kind === "false" ? "false" : "true"
     : null;
 
   const activeEdges = useMemo(() => cfg && activeBranch ? branchFootprint(cfg, activeBranch) : new Set<number>(), [cfg, activeBranch]);
@@ -164,6 +182,7 @@ export function CfgViewer({
         type: "smoothstep" as const,
         label: formatEdgeKind(edge.kind),
         markerEnd: { type: MarkerType.ArrowClosed, color: highlighted ? "#bb613e" : "#69786d" },
+        className: highlighted ? "cfg-edge--active" : undefined,
         style: {
           stroke: highlighted ? "#bb613e" : edge.kind.startsWith("back") ? "#b56e41" : "#69786d",
           strokeWidth: highlighted ? 2.8 : edge.kind.startsWith("back") ? 2 : 1.5,
@@ -191,6 +210,57 @@ export function CfgViewer({
     });
     return () => media.revert();
   }, { dependencies: [cfg?.method_id, revision], revertOnUpdate: true });
+
+  useGSAP(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || activeEdges.size === 0) return;
+    const media = gsap.matchMedia();
+    media.add("(prefers-reduced-motion: no-preference)", () => {
+      const paths = canvas.querySelectorAll<SVGPathElement>(".react-flow__edge.cfg-edge--active .react-flow__edge-path");
+      if (paths.length) {
+        gsap.fromTo(paths, { opacity: 0.42, strokeWidth: 1.5 }, {
+          opacity: 1,
+          strokeWidth: 2.8,
+          duration: 0.38,
+          stagger: 0.025,
+          ease: "power2.out",
+        });
+      }
+    });
+    return () => media.revert();
+  }, { dependencies: [activeEdges], scope: canvasRef, revertOnUpdate: true });
+
+  useEffect(() => () => {
+    exitTweenRef.current?.kill();
+  }, []);
+
+  const changeMethod = useCallback((nextMethodId: string) => {
+    if (!nextMethodId || nextMethodId === methodId || methodSwitching) return;
+    const finish = () => {
+      setMethodSwitching(false);
+      onSelectedMethodIdChange(nextMethodId);
+    };
+    setConditionValue("");
+    setActiveBranch(null);
+    onSourceRangeSelect(null);
+    const canvas = canvasRef.current;
+    if (!canvas || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      finish();
+      return;
+    }
+    setMethodSwitching(true);
+    exitTweenRef.current?.kill();
+    exitTweenRef.current = gsap.to(canvas, {
+      autoAlpha: 0,
+      y: -8,
+      duration: 0.16,
+      ease: "power2.in",
+      onComplete: () => {
+        exitTweenRef.current = null;
+        finish();
+      },
+    });
+  }, [methodId, methodSwitching, onSelectedMethodIdChange, onSourceRangeSelect]);
   useEffect(() => {
     let cancelled = false;
     if (!cfg || cfg.nodes.length === 0) return;
@@ -235,12 +305,7 @@ export function CfgViewer({
         <div className="cfg-title"><span className="cfg-icon"><GitBranch size={17} /></span><div><span className="panel-kicker">ГРАФ ПОТОКА</span><h2>Граф метода</h2></div></div>
         <div className="cfg-controls">
           <label htmlFor="cfg-method">Метод</label>
-          <select id="cfg-method" value={methodId} onChange={(event) => {
-            setConditionValue("");
-            setActiveBranch(null);
-            onSourceRangeSelect(null);
-            onSelectedMethodIdChange(event.target.value);
-          }}>
+          <select id="cfg-method" value={methodId} disabled={methodSwitching} onChange={(event) => changeMethod(event.target.value)}>
             <option value="" disabled>{methods.length ? "Выберите метод" : "Сначала запустите анализ"}</option>
             {methods.map((method) => <option key={method.id} value={method.id}>{method.id}</option>)}
           </select>
@@ -267,9 +332,9 @@ export function CfgViewer({
 
       {state === "ready" && cfg && selectedCondition && isCondition(selectedCondition.kind) ? (
         <div className="cfg-branch-controls" aria-label="Подсветка ветви условия">
-          <span>Подсветить путь от выбранного условия</span>
-          <Button variant="outline" size="sm" onClick={() => selectBranch(cfg, selectedCondition.id, "true", setActiveBranch)}>Ветка «Да»</Button>
-          <Button variant="outline" size="sm" onClick={() => selectBranch(cfg, selectedCondition.id, "false", setActiveBranch)}>Ветка «Нет»</Button>
+          <span>Клик по узлу переключает ветви «Да» / «Нет»</span>
+          <Button variant="outline" size="sm" aria-pressed={selectedBranchKind === "true"} onClick={() => selectBranch(cfg, selectedCondition.id, "true", setActiveBranch)}>Ветка «Да»</Button>
+          <Button variant="outline" size="sm" aria-pressed={selectedBranchKind === "false"} onClick={() => selectBranch(cfg, selectedCondition.id, "false", setActiveBranch)}>Ветка «Нет»</Button>
           {activeBranch ? <Button variant="ghost" size="sm" onClick={() => setActiveBranch(null)}>Сбросить</Button> : null}
         </div>
       ) : null}
@@ -416,6 +481,11 @@ function layoutDagre(cfg: Cfg) {
     const position = graph.node(node.id);
     return [node.id, { x: position.x - NODE_WIDTH / 2, y: position.y - NODE_HEIGHT / 2 }];
   }));
+}
+
+function findConditionBranch(cfg: Cfg, source: string, kind: "true" | "false") {
+  return cfg.edges.find((edge) => edge.source === source
+    && (edge.kind === kind || (kind === "true" && edge.kind === "back_true"))) ?? null;
 }
 
 function selectBranch(

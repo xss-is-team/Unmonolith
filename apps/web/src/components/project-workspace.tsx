@@ -457,7 +457,7 @@ function WorkspaceEditor({
               selectedSourceRange={selectedSourceRange}
               selectedMethodId={cfgMethodId}
               onSelectedMethodIdChange={setCfgMethodId}
-              onSourceRangeSelect={(range) => { selectSourceRange(range); if (range) setViewMode("source"); }}
+              onSourceRangeSelect={(range, keepGraphVisible) => { selectSourceRange(range); if (range && !keepGraphVisible) setViewMode("source"); }}
             />
           )}
         </section>
