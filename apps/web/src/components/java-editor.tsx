@@ -349,7 +349,10 @@ export const JavaEditor = forwardRef<JavaEditorHandle, {
                 });
               }, 180);
             }
-            if (update.selectionSet && !update.docChanged) {
+            // selectionSet is true for any transaction carrying a selection, even one that
+            // leaves it unchanged (e.g. the focusRange effect re-dispatching the same range).
+            // Only echo real changes, or the focus effect would re-run forever.
+            if (update.selectionSet && !update.docChanged && !update.startState.selection.eq(update.state.selection)) {
               const selection = update.state.selection.main;
               callbacks.onSourceSelection?.(selection.empty ? null : { start: selection.from, length: selection.to - selection.from });
             }
