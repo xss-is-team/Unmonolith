@@ -1,7 +1,8 @@
 # Stack and architecture
 
-- Runtime layout: `apps/api/` is the Rust/Axum API, `apps/parser/` is a Maven/Eclipse JDT CLI that emits AST JSON, and `apps/web/` is the Next.js App Router UI. Root `flake.nix` is optional; host setup is documented in `README.md`.
-- API invokes the parser JAR with a source path, validates its JSON AST result, attaches revision metadata, and stores the full artifact. The UI currently displays method summaries and diagnostics; CFG and complexity analysis are not implemented.
-- Intended flow: Java parser → AST/source map → CFG + canonical editable model → analysis/refactoring → Java generator → reparse, compile, tests, behavior comparison.
-- Required initial language coverage per brief: core Java/`java.lang`, console I/O, `java.util` collections, and exceptions. Graph visualization/model design remains undecided.
-- Keep source locations linked through model nodes, diagnostics, and generated edits. Do not silently discard unsupported syntax; retain original source for rollback.
+- `apps/api/`: Rust/Axum API for projects, analysis, revisions, and isolated verification. Current upload accepts one `.java` file.
+- `apps/parser/`: Java/Maven with Eclipse JDT. Emits AST, diagnostics, per-method CFG, complexity findings, and a compilation-unit project graph; supports limited `replace_condition` transformation.
+- `apps/web/`: Next.js App Router. Current UI includes source editor, diagnostics, CFG/Big O, revisions, verification, a type-graph prototype, and clearly labeled synthetic nested-flow and modernization/BPMN-plan demos. Flow and modernization views consume typed catalogs supplied explicitly by fixtures.
+- Project-graph API payloads are runtime-validated, including node references and source ranges. Match graph callables to CFG methods by `method_id` plus exact `source_range`; `method_id` can collide for local classes.
+- The API lacks project-flow and project-wide modernization endpoints. It supports only a limited method-condition transform plus revisioned scenario verification. Whole-repository import/classpath, real project flows, Java-version migration, monolith decomposition, and before/after runtime measurements remain future work; see `ROADMAP.md`.
+- Synthetic demo data must never appear as analysis of an uploaded project. Preserve `legacy/commons-math-3.6.1/` unchanged.

@@ -31,12 +31,27 @@ Open <http://localhost:3001>. By default Next proxies to Axum at
 The command installs frontend packages, builds the parser and API, and starts
 both services. Press Ctrl+C to stop them.
 
-The current UI supports one `.java` file per project, source viewing and
-revision-checked autosaving. With the parser built, analysis starts
-automatically and shows source-linked diagnostics, actual nested per-method CFG,
-Big O findings, and `replace_condition` through ASTRewrite. Revision text diff
-and isolated behavioral comparison are separate views. Verification requires
-`./dev runner-build` and `BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21`;
-without it the API truthfully returns `runner_unavailable`.
+The current API accepts one `.java` file per project. The UI provides source
+viewing and revision-checked autosaving. With the parser built, analysis starts
+automatically and shows source-linked diagnostics, per-method CFG, Big O findings,
+and `replace_condition` through ASTRewrite. Revision text diff and isolated
+behavioral comparison are separate views. Verification requires `./dev
+runner-build` and `BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21`;
+without it the API returns `runner_unavailable`.
+
+The parser emits a compilation-unit `project_graph`, but the API graph endpoint
+is not available yet. Project Overview requests that endpoint; in development,
+the type graph fixture can be opened explicitly and is labeled as test data.
+Fixture nodes never navigate to the uploaded project's source or CFG. The demo
+flow and modernization catalogs use typed frontend models supplied explicitly
+by local fixtures; they do not analyze or modify the uploaded source.
+
+Open `/demo` to explore those frontend prototypes without uploading a source
+file or calling the project-graph API.
+
+This prototype shows type relationships for one source file. The product target
+is a whole-project hierarchy of read-only flowcharts plus a separate editable
+BPMN-style process diagram that proposes verified code transformations; neither is provided
+by the current API.
 
 Run frontend typecheck, lint and production build with `./dev web-check`.

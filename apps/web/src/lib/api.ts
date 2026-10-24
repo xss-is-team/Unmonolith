@@ -44,6 +44,66 @@ export type MethodsResponse = {
   methods: CfgMethod[];
 };
 
+export type ProjectGraphNodeKind =
+  | "class"
+  | "interface"
+  | "enum"
+  | "record"
+  | "annotation_type"
+  | "method"
+  | "constructor";
+
+export type ProjectGraphNode = {
+  id: string;
+  kind: ProjectGraphNodeKind;
+  name: string;
+  qualified_name?: string | null;
+  method_id?: string | null;
+  cfg_entry?: string | null;
+  source_range: SourceRange;
+  external_supertypes?: {
+    name: string;
+    relation: "extends" | "implements";
+    resolved: boolean;
+  }[];
+};
+
+export type ProjectGraphEdge = {
+  from: string;
+  to: string;
+  kind: "contains" | "extends" | "implements" | "calls" | "constructs" | "depends_on";
+  count: number;
+  sites: SourceRange[];
+};
+
+export type UnresolvedProjectCall = {
+  id: string;
+  from: string;
+  kind: "method_call" | "constructor_call";
+  name: string;
+  expression: string;
+  source_range: SourceRange;
+  reason: string;
+};
+
+export type ProjectGraph = {
+  version: 1;
+  scope: "compilation_unit" | "project";
+  nodes: ProjectGraphNode[];
+  edges: ProjectGraphEdge[];
+  unresolved_calls: UnresolvedProjectCall[];
+  stats: {
+    resolved_internal_calls: number;
+    external_calls: number;
+    unresolved_calls: number;
+  };
+};
+
+export type ProjectGraphResponse = {
+  revision: number;
+  graph: ProjectGraph;
+};
+
 export type CfgNode = {
   id: string;
   kind: string;
@@ -226,6 +286,115 @@ export async function uploadJavaFile(file: File): Promise<Project> {
 
 export function getProject(projectId: string) {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`);
+}
+
+export async function getProjectGraph(projectId: string): Promise<ProjectGraphResponse> {
+  const response = await request<unknown>(`/projects/${encodeURIComponent(projectId)}/graph`);
+  if (!isRecord(response) || !Number.isSafeInteger(response.revision) || Number(response.revision) < 1) {
+    throw new ApiError("API вернул некорректную ревизию графа проекта.", 502, "invalid_response");
+  }
+  const graph = parseProjectGraph(response.graph ?? response.project_graph);
+  return { revision: response.revision as number, graph };
+}
+
+/** Validate parser-shaped graph data at both the API and fixture boundaries. */
+export function parseProjectGraph(value: unknown): ProjectGraph {
+  if (!isProjectGraph(value)) {
+    throw new ApiError("API вернул некорректный граф проекта.", 502, "invalid_response");
+  }
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isProjectGraph(value: unknown): value is ProjectGraph {
+  if (!isRecord(value)
+    || value.version !== 1
+    || (value.scope !== "compilation_unit" && value.scope !== "project")
+    || !Array.isArray(value.nodes)
+    || !Array.isArray(value.edges)
+    || !Array.isArray(value.unresolved_calls)
+    || !isRecord(value.stats)) return false;
+
+  const nodeKinds = new Set<ProjectGraphNodeKind>([
+    "class", "interface", "enum", "record", "annotation_type", "method", "constructor",
+  ]);
+  const edgeKinds = new Set<ProjectGraphEdge["kind"]>([
+    "contains", "extends", "implements", "calls", "constructs", "depends_on",
+  ]);
+  const nodeIds = new Set<string>();
+  const requiresFileRanges = value.scope === "project";
+
+  for (const node of value.nodes) {
+    if (!isRecord(node)
+      || typeof node.id !== "string" || !node.id
+      || nodeIds.has(node.id)
+      || typeof node.kind !== "string" || !nodeKinds.has(node.kind as ProjectGraphNodeKind)
+      || typeof node.name !== "string" || !node.name
+      || !isSourceRange(node.source_range, requiresFileRanges)
+      || !isOptionalString(node.qualified_name)
+      || !isOptionalString(node.method_id)
+      || !isOptionalString(node.cfg_entry)) return false;
+    if (node.external_supertypes !== undefined
+      && (!Array.isArray(node.external_supertypes)
+        || !node.external_supertypes.every((external) => isRecord(external)
+          && typeof external.name === "string"
+          && (external.relation === "extends" || external.relation === "implements")
+          && typeof external.resolved === "boolean"))) return false;
+    nodeIds.add(node.id);
+  }
+
+  for (const edge of value.edges) {
+    if (!isRecord(edge)
+      || typeof edge.from !== "string" || !nodeIds.has(edge.from)
+      || typeof edge.to !== "string" || !nodeIds.has(edge.to)
+      || typeof edge.kind !== "string" || !edgeKinds.has(edge.kind as ProjectGraphEdge["kind"])
+      || !isPositiveInteger(edge.count)
+      || !Array.isArray(edge.sites)
+      || !edge.sites.every((site) => isSourceRange(site, requiresFileRanges))) return false;
+  }
+
+  const unresolvedIds = new Set<string>();
+  for (const call of value.unresolved_calls) {
+    if (!isRecord(call)
+      || typeof call.id !== "string" || !call.id || unresolvedIds.has(call.id)
+      || typeof call.from !== "string" || !nodeIds.has(call.from)
+      || (call.kind !== "method_call" && call.kind !== "constructor_call")
+      || typeof call.name !== "string"
+      || typeof call.expression !== "string"
+      || !isSourceRange(call.source_range, requiresFileRanges)
+      || typeof call.reason !== "string") return false;
+    unresolvedIds.add(call.id);
+  }
+
+  return isNonNegativeInteger(value.stats.resolved_internal_calls)
+    && isNonNegativeInteger(value.stats.external_calls)
+    && isNonNegativeInteger(value.stats.unresolved_calls)
+    && value.stats.unresolved_calls === value.unresolved_calls.length;
+}
+
+function isOptionalString(value: unknown) {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) > 0;
+}
+
+function isSourceRange(value: unknown, requireFile = false): value is SourceRange {
+  return isRecord(value)
+    && isNonNegativeInteger(value.start)
+    && isNonNegativeInteger(value.length)
+    && (typeof value.file === "string" && value.file.length > 0 || !requireFile && value.file === undefined)
+    && (value.line === undefined || isPositiveInteger(value.line))
+    && (value.end_line === undefined || isPositiveInteger(value.end_line))
+    && (value.line === undefined || value.end_line === undefined || Number(value.end_line) >= Number(value.line));
 }
 
 export async function getProjectSource(projectId: string) {
