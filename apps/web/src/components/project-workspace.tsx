@@ -367,7 +367,20 @@ function WorkspaceEditor({
       <div className="workspace-grid">
         <section className="ide-center" aria-label="Исходник и граф">
           <div className="workspace-viewbar">
-            <div className="workspace-tabs" role="tablist" aria-label="Представление исходника">
+            <div className="workspace-tabs" role="tablist" aria-label="Представление исходника" onKeyDown={(event) => {
+              const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+              const current = tabs.indexOf(event.target as HTMLButtonElement);
+              const next = event.key === "ArrowRight" ? (current + 1) % tabs.length
+                : event.key === "ArrowLeft" ? (current - 1 + tabs.length) % tabs.length
+                  : event.key === "Home" ? 0
+                    : event.key === "End" ? tabs.length - 1
+                      : current;
+              if (next !== current && tabs[next]) {
+                event.preventDefault();
+                tabs[next].focus();
+                tabs[next].click();
+              }
+            }}>
               <button className={viewMode === "source" ? "workspace-tab workspace-tab--active" : "workspace-tab"} type="button" role="tab" aria-selected={viewMode === "source"} onClick={() => setViewMode("source")}>
                 <Code2 size={16} /> Исходник
               </button>
@@ -419,8 +432,8 @@ function WorkspaceEditor({
             <div className="analysis-result">
               <div className="result-banner"><span className="result-check"><Check size={15} /></span><div><strong>{analysis.status === "completed" ? "Анализ завершён" : "Частичный результат"}</strong><small>Ревизия {analysis.revision} · протокол {analysis.protocol_version}</small></div></div>
               <div className="result-stats"><div><strong>{analysis.methods.length}</strong><span>{russianNoun(analysis.methods.length, "метод", "метода", "методов")}</span></div><div><strong>{analysis.diagnostics.length}</strong><span>{russianNoun(analysis.diagnostics.length, "замечание", "замечания", "замечаний")}</span></div></div>
-              {analysis.methods.length ? <div className="method-list"><span className="list-label">МЕТОДЫ <i>·</i> НАЖМИТЕ, ЧТОБЫ ОТКРЫТЬ В КОДЕ</span>{analysis.methods.slice(0, 12).map((method) => <button className={`method-row${selectedSourceRange?.start === method.source_range.start ? " method-row--active" : ""}`} type="button" key={method.id} onClick={() => { setViewMode("source"); setSelectedSourceRange(method.source_range); }} aria-label={`Перейти к методу ${method.name}, строка ${method.source_range.line ?? "неизвестна"}`}><Code2 size={14} /><span>{method.name}</span><small>стр. {method.source_range.line ?? "—"}</small><ArrowUpRight className="method-jump" size={13} /></button>)}{analysis.methods.length > 12 ? <small className="more-methods">Показаны первые 12 из {analysis.methods.length}</small> : null}</div> : null}
-              {analysis.diagnostics.length ? <div className="diagnostic-list"><span className="list-label">ДИАГНОСТИКИ <i>·</i> ПЕРЕЙТИ К СТРОКЕ</span>{analysis.diagnostics.map((item, index) => <button className={`diagnostic-item diagnostic-item--${item.severity}${selectedSourceRange?.start === item.source_range.start ? " diagnostic-item--active" : ""}`} type="button" key={`${item.code}-${index}`} onClick={() => { setViewMode("source"); setSelectedSourceRange(item.source_range); }} aria-label={`${item.severity}: ${item.code}, строка ${item.source_range.line ?? "неизвестна"}. ${item.message}`}><span className={`diagnostic-dot diagnostic-dot--${item.severity}`} /><span className="diagnostic-copy"><strong>{item.code}</strong><span>{item.message}</span><small>Строка {item.source_range.line ?? "—"}</small></span><ArrowUpRight className="diagnostic-jump" size={14} /></button>)}</div> : <div className="empty-diagnostics"><Check size={15} /> Замечаний нет</div>}
+              {analysis.methods.length ? <div className="method-list"><span className="list-label">МЕТОДЫ <i>·</i> НАЖМИТЕ, ЧТОБЫ ОТКРЫТЬ В КОДЕ</span>{analysis.methods.slice(0, 12).map((method) => <button className={`method-row${selectedSourceRange?.start === method.source_range.start ? " method-row--active" : ""}`} type="button" key={method.id} onClick={() => { setViewMode("source"); setSelectedSourceRange(method.source_range); }}><Code2 size={14} /><span>{method.name}</span><small>стр. {method.source_range.line ?? "—"}</small><ArrowUpRight className="method-jump" size={13} /></button>)}{analysis.methods.length > 12 ? <small className="more-methods">Показаны первые 12 из {analysis.methods.length}</small> : null}</div> : null}
+              {analysis.diagnostics.length ? <div className="diagnostic-list"><span className="list-label">ДИАГНОСТИКИ <i>·</i> ПЕРЕЙТИ К СТРОКЕ</span>{analysis.diagnostics.map((item, index) => <button className={`diagnostic-item diagnostic-item--${item.severity}${selectedSourceRange?.start === item.source_range.start ? " diagnostic-item--active" : ""}`} type="button" key={`${item.code}-${index}`} onClick={() => { setViewMode("source"); setSelectedSourceRange(item.source_range); }}><span className={`diagnostic-dot diagnostic-dot--${item.severity}`} /><span className="diagnostic-copy"><strong>{item.code}</strong><span>{item.message}</span><small>Строка {item.source_range.line ?? "—"}</small></span><ArrowUpRight className="diagnostic-jump" size={14} /></button>)}</div> : <div className="empty-diagnostics"><Check size={15} /> Замечаний нет</div>}
             </div>
           ) : analysisState === "unavailable" ? (
             <div className="worker-state worker-state--unavailable"><span className="state-icon"><Clock3 /></span><strong>Анализатор недоступен</strong><p>{analysisError}</p><Button variant="outline" onClick={() => void runAnalysis()}><RefreshCw /> Повторить анализ</Button><div className="state-footnote"><span className="status-pip status-pip--amber" /> API доступен · анализатор не ответил</div></div>

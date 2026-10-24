@@ -59,17 +59,17 @@ const javaTheme = EditorView.theme({
 }, { dark: false });
 
 const javaHighlight = HighlightStyle.define([
-  { tag: tags.keyword, color: "#174c43", fontWeight: "600" },
-  { tag: tags.typeName, color: "#2a5f78" },
-  { tag: tags.className, color: "#2a5f78", fontWeight: "600" },
-  { tag: tags.definition(tags.variableName), color: "#283b37" },
-  { tag: tags.string, color: "#6b4f2a" },
-  { tag: tags.number, color: "#8d4c1e" },
-  { tag: tags.lineComment, color: "#7d8d80", fontStyle: "italic" },
-  { tag: tags.blockComment, color: "#7d8d80", fontStyle: "italic" },
-  { tag: tags.operator, color: "#3d6b5e" },
-  { tag: tags.punctuation, color: "#5a6e63" },
-  { tag: tags.annotation, color: "#6b4c2a" },
+  { tag: tags.keyword, color: "#a8d8bf", fontWeight: "600" },
+  { tag: tags.typeName, color: "#a9cbe0" },
+  { tag: tags.className, color: "#a9cbe0", fontWeight: "600" },
+  { tag: tags.definition(tags.variableName), color: "#e4e9dd" },
+  { tag: tags.string, color: "#e6ca91" },
+  { tag: tags.number, color: "#f0ad7b" },
+  { tag: tags.lineComment, color: "#a5b6a8", fontStyle: "italic" },
+  { tag: tags.blockComment, color: "#a5b6a8", fontStyle: "italic" },
+  { tag: tags.operator, color: "#c1d5c9" },
+  { tag: tags.punctuation, color: "#c1d5c9" },
+  { tag: tags.annotation, color: "#e9bd85" },
 ]);
 
 type MarkedDiagnostic = Diagnostic & { from: number; to: number; prefixEnd: number };
@@ -185,6 +185,7 @@ function diagnosticMarkClass(severity: Diagnostic["severity"]) {
 function buildExtensions() {
   return [
     lineNumbers(), diagnosticGutter, diagnosticsField, diagnosticDecorations, diagnosticHover,
+    EditorView.contentAttributes.of({ "aria-label": "Исходный код Java" }),
     highlightSpecialChars(), history(), foldGutter(), drawSelection(), dropCursor(),
     EditorState.allowMultipleSelections.of(true), indentOnInput(),
     syntaxHighlighting(javaHighlight), syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
