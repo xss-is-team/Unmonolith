@@ -43,6 +43,7 @@ package           string | null
 imports[]         {name, static, on_demand}
 types[]           class | interface | enum | record | annotation_type
 methods[]         flat list {id, name, source_range} of every method/constructor
+project_graph     architectural overview graph (see "Project graph"); null if its construction failed
 diagnostics[]     {code, category: syntax|semantic|analysis, severity: error|warning|info, message, source_range}
 ```
 
@@ -178,6 +179,59 @@ Limitations (the graph is a conservative over-approximation, not a proof):
 - Constant conditions are not evaluated (`while (true)` still has a `false` edge), and
   definite-assignment/unreachable-code rules of the compiler are not applied; JDT reports those
   as diagnostics.
+
+## Project graph
+
+Top-level `project_graph` is an architectural overview of the compilation unit, not another CFG.
+It is additive: no existing field or CLI behavior changed. If construction fails, `project_graph` is
+`null` and a `project_graph_failed` warning (`category: "analysis"`) is added to `diagnostics`.
+
+```json
+"project_graph": {
+  "version": 1, "scope": "compilation_unit",
+  "nodes": [
+    {"id": "t3", "kind": "class", "name": "Task", "qualified_name": "Organizer.Task",
+     "source_range": {...}, "external_supertypes": [{"name": "java.lang.Exception", "relation": "extends", "resolved": true}]},
+    {"id": "c17", "kind": "method", "name": "offer", "method_id": "local.Best.offer(String)",
+     "cfg_entry": "m9.n0", "source_range": {...}}
+  ],
+  "edges": [{"from": "c4", "to": "c7", "kind": "calls", "count": 2, "sites": [{"start": 10, "length": 8, "line": 3, "end_line": 3}]}],
+  "unresolved_calls": [{"id": "u0", "from": "c4", "kind": "method_call", "name": "run", "expression": "Unknown.run()",
+                        "source_range": {...}, "reason": "unresolved_binding"}],
+  "stats": {"resolved_internal_calls": 85, "external_calls": 142, "unresolved_calls": 0}
+}
+```
+
+- **Node ids** are revision-local and deterministic: `t<k>` for types (class, interface, enum, record,
+  annotation_type; `kind` as in `types[]`) and `c<k>` for callables (`method`, `constructor`), numbered in
+  source order. They change when the source changes; nothing else is stable across revisions.
+- **CFG link.** Callable nodes carry `method_id` (equal to `methods[].id` and `cfg.method_id`) and `cfg_entry`
+  (the entry node id of that method's `cfg`, `null` for abstract methods). No CFG data is copied. `method_id`
+  is not unique for methods of local classes (`local.X.m()`); use `cfg_entry` or the node `id` there.
+- **Edge kinds.** `contains` (type → nested type or callable, callable → local type); `extends`, `implements`
+  (type → user-defined type; interface `extends` too); `calls` (callable → callable); `constructs` (callable →
+  constructor for `new`, `this(...)`, `super(...)`, or → the class when it only has an implicit default
+  constructor); `depends_on` (type → type: any mention of the type by name, or a resolved call/construction
+  of its members; supertypes are included, `self` and JDK/external types are not).
+  Edges are unique per `(from, to, kind)`: `count` occurrences, `sites` their UTF-16 source ranges
+  (`start`/`length` as everywhere else; `contains` has no sites).
+- **Calls are resolved with JDT bindings.** Overloads map to the exact declaration. A call from a field
+  initializer is attributed to its type node. Calls inside lambdas and anonymous classes are attributed to the
+  enclosing callable (unlike per-statement `calls[]`).
+- **Unresolved vs. external.** A call or `new` whose binding is missing or recovered goes to `unresolved_calls`
+  (never an edge). A call resolved to something outside the file (JDK) is not an edge and only counted in
+  `stats.external_calls`. External or unresolved supertypes are listed in the type node's `external_supertypes`
+  (`resolved: false` when the name could not be resolved).
+- Output is deterministic: same source, same JSON.
+
+Known limitations:
+- Single file, JDK classpath only: other project files are `unresolved`, so cross-file edges do not exist yet.
+- `calls` targets the statically declared method; overriding and interface dispatch are not expanded.
+- Method references (`Foo::bar`), enum constant arguments/bodies, implicit `super()` and annotation uses are not edges.
+- Anonymous classes and their methods have no node; local classes do.
+- `depends_on` is name-based, so it is a superset of real coupling (e.g. an outer class "depends on" its nested
+  types) and is not weighted. `sites` lists can be long; the graph adds roughly 1 MB on the 1000-line fixture.
+- Nothing here splits classes or proposes services; it is only data for an overview.
 
 ## Mismatch with `../api` (not changed here)
 ## API integration
