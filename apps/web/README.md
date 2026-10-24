@@ -6,6 +6,18 @@ session cookie HttpOnly.
 
 ## Run locally
 
+From the repository root, install dependencies and build the parser once:
+
+```sh
+./dev web-install
+./dev parser-build
+```
+
+Then start the API and web app in separate terminals:
+
+```sh
+./dev api
+./dev web
 After installing host tools, start the whole app from the repository root with:
 
 ```sh

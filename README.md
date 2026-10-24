@@ -25,6 +25,23 @@ rustup default stable
 
 Nix (optional): from the repository root, run `nix develop`.
 
+## Common commands
+
+The root `./dev` wrapper keeps routine commands short. Install web dependencies and build the parser once:
+
+```sh
+./dev web-install
+./dev parser-build
+```
+
+Then start API and web in separate terminals:
+
+```sh
+./dev api
+./dev web
+```
+
+Open <http://localhost:3001>. The API listens on port 3000; the web app proxies its requests to it. Set `BLUEPRINTS_API_ORIGIN` if Axum listens elsewhere. `./dev` lists the parser build and verification commands. Frontend details are in `apps/web/README.md`.
 ## Run after cloning
 
 After installing the host tools listed above, run one command from the repository root:

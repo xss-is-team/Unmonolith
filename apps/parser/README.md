@@ -184,3 +184,41 @@ Limitations (the graph is a conservative over-approximation, not a proof):
 
 The Rust API invokes this positional CLI, captures the JSON from stdout, attaches its trusted
 project revision, and preserves the complete parser document as the per-revision analysis artifact.
+
+## Transform mode
+
+```sh
+java -jar parser.jar transform --input Main.java --operation operation.json --output Transformed.java
+```
+
+All three options are required. The analysis command (`parser.jar <file.java>`) is unchanged.
+The uploaded code is never compiled or executed.
+
+`operation.json` (exact shape, unknown or missing fields are rejected):
+
+```json
+{"method_id": "Example.process(int)", "node_id": "m0.n3",
+ "operation": {"type": "replace_condition", "expression": "count >= 0"}}
+```
+
+`replace_condition` replaces the condition of an `if`, `while`, `do/while` or traditional `for`
+(a CFG node with `kind: "branch"` and `statement_kind` of `if`, `while`, `do_while` or `for`).
+The source is reparsed, the CFG rebuilt, and the node is resolved to its JDT expression by exact
+source range; the edit is made with `ASTRewrite`, so everything else (formatting, comments, line
+endings) is byte-for-byte unchanged. CFG ids are revision-local: take them from an analysis of
+exactly the source being transformed.
+
+| Exit | stdout |
+|---|---|
+| 0 | `{status:"completed", operation, method_id, node_id, output_file, diagnostics[]}` (`diagnostics` = new warnings only) |
+| 1 | `{status:"failed", error:{code, message}}` |
+| 2 | same failed shape with `invalid_arguments` (bad command line) |
+
+Error codes: `unknown_method`, `unknown_node`, `unsupported_node` (not an if/while/do-while/for
+condition, e.g. foreach, switch, condition-less `for`), `invalid_expression` (not exactly one
+syntactically valid expression), `validation_failed` (reparse shows a new semantic error, e.g.
+non-boolean condition or unknown name), plus `invalid_operation`, `invalid_arguments`,
+`input_unreadable`, `output_unwritable`, `internal_error`.
+
+The output file is written (atomically) only on success and is never the input file. No new CFG is
+returned; request a fresh analysis of the stored output.
