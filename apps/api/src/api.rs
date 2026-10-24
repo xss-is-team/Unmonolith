@@ -92,6 +92,7 @@ impl AppState {
         list_methods,
         get_method_cfg,
         get_method_analysis,
+        get_project_graph,
         transform_project,
         verify_project,
         get_verification_report
@@ -117,6 +118,7 @@ impl AppState {
         CfgNode,
         CfgEdge,
         MethodAnalysisResponse,
+        ProjectGraphResponse,
         MethodAnalysis,
         ComplexityEstimate,
         ComplexityFragment,
@@ -198,6 +200,7 @@ pub fn app(state: AppState) -> Router {
             "/projects/{project_id}/methods/{method_selector}/analysis",
             get(get_method_analysis),
         )
+        .route("/projects/{project_id}/graph", get(get_project_graph))
         .route("/projects/{project_id}/transform", post(transform_project))
         .route("/projects/{project_id}/verify", post(verify_project))
         .route(
@@ -283,6 +286,16 @@ struct MethodAnalysisResponse {
     revision: u64,
     method_id: String,
     analysis: MethodAnalysis,
+}
+
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct ProjectGraphResponse {
+    #[schema(minimum = 1)]
+    revision: u64,
+    /// Parser `project_graph` exactly as stored; its shape is owned by the Java parser.
+    #[schema(value_type = Object)]
+    project_graph: Value,
 }
 
 #[derive(utoipa::ToSchema)]
@@ -830,6 +843,57 @@ async fn get_method_analysis(
 }
 
 #[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/graph",
+    tag = "Analysis",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = ProjectGraphResponse),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody),
+        (status = 409, body = ApiErrorBody)
+    )
+)]
+async fn get_project_graph(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    let artifact = load_analysis(&directory, project.revision).await?;
+    let project_graph =
+        match artifact.get("project_graph") {
+            Some(graph) if graph.is_object() => graph,
+            Some(Value::Null) => {
+                return Err(project_graph_unavailable(
+                    "the parser could not build a project graph for the current revision",
+                ))
+            }
+            None => return Err(project_graph_unavailable(
+                "the current analysis does not contain a project graph; analyze the project again",
+            )),
+            Some(_) => {
+                tracing::error!(
+                    revision = project.revision,
+                    "stored project graph is invalid"
+                );
+                return Err(ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    "stored project graph is invalid",
+                ));
+            }
+        };
+    Ok(Json(serde_json::json!({
+        "revision": project.revision,
+        "project_graph": project_graph,
+    })))
+}
+
+#[utoipa::path(
     post,
     path = "/api/v1/projects/{project_id}/transform",
     tag = "Transformations",
@@ -1253,6 +1317,10 @@ fn method_analysis_not_found() -> ApiError {
         "method_analysis_not_found",
         "method analysis is not available for the current revision",
     )
+}
+
+fn project_graph_unavailable(message: &str) -> ApiError {
+    ApiError::new(StatusCode::NOT_FOUND, "project_graph_unavailable", message)
 }
 
 fn verification_report_not_found() -> ApiError {
@@ -2216,6 +2284,129 @@ esac
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
+    fn graph_fixture() -> Value {
+        serde_json::json!({
+            "version": 1,
+            "scope": "compilation_unit",
+            "nodes": [{"id": "t0", "kind": "class", "name": "Example", "source_range": {"start": 0, "length": 5}}],
+            "edges": [{"from": "t0", "to": "t0", "kind": "calls", "count": 2, "sites": []}],
+            "unresolved_calls": [],
+            "stats": {"resolved_internal_calls": 2, "external_calls": 0, "unresolved_calls": 0}
+        })
+    }
+
+    async fn get_graph(
+        app: &axum::Router,
+        cookie: &str,
+        project_id: &str,
+    ) -> axum::response::Response {
+        app.clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn returns_stored_project_graph_unchanged_for_owner_only() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let owner = guest_cookie(&app).await;
+        let other = guest_cookie(&app).await;
+        let project_id = response_json(upload(&app, &owner, "Example.java").await).await["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let mut artifact = cfg_artifact(1);
+        artifact["project_graph"] = graph_fixture();
+        store_analysis(&data, &owner, &project_id, &artifact).await;
+
+        let response = get_graph(&app, &owner, &project_id).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({"revision": 1, "project_graph": graph_fixture()})
+        );
+        assert_eq!(
+            get_graph(&app, &other, &project_id).await.status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn project_graph_reports_missing_null_and_stale_analysis_explicitly() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let project_id = response_json(upload(&app, &cookie, "Example.java").await).await["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let response = get_graph(&app, &cookie, &project_id).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(response).await["code"], "analysis_not_found");
+
+        let mut artifact = cfg_artifact(1);
+        store_analysis(&data, &cookie, &project_id, &artifact).await;
+        let response = get_graph(&app, &cookie, &project_id).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(response).await["code"],
+            "project_graph_unavailable"
+        );
+
+        artifact["project_graph"] = Value::Null;
+        store_analysis(&data, &cookie, &project_id, &artifact).await;
+        let response = get_graph(&app, &cookie, &project_id).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(response).await["code"],
+            "project_graph_unavailable"
+        );
+
+        artifact["project_graph"] = serde_json::json!([]);
+        store_analysis(&data, &cookie, &project_id, &artifact).await;
+        assert_eq!(
+            get_graph(&app, &cookie, &project_id).await.status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+
+        artifact["project_graph"] = graph_fixture();
+        artifact["revision"] = serde_json::json!(2);
+        fs::write(
+            project_directory(&data, &cookie, &project_id).join("analysis/1.json"),
+            serde_json::to_vec(&artifact).unwrap(),
+        )
+        .await
+        .unwrap();
+        let response = get_graph(&app, &cookie, &project_id).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(response).await["code"],
+            "analysis_revision_mismatch"
+        );
+    }
+
+    #[tokio::test]
+    async fn project_graph_requires_a_session() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let response = app
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{}/graph", uuid::Uuid::new_v4()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
     #[tokio::test]
     async fn generated_openapi_documents_analysis_transform_and_verify_routes() {
         let data = TestData::new();
@@ -2246,6 +2437,8 @@ esac
         assert!(document["paths"]
             ["/api/v1/projects/{project_id}/methods/{method_selector}/analysis"]["get"]
             .is_object());
+        assert!(document["paths"]["/api/v1/projects/{project_id}/graph"]["get"].is_object());
+        assert!(document["components"]["schemas"]["ProjectGraphResponse"].is_object());
         assert!(document["paths"]["/api/v1/projects/{project_id}/transform"]["post"].is_object());
         assert!(document["paths"]["/api/v1/projects/{project_id}/verify"]["post"].is_object());
         assert!(

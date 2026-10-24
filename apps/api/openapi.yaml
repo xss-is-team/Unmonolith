@@ -260,6 +260,27 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /projects/{project_id}/graph:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: getProjectGraph
+      tags: [Analysis]
+      description: |
+        Returns the parser's `project_graph` exactly as stored in the current revision's analysis
+        artifact; it is never recomputed. Returns 404 `analysis_not_found` if the revision has not been
+        analyzed and 404 `project_graph_unavailable` if the stored graph is missing (older artifact) or
+        null (the parser failed to build it).
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Revision-bound project graph
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectGraphResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /projects/{project_id}/transform:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -575,6 +596,15 @@ components:
         revision: {type: integer, minimum: 1}
         method_id: {type: string, example: 'Example.process(int)'}
         analysis: {$ref: '#/components/schemas/MethodAnalysis'}
+    ProjectGraphResponse:
+      type: object
+      required: [revision, project_graph]
+      properties:
+        revision: {type: integer, minimum: 1}
+        project_graph:
+          type: object
+          description: Parser-owned project graph, passed through unchanged.
+          additionalProperties: true
     TransformRequest:
       type: object
       required: [base_revision, method_id, node_id, operation]

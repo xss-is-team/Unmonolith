@@ -177,7 +177,7 @@ OpenAPI document at <http://127.0.0.1:3000/api/v1/openapi.json>.
 
 Implemented: health, guest sessions, single `.java` projects, owned metadata and
 source access, revision-checked source updates, external analysis, CFG listing
-and retrieval, SSE analysis lifecycle, revision source history, method complexity/findings retrieval, `replace_condition`, and
+and retrieval, SSE analysis lifecycle, revision source history, method complexity/findings retrieval, stored project graph retrieval (`GET /api/v1/projects/{project_id}/graph`), `replace_condition`, and
 persisted isolated behavioral verification of two stored revisions. If no real worker JAR is configured, analysis and
 transformation return `503 analyzer_unavailable`; if no runner image is
 configured, verification returns `503 runner_unavailable`.
