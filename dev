@@ -19,6 +19,7 @@ Java Blueprints commands (run from the repository root):
   ./dev up            Install project deps, build, and start the app
   ./dev api-check     Run Rust format and compile checks
   ./dev api-test      Run Rust tests
+  ./dev web-fast-check Run frontend typecheck and lint
   ./dev web-check     Run frontend lint and production build
 EOF
 }
@@ -97,6 +98,11 @@ case "$command" in
     ;;
   api-test)
     run_in apps/api cargo test
+    ;;
+  web-fast-check)
+    cd "$ROOT/apps/web"
+    pnpm exec tsc --noEmit
+    pnpm lint
     ;;
   web-check)
     cd "$ROOT/apps/web"

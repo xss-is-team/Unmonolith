@@ -17,6 +17,7 @@ import {
   GitBranch,
   History,
   LoaderCircle,
+  Network,
   Plus,
   RefreshCw,
   Save,
@@ -57,6 +58,11 @@ const JavaEditor = dynamic(
 const CfgViewer = dynamic(
   () => import("@/components/cfg-viewer").then((module) => module.CfgViewer),
   { ssr: false, loading: () => <section className="cfg-panel cfg-panel--loading">Загружаем CFG…</section> },
+);
+
+const ProjectGraphViewer = dynamic(
+  () => import("@/components/project-graph-viewer").then((module) => module.ProjectGraphViewer),
+  { ssr: false, loading: () => <section className="project-graph-panel project-graph-panel--loading">Загружаем обзор проекта…</section> },
 );
 
 function projectLoadMessage(error: unknown) {
@@ -147,7 +153,7 @@ function WorkspaceEditor({
   const rerunAnalysisRef = useRef(false);
   const initialAnalysisRef = useRef(false);
 
-  const [viewMode, setViewMode] = useState<"source" | "cfg">("source");
+  const [viewMode, setViewMode] = useState<"source" | "project" | "cfg">("source");
   const [selectedSourceRange, setSelectedSourceRange] = useState<SourceRange | null>(null);
   const [selectedMethodSelector, setSelectedMethodSelector] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -378,6 +384,8 @@ function WorkspaceEditor({
     [dirty, historicalRevision, savedSource, showRevisionDiff],
   );
   const { lineCount, byteLength } = sourceStats;
+  const analysisIsPartial = analysis?.status === "partial";
+  const analysisFailed = analysis?.status === "failed";
   const currentDiagnostics = analysisState === "complete" && !dirty
     ? analysis?.diagnostics ?? NO_DIAGNOSTICS
     : NO_DIAGNOSTICS;
@@ -447,11 +455,12 @@ function WorkspaceEditor({
         />
       ) : null}
 
-      <div className="workspace-grid">
+      <div className={`workspace-grid${viewMode === "project" ? " workspace-grid--project" : ""}`}>
         <section className="ide-center" aria-label="Исходник и граф">
           <div className="workspace-viewbar">
             <div className="workspace-tabs" role="tablist" aria-label="Представление проекта">
               <button className={viewMode === "source" ? "workspace-tab workspace-tab--active" : "workspace-tab"} type="button" role="tab" aria-selected={viewMode === "source"} onClick={() => setViewMode("source")}><Code2 size={16} /> Исходник</button>
+              <button className={viewMode === "project" ? "workspace-tab workspace-tab--active" : "workspace-tab"} type="button" role="tab" aria-selected={viewMode === "project"} onClick={() => setViewMode("project")} disabled={dirty}><Network size={16} /> Проект</button>
               <button className={viewMode === "cfg" ? "workspace-tab workspace-tab--active" : "workspace-tab"} type="button" role="tab" aria-selected={viewMode === "cfg"} onClick={() => setViewMode("cfg")} disabled={dirty}><Waypoints size={16} /> CFG + Big O</button>
             </div>
             <span className="source-summary">{lineCount} строк <i /> {byteLength.toLocaleString("ru-RU")} байт</span>
@@ -476,6 +485,21 @@ function WorkspaceEditor({
               </div>
               <footer className="editor-footer"><span><TerminalSquare size={14} /> Java</span><span>{dirty ? "CFG и анализ скрыты до сохранения" : "Исходник синхронизирован с ревизией"}</span></footer>
             </section>
+          ) : viewMode === "project" ? (
+            <ProjectGraphViewer
+              projectId={projectId}
+              revision={revision}
+              methods={methods}
+              onOpenMethod={(selector) => {
+                setSelectedMethodSelector(selector);
+                setSelectedSourceRange(null);
+                setViewMode("cfg");
+              }}
+              onSourceRangeSelect={(range) => {
+                setSelectedSourceRange(range);
+                setViewMode("source");
+              }}
+            />
           ) : (
             <CfgViewer
               projectId={projectId}
@@ -500,7 +524,19 @@ function WorkspaceEditor({
           <div className="panel-heading"><div><span className="panel-kicker">JDT / РЕВИЗИЯ {revision}</span><h2>Диагностика</h2></div><span className={`worker-mark worker-mark--${analysisState}`}><Sparkles size={16} /></span></div>
           {analysisState === "complete" && analysis ? (
             <div className="analysis-result">
-              <div className="result-banner"><span className="result-check"><Check size={15} /></span><div><strong>{analysis.status === "completed" ? "Анализ завершён" : "Частичный результат"}</strong><small>{methods.length} методов с CFG · протокол {analysis.protocol_version}</small></div></div>
+              <div className="result-banner">
+                <span className={`result-check${analysisIsPartial ? " result-check--partial" : analysisFailed ? " result-check--failed" : ""}`}>
+                  {analysisIsPartial || analysisFailed ? <AlertCircle size={15} /> : <Check size={15} />}
+                </span>
+                <div>
+                  <strong>{analysisIsPartial ? "Частичный результат" : analysisFailed ? "Анализ не выполнен" : "Анализ завершён"}</strong>
+                  <small>{analysisIsPartial
+                    ? "Часть исходника могла не обработаться. Проверьте диагностики ниже."
+                    : analysisFailed
+                      ? "Анализатор не смог обработать исходник. Проверьте диагностики ниже."
+                      : `${methods.length} методов с CFG · протокол ${analysis.protocol_version}`}</small>
+                </div>
+              </div>
               <div className="result-stats"><div><strong>{analysis.methods.length}</strong><span>методов</span></div><div><strong>{analysis.diagnostics.length}</strong><span>диагностик</span></div></div>
               {analysis.methods.length ? (
                 <div className="method-list">

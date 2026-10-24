@@ -1,8 +1,9 @@
 # Java Blueprints backend
 
 The backend is a single-process Axum API with guest-cookie sessions, local
-file-backed Java projects, optimistic source revisions, JDT analysis/CFG access,
-and one AST-backed transformation: `replace_condition`.
+file-backed Java projects, optimistic source revisions, JDT analysis, CFG and
+compilation-unit graph access, and one AST-backed transformation:
+`replace_condition`.
 
 ## Development
 
@@ -42,6 +43,14 @@ opaque, revision-local, URL-safe value for:
 GET /api/v1/projects/{project_id}/methods/{selector}/cfg
 GET /api/v1/projects/{project_id}/methods/{selector}/analysis
 ```
+
+`GET /api/v1/projects/{project_id}/graph` returns the parser's top-level
+`project_graph` unchanged in `{ revision, graph }`. It uses the same owned,
+current-revision analysis artifact as the method endpoints. The graph is still
+limited to the uploaded compilation unit; it is not a whole-repository graph.
+If the parser reports `project_graph: null`, the endpoint returns 200 with
+`graph: null`; missing or stale analysis remains an explicit `404` or `409`
+response, and a stored graph with an unexpected shape is a `500` (`graph_invalid`).
 
 The CFG endpoint returns the nested CFG object unchanged, including parser node
 IDs, edge fields, labels, reachability, and UTF-16 source ranges. The analysis

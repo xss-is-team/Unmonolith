@@ -2586,6 +2586,7 @@ esac
                 .is_object()
         );
         assert!(document["paths"]["/api/v1/projects/{project_id}/methods"]["get"].is_object());
+        assert!(document["paths"]["/api/v1/projects/{project_id}/graph"]["get"].is_object());
         assert!(
             document["paths"]["/api/v1/projects/{project_id}/methods/{method_selector}/cfg"]["get"]
                 .is_object()
@@ -2593,7 +2594,6 @@ esac
         assert!(document["paths"]
             ["/api/v1/projects/{project_id}/methods/{method_selector}/analysis"]["get"]
             .is_object());
-        assert!(document["paths"]["/api/v1/projects/{project_id}/graph"]["get"].is_object());
         assert!(document["paths"]["/api/v1/projects/{project_id}/transform"]["post"].is_object());
         assert!(document["paths"]["/api/v1/projects/{project_id}/verify"]["post"].is_object());
         assert!(
@@ -2722,6 +2722,7 @@ esac
         assert_eq!(response.status(), StatusCode::OK);
         let graph_response = response_json(response).await;
         assert_eq!(graph_response["revision"], 1);
+        assert_eq!(graph_response["graph"]["version"], 1);
         assert_eq!(graph_response["graph"]["scope"], "compilation_unit");
         assert!(graph_response["graph"]["nodes"]
             .as_array()
@@ -2731,6 +2732,11 @@ esac
                 |node| node["method_id"].as_str() == Some("Example.main(String[])")
                     && node["cfg_entry"].as_str() == Some("m0.n0")
             ));
+        assert!(graph_response["graph"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node["name"] == "Example"));
         // The endpoint must return the parser's persisted graph verbatim.
         let artifact: Value =
             serde_json::from_slice(&fs::read(directory.join("analysis/1.json")).await.unwrap())
