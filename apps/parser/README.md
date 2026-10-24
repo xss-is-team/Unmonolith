@@ -312,7 +312,12 @@ Everything else (`while (node != null)`, `Iterator.hasNext()`, counters changed 
 collections modified inside the loop, `continue` in counter `while` loops) is `unknown`, as is any call
 without a cost model: only a small JDK table (Math, boxed types, String/StringBuilder basics, `List`,
 `Set`, `Map`, `Deque`, `PriorityQueue`, `Arrays`/`Collections` sorts) and trivial same-file getters/setters
-are modelled. Recursion, streams, lambdas and user methods are never costed.
+are modelled. A call to a **same-file method** counts as O(1) only when the analyzer proves the callee
+itself constant (no loop over input, no unknown call, transitively): it must be non-recursive, not
+overridden in the file, and must not mutate its arguments; if it writes a field that a loop header of the
+caller reads, the caller is `unknown`. The proof appears in `assumptions` ("Call to X.m() is O(1)...").
+Any other user method (loops over its arguments, recursion, overridable) stays `unknown`, as do streams
+and lambdas.
 
 Rules:
 - `repeated_collection_scan` (warning): a linear scan of a collection whose body is a key lookup
@@ -345,6 +350,6 @@ method, and survives `replace_condition` (the result is compiled, reparsed and c
 | Semantic diagnostics (type mismatch, unresolved symbol, unhandled exception) | supported | single file, JDK classpath only |
 | Source ranges / Cyrillic and emoji | supported | UTF-16 offsets, verified by slicing the source |
 | `replace_condition` on `if`/`while`/`do-while`/`for` | supported | other nodes rejected with `unsupported_node` |
-| Complexity: counted loops, log loops, nested loops, repeated scan finding | partial | `gcd`, binary search, two-pointer loops, user/interface calls give `unknown` |
+| Complexity: counted loops, log loops, nested loops, repeated scan finding | partial | `gcd`, binary search, two-pointer loops, non-constant/recursive/overridable user methods and interface calls give `unknown`; constant same-file callees are costed O(1) |
 | Lambdas, anonymous classes, local class bodies, switch expressions inside expressions | partial | kept as text; local-class methods appear only in `methods[]` (`local.X.m()`, ids may repeat) |
 | Streams, `Iterator` loops, recursion, other files/classpath | unsupported | complexity `unknown`; types outside the JDK unresolved |

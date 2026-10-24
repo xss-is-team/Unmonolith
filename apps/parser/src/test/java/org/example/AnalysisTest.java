@@ -242,6 +242,55 @@ class AnalysisTest {
         assertEquals("O(n*m)", time(a));
     }
 
+    private static final String SLIDE_LOOP = "void dedupe(List<Item> items) { for (Item a : items) { for (Item b : items) {"
+            + " if (a.id() == b.id()) { merge(a, b); } } } }\n";
+
+    @Test
+    void slideExampleWithConstantUserMethodIsQuadratic(@TempDir Path dir) throws IOException {
+        JsonNode a = analyze(dir, SLIDE_LOOP + "record Item(int id) { }\nvoid merge(Item a, Item b) { }");
+        assertEquals("O(n^2)", time(a));
+        assertEquals("high", a.at("/complexity/confidence").asText());
+        assertEquals("n = number of elements in items", a.at("/complexity/assumptions/0").asText());
+        assertTrue(a.at("/complexity/assumptions").toString().contains("Call to Example.merge() is O(1)"));
+        assertEquals("O(n^2)", a.at("/fragments/0/time").asText());
+        assertNotNull(finding(a, "repeated_collection_scan"), a.toString());
+        // same shape with the real (nested-call) bodies from the case: field counter, helper chain
+        JsonNode b = analyze(dir, SLIDE_LOOP + "record Item(int id) { }\nint merged;\n"
+                + "void merge(Item a, Item b) { merged++; log(a); }\nvoid log(Item a) { merged += a.id(); }");
+        assertEquals("O(n^2)", time(b));
+    }
+
+    @Test
+    void userMethodCostIsOnlyTrustedWhenProvenConstant(@TempDir Path dir) throws IOException {
+        // recursion, mutual recursion, a loop over the argument and an override stay unknown
+        assertEquals("unknown", time(analyze(dir, "int f(List<Integer> l) { int s = 0; for (int x : l) { s += g(x); } return s; }\n"
+                + "int g(int n) { return n < 2 ? n : g(n - 1) + g(n - 2); }")));
+        assertEquals("unknown", time(analyze(dir, "void f(List<Integer> l) { for (int x : l) { a(x); } }\n"
+                + "void a(int n) { b(n); }\nvoid b(int n) { a(n); }")));
+        assertEquals("unknown", time(analyze(dir, "void f(List<Integer> l) { for (int x : l) { h(x); } }\n"
+                + "void h(int n) { for (int i = 0; i < n; i++) { } }")));
+        JsonNode over = analyze(dir, "void f(List<Integer> l, Example e) { for (int x : l) { e.h(x); } }\n"
+                + "void h(int n) { }\nstatic class Sub extends Example { @Override void h(int n) { for (int i = 0; i < n; i++) { } } }");
+        assertEquals("unknown", time(over));
+        assertTrue(over.at("/complexity/reason").asText().contains("Call to Example.h() has no known cost model"));
+        // a final or private method cannot be overridden, so the same shape is constant
+        assertEquals("O(n)", time(analyze(dir, "void f(List<Integer> l) { for (int x : l) { h(x); } }\nprivate void h(int n) { }")));
+    }
+
+    @Test
+    void userMethodThatMutatesStateTheLoopDependsOnStaysUnknown(@TempDir Path dir) throws IOException {
+        // mutating an argument collection could change the caller's loop bound
+        assertEquals("unknown", time(analyze(dir, "void f(List<Integer> l) { for (int i = 0; i < l.size(); i++) { grow(l); } }\n"
+                + "void grow(List<Integer> l) { l.add(1); }")));
+        // writing a field that appears in a loop header of the caller
+        JsonNode field = analyze(dir, "void f() { for (int i = 0; i < limit; i++) { shrink(); } }\nint limit = 10;\nvoid shrink() { limit--; }");
+        assertEquals("unknown", time(field));
+        assertTrue(field.at("/complexity/reason").asText().contains("may modify 'limit'"), field.toString());
+        // a field the caller's loops do not depend on may be written freely
+        JsonNode m = analyze(dir, "void f(List<Integer> l) { for (int x : l) { bump(); } }\nint hits;\nvoid bump() { hits++; }");
+        assertEquals("O(n)", time(m));
+    }
+
     @Test
     void unknownCallCostIsNotAssumedConstant(@TempDir Path dir) throws IOException {
         JsonNode a = analyze(dir, "int f(List<Integer> items) { int s = 0; for (int x : items) { s += helper(x); } return s; }\n"
