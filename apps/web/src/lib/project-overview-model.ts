@@ -8,6 +8,8 @@ import type {
 export type ProjectOverviewMethod = {
   id: string;
   methodId?: string;
+  /** Entry node id of the method's CFG ("m<k>.n0"); null for abstract methods or a failed CFG build. */
+  cfgEntry?: string | null;
   name: string;
   kind: "method" | "constructor";
   sourceRange: SourceRange;
@@ -30,17 +32,34 @@ export type ProjectOverviewType = {
   externalSupertypes: { name: string; relation: "extends" | "implements" }[];
 };
 
-export type ProjectOverviewRelationship = {
+export type ProjectOverviewRelationshipKind = Exclude<ProjectGraphEdge["kind"], "contains">;
+
+export type ProjectOverviewRelationshipDirection = {
   from: string;
   to: string;
-  kind: Exclude<ProjectGraphEdge["kind"], "contains">;
-  count: number;
+  total: number;
+  kinds: { kind: ProjectOverviewRelationshipKind; count: number }[];
+};
+
+export type ProjectOverviewRelationship = {
+  /** Stable endpoints for the single visual edge between this unordered type pair. */
+  from: string;
+  to: string;
+  /** Sum of counts across all relationship kinds and both directions. */
+  total: number;
+  kinds: { kind: ProjectOverviewRelationshipKind; count: number }[];
+  /** One entry for each direction represented by the visual edge. */
+  directions: ProjectOverviewRelationshipDirection[];
 };
 
 export type ProjectOverviewModel = {
   scope: ProjectGraph["scope"];
   types: ProjectOverviewType[];
+  /** Aggregated type-to-type relationships: one entry per unordered type pair. */
   relationships: ProjectOverviewRelationship[];
+  /** Undirected type adjacency used for neighbor highlighting. */
+  neighbors: Map<string, Set<string>>;
+  typeById: Map<string, ProjectOverviewType>;
   unresolvedCalls: {
     id: string;
     expression: string;
@@ -54,6 +73,14 @@ export type ProjectOverviewModel = {
 const TYPE_KINDS = new Set<ProjectOverviewTypeKind>([
   "class", "interface", "enum", "record", "annotation_type",
 ]);
+
+const RELATIONSHIP_KIND_ORDER: Record<ProjectOverviewRelationshipKind, number> = {
+  calls: 0,
+  constructs: 1,
+  depends_on: 2,
+  extends: 3,
+  implements: 4,
+};
 
 function isProjectType(node: ProjectGraphNode): node is ProjectGraphNode & { kind: ProjectOverviewTypeKind } {
   return TYPE_KINDS.has(node.kind as ProjectOverviewTypeKind);
@@ -76,6 +103,7 @@ export function toProjectOverviewModel(graph: ProjectGraph): ProjectOverviewMode
       methodsByType.set(parent.id, [...(methodsByType.get(parent.id) ?? []), {
         id: child.id,
         methodId: child.method_id ?? undefined,
+        cfgEntry: child.cfg_entry ?? null,
         name: child.name,
         kind: child.kind,
         sourceRange: child.source_range,
@@ -114,7 +142,15 @@ export function toProjectOverviewModel(graph: ProjectGraph): ProjectOverviewMode
   }
 
   const typeIds = new Set(types.map((type) => type.id));
-  const relationshipsByKey = new Map<string, ProjectOverviewRelationship>();
+  const pairDirections = new Map<string, {
+    first: string;
+    second: string;
+    directions: Map<string, {
+      from: string;
+      to: string;
+      kinds: Map<ProjectOverviewRelationshipKind, number>;
+    }>;
+  }>();
 
   for (const edge of graph.edges) {
     if (edge.kind === "contains") continue;
@@ -122,18 +158,58 @@ export function toProjectOverviewModel(graph: ProjectGraph): ProjectOverviewMode
     const toNode = nodeById.get(edge.to);
     const from = fromNode && isProjectType(fromNode) ? fromNode.id : ownerById.get(edge.from);
     const to = toNode && isProjectType(toNode) ? toNode.id : ownerById.get(edge.to);
-    if (!from || !to || !typeIds.has(from) || !typeIds.has(to)) continue;
+    if (!from || !to || !typeIds.has(from) || !typeIds.has(to) || from === to) continue;
 
-    const key = `${from}:${to}:${edge.kind}`;
-    const current = relationshipsByKey.get(key);
-    if (current) current.count += edge.count;
-    else relationshipsByKey.set(key, { from, to, kind: edge.kind, count: edge.count });
+    const [first, second] = from.localeCompare(to) <= 0 ? [from, to] : [to, from];
+    const pairKey = JSON.stringify([first, second]);
+    const pair = pairDirections.get(pairKey) ?? { first, second, directions: new Map() };
+    const directionKey = JSON.stringify([from, to]);
+    const direction = pair.directions.get(directionKey) ?? { from, to, kinds: new Map() };
+    direction.kinds.set(edge.kind, (direction.kinds.get(edge.kind) ?? 0) + edge.count);
+    pair.directions.set(directionKey, direction);
+    pairDirections.set(pairKey, pair);
   }
+
+  const relationships: ProjectOverviewRelationship[] = [...pairDirections.values()]
+    .map((pair) => {
+      const directions = [...pair.directions.values()]
+        .map((direction) => ({
+          from: direction.from,
+          to: direction.to,
+          total: [...direction.kinds.values()].reduce((sum, count) => sum + count, 0),
+          kinds: sortedKinds(direction.kinds),
+        }))
+        .sort((left, right) => left.from.localeCompare(right.from, "ru") || left.to.localeCompare(right.to, "ru"));
+      const combinedKinds = new Map<ProjectOverviewRelationshipKind, number>();
+      for (const direction of directions) {
+        for (const item of direction.kinds) {
+          combinedKinds.set(item.kind, (combinedKinds.get(item.kind) ?? 0) + item.count);
+        }
+      }
+      const onlyDirection = directions.length === 1 ? directions[0] : null;
+      return {
+        from: onlyDirection?.from ?? pair.first,
+        to: onlyDirection?.to ?? pair.second,
+        total: directions.reduce((sum, direction) => sum + direction.total, 0),
+        kinds: sortedKinds(combinedKinds),
+        directions,
+      };
+    })
+    .sort((left, right) => left.from.localeCompare(right.from, "ru") || left.to.localeCompare(right.to, "ru"));
+
+  const neighbors = new Map<string, Set<string>>();
+  const addNeighbor = (a: string, b: string) => {
+    (neighbors.get(a) ?? neighbors.set(a, new Set()).get(a)!).add(b);
+    (neighbors.get(b) ?? neighbors.set(b, new Set()).get(b)!).add(a);
+  };
+  for (const relationship of relationships) addNeighbor(relationship.from, relationship.to);
 
   return {
     scope: graph.scope,
     types,
-    relationships: [...relationshipsByKey.values()],
+    relationships,
+    neighbors,
+    typeById: new Map(types.map((type) => [type.id, type])),
     unresolvedCalls: graph.unresolved_calls.map((call) => ({
       id: call.id,
       expression: call.expression,
@@ -143,4 +219,29 @@ export function toProjectOverviewModel(graph: ProjectGraph): ProjectOverviewMode
     stats: graph.stats,
     externalCallCount: graph.stats.external_calls,
   };
+}
+
+/**
+ * Resolve a project-graph method node to the selector of `/methods`.
+ * `method_id` is not unique for methods of local classes, so the CFG entry
+ * ("m<k>.n0" → selector "m<k>") is authoritative when present.
+ */
+export function resolveCfgSelector(
+  method: ProjectOverviewMethod,
+  methods: { selector: string; id: string }[],
+): { selector: string } | "no_cfg" | "ambiguous" {
+  if (method.cfgEntry) {
+    const selector = method.cfgEntry.split(".")[0] ?? "";
+    if (methods.some((item) => item.selector === selector)) return { selector };
+  }
+  const matches = methods.filter((item) => item.id === method.methodId);
+  if (matches.length === 1) return { selector: matches[0].selector };
+  if (matches.length > 1) return "ambiguous";
+  return method.cfgEntry ? "ambiguous" : "no_cfg";
+}
+
+function sortedKinds(kinds: Map<ProjectOverviewRelationshipKind, number>) {
+  return [...kinds.entries()]
+    .map(([kind, count]) => ({ kind, count }))
+    .sort((left, right) => RELATIONSHIP_KIND_ORDER[left.kind] - RELATIONSHIP_KIND_ORDER[right.kind]);
 }
