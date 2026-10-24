@@ -1,55 +1,301 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { EditorView } from "@codemirror/view";
-import CodeMirror from "@uiw/react-codemirror";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { EditorState, RangeSet, StateEffect, StateField, Text } from "@codemirror/state";
+import {
+  EditorView,
+  Decoration,
+  GutterMarker,
+  ViewPlugin,
+  gutter,
+  hoverTooltip,
+  keymap,
+  lineNumbers,
+  highlightSpecialChars,
+  drawSelection,
+  dropCursor,
+  rectangularSelection,
+  crosshairCursor,
+  highlightActiveLine,
+  type Tooltip,
+} from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { foldGutter, foldKeymap, indentOnInput, syntaxHighlighting, defaultHighlightStyle, bracketMatching, HighlightStyle } from "@codemirror/language";
+import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
+import { closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
 import { java } from "@codemirror/lang-java";
+import { tags } from "@lezer/highlight";
+import type { Diagnostic, SourceRange } from "@/lib/api";
 
-export function JavaEditor({
-  value,
-  onChange,
-  readOnly = false,
-  focusRange,
-}: {
+export type JavaEditorHandle = {
+  getValue: () => string;
+  markSaved: (savedValue: string) => void;
+};
+
+// Custom light theme matching the existing editor styles
+const javaTheme = EditorView.theme({
+  "&": { height: "100%", fontSize: "12px", fontFamily: "var(--font-code), monospace" },
+  ".cm-scroller": { minHeight: "100%", padding: "13px 0 25px", lineHeight: "1.72", fontFamily: "inherit" },
+  ".cm-content": { color: "#283b37" },
+  ".cm-gutters": { border: "0", background: "#fbfaf6", color: "#a2a79d", fontFamily: "var(--font-code), monospace", fontSize: "10px" },
+  ".cm-lineNumbers .cm-gutterElement": { minWidth: "43px", padding: "0 12px 0 10px" },
+  ".cm-activeLine": { background: "rgba(222,231,213,.28)" },
+  ".cm-cursor": { borderLeftColor: "#226a58" },
+  ".cm-selectionBackground, ::selection": { background: "rgba(167,201,74,.25) !important" },
+  ".cm-focused .cm-selectionBackground": { background: "rgba(167,201,74,.3) !important" },
+  ".cm-selectionMatch": { background: "rgba(23,76,67,.12)" },
+  ".cm-foldGutter .cm-gutterElement": { padding: "0 4px" },
+  ".cm-diagnosticMark": { textDecoration: "underline wavy", textUnderlineOffset: "3px", cursor: "help" },
+  ".cm-diagnosticMark--error": { textDecorationColor: "#b6533d" },
+  ".cm-diagnosticMark--warning": { textDecorationColor: "#c18a3d" },
+  ".cm-diagnosticMark--info": { textDecorationColor: "#4a7790" },
+  ".cm-diagnostic-gutter": { width: "12px" },
+  ".cm-diagnostic-gutter .cm-gutterElement": { width: "12px", padding: "0", display: "flex", justifyContent: "center" },
+  ".cm-diagnostic-marker": { display: "block", width: "6px", height: "6px", borderRadius: "50%", background: "#4a7790" },
+  ".cm-diagnostic-marker--error": { background: "#b6533d" },
+  ".cm-diagnostic-marker--warning": { background: "#c18a3d" },
+  ".cm-diagnostic-tooltip": { maxWidth: "360px", padding: "9px 11px", border: "1px solid #d8d9cf", borderRadius: "6px", color: "#34453a", background: "#fffefa", boxShadow: "0 8px 24px rgba(34,50,42,.12)", font: "12px/1.45 system-ui, sans-serif" },
+  ".cm-diagnostic-tooltip strong": { display: "block", marginBottom: "3px", fontFamily: "var(--font-code), monospace", fontSize: "10px" },
+}, { dark: false });
+
+const javaHighlight = HighlightStyle.define([
+  { tag: tags.keyword, color: "#174c43", fontWeight: "600" },
+  { tag: tags.typeName, color: "#2a5f78" },
+  { tag: tags.className, color: "#2a5f78", fontWeight: "600" },
+  { tag: tags.definition(tags.variableName), color: "#283b37" },
+  { tag: tags.string, color: "#6b4f2a" },
+  { tag: tags.number, color: "#8d4c1e" },
+  { tag: tags.lineComment, color: "#7d8d80", fontStyle: "italic" },
+  { tag: tags.blockComment, color: "#7d8d80", fontStyle: "italic" },
+  { tag: tags.operator, color: "#3d6b5e" },
+  { tag: tags.punctuation, color: "#5a6e63" },
+  { tag: tags.annotation, color: "#6b4c2a" },
+]);
+
+type MarkedDiagnostic = Diagnostic & { from: number; to: number; prefixEnd: number };
+const diagnosticsField = StateField.define<readonly MarkedDiagnostic[]>({
+  create: () => [],
+  update: (diagnostics, transaction) => {
+    if (transaction.docChanged) return [];
+    const replacement = transaction.effects.find((effect) => effect.is(setDiagnostics));
+    return replacement ? replacement.value : diagnostics;
+  },
+});
+const setDiagnostics = StateEffect.define<readonly MarkedDiagnostic[]>();
+
+function firstVisibleDiagnostic(diagnostics: readonly MarkedDiagnostic[], offset: number) {
+  let low = 0;
+  let high = diagnostics.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (diagnostics[middle].prefixEnd < offset) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+class DiagnosticMarker extends GutterMarker {
+  constructor(private readonly severity: Diagnostic["severity"]) { super(); }
+  toDOM() {
+    const marker = document.createElement("span");
+    marker.className = `cm-diagnostic-marker cm-diagnostic-marker--${this.severity}`;
+    marker.setAttribute("aria-hidden", "true");
+    return marker;
+  }
+  eq(other: GutterMarker) { return other instanceof DiagnosticMarker && this.severity === other.severity; }
+}
+
+const diagnosticGutter = gutter({
+  class: "cm-diagnostic-gutter",
+  markers(view) {
+    const ranges = [];
+    const seen = new Set<number>();
+    const diagnostics = view.state.field(diagnosticsField);
+    for (const visible of view.visibleRanges) {
+      for (let index = firstVisibleDiagnostic(diagnostics, visible.from); index < diagnostics.length; index += 1) {
+        const item = diagnostics[index];
+        if (item.from >= visible.to) break;
+        const line = view.state.doc.lineAt(item.from);
+        if (seen.has(line.from)) continue;
+        seen.add(line.from);
+        ranges.push(new DiagnosticMarker(item.severity).range(line.from));
+      }
+    }
+    return RangeSet.of(ranges);
+  },
+});
+
+const diagnosticDecorations = ViewPlugin.fromClass(class {
+  decorations;
+  constructor(private view: EditorView) { this.decorations = this.build(); }
+  update(update: import("@codemirror/view").ViewUpdate) {
+    if (update.docChanged || update.viewportChanged || update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(setDiagnostics)))) {
+      this.decorations = this.build();
+    }
+  }
+  private build() {
+    const diagnostics = this.view.state.field(diagnosticsField);
+    const ranges = [];
+    for (const visible of this.view.visibleRanges) {
+      for (let index = firstVisibleDiagnostic(diagnostics, visible.from); index < diagnostics.length; index += 1) {
+        const item = diagnostics[index];
+        if (item.from >= visible.to) break;
+        const from = Math.max(item.from, visible.from);
+        const to = Math.min(item.to, visible.to);
+        if (to > from) ranges.push(Decoration.mark({ class: diagnosticMarkClass(item.severity) }).range(from, to));
+      }
+    }
+    return Decoration.set(ranges, true);
+  }
+}, { decorations: (plugin) => plugin.decorations });
+
+const diagnosticHover = hoverTooltip((view, position): Tooltip | null => {
+  const diagnostics = view.state.field(diagnosticsField);
+  let diagnostic: MarkedDiagnostic | undefined;
+  for (let index = firstVisibleDiagnostic(diagnostics, position); index < diagnostics.length; index += 1) {
+    const candidate = diagnostics[index];
+    if (candidate.from > position) break;
+    if (position <= Math.max(candidate.from, candidate.to)) {
+      diagnostic = candidate;
+      break;
+    }
+  }
+  if (!diagnostic) return null;
+  return {
+    pos: diagnostic.from,
+    end: Math.max(diagnostic.from + 1, diagnostic.to),
+    above: true,
+    create() {
+      const dom = document.createElement("div");
+      dom.className = "cm-diagnostic-tooltip";
+      const code = document.createElement("strong");
+      code.textContent = `${diagnostic.severity.toUpperCase()} · ${diagnostic.code}`;
+      const message = document.createElement("span");
+      message.textContent = diagnostic.message;
+      dom.append(code, message);
+      return { dom };
+    },
+  };
+}, { hoverTime: 350 });
+
+function diagnosticMarkClass(severity: Diagnostic["severity"]) {
+  return `cm-diagnosticMark cm-diagnosticMark--${severity}`;
+}
+
+function buildExtensions() {
+  return [
+    lineNumbers(), diagnosticGutter, diagnosticsField, diagnosticDecorations, diagnosticHover,
+    highlightSpecialChars(), history(), foldGutter(), drawSelection(), dropCursor(),
+    EditorState.allowMultipleSelections.of(true), indentOnInput(),
+    syntaxHighlighting(javaHighlight), syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    bracketMatching(), closeBrackets(), rectangularSelection(), crosshairCursor(),
+    highlightActiveLine(), highlightSelectionMatches(),
+    keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap, ...foldKeymap, ...completionKeymap]),
+    java(), javaTheme,
+  ];
+}
+
+function mapDiagnostics(diagnostics: readonly Diagnostic[], doc: Text): MarkedDiagnostic[] {
+  const mapped: Omit<MarkedDiagnostic, "prefixEnd">[] = [];
+  for (const diagnostic of diagnostics) {
+    const from = Math.max(0, Math.min(diagnostic.source_range.start, doc.length));
+    const to = Math.max(from, Math.min(from + diagnostic.source_range.length, doc.length));
+    mapped.push({ ...diagnostic, from, to });
+  }
+  mapped.sort((a, b) => a.from - b.from || a.to - b.to);
+  let prefixEnd = -1;
+  return mapped.map((item) => {
+    prefixEnd = Math.max(prefixEnd, item.to);
+    return { ...item, prefixEnd };
+  });
+}
+
+export const JavaEditor = forwardRef<JavaEditorHandle, {
   value: string;
-  onChange?: (value: string) => void;
+  diagnostics?: readonly Diagnostic[];
   readOnly?: boolean;
-  focusRange?: { start: number; length: number } | null;
-}) {
-  const view = useRef<EditorView | null>(null);
+  focusRange?: SourceRange | null;
+  onDirtyChange?: (dirty: boolean) => void;
+  onMetricsChange?: (metrics: { lineCount: number; byteLength: number }) => void;
+  onSourceSelection?: (range: SourceRange | null) => void;
+}>(function JavaEditor({ value, diagnostics = [], readOnly = false, focusRange, onDirtyChange, onMetricsChange, onSourceSelection }, ref) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const savedDocRef = useRef<Text | null>(null);
+  const metricsTimerRef = useRef<number | undefined>(undefined);
+  const callbacksRef = useRef({ onDirtyChange, onMetricsChange, onSourceSelection });
+  callbacksRef.current = { onDirtyChange, onMetricsChange, onSourceSelection };
+
+  useImperativeHandle(ref, () => ({
+    getValue: () => viewRef.current?.state.doc.toString() ?? value,
+    markSaved: (savedValue: string) => {
+      if (!viewRef.current) return;
+      savedDocRef.current = savedValue === viewRef.current.state.doc.toString()
+        ? viewRef.current.state.doc
+        : Text.of(savedValue.split("\n"));
+      callbacksRef.current.onDirtyChange?.(!viewRef.current.state.doc.eq(savedDocRef.current));
+    },
+  }), [value]);
 
   useEffect(() => {
-    if (!view.current) return;
-    if (!focusRange) {
-      const selection = view.current.state.selection.main;
-      if (!selection.empty) view.current.dispatch({ selection: { anchor: selection.head } });
-      return;
-    }
-    const from = Math.max(0, Math.min(focusRange.start, view.current.state.doc.length));
-    const to = Math.max(from, Math.min(from + focusRange.length, view.current.state.doc.length));
-    view.current.dispatch({
-      selection: { anchor: from, head: to },
-      effects: EditorView.scrollIntoView(from, { y: "center" }),
+    if (!containerRef.current) return;
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: value,
+        extensions: [
+          ...buildExtensions(),
+          EditorState.readOnly.of(readOnly),
+          EditorView.updateListener.of((update) => {
+            const callbacks = callbacksRef.current;
+            if (update.docChanged) {
+              callbacks.onDirtyChange?.(!update.state.doc.eq(savedDocRef.current ?? update.startState.doc));
+              callbacks.onSourceSelection?.(null);
+              // The editor owns source text while typing. React only receives compact stats.
+              if (metricsTimerRef.current !== undefined) window.clearTimeout(metricsTimerRef.current);
+              metricsTimerRef.current = window.setTimeout(() => {
+                const source = update.view.state.doc.toString();
+                callbacksRef.current.onMetricsChange?.({
+                  lineCount: update.view.state.doc.lines,
+                  byteLength: new TextEncoder().encode(source).byteLength,
+                });
+              }, 180);
+            }
+            if (update.selectionSet && !update.docChanged) {
+              const selection = update.state.selection.main;
+              callbacks.onSourceSelection?.(selection.empty ? null : { start: selection.from, length: selection.to - selection.from });
+            }
+          }),
+        ],
+      }),
+      parent: containerRef.current,
     });
-    view.current.focus();
+    viewRef.current = view;
+    savedDocRef.current = view.state.doc;
+    return () => {
+      if (metricsTimerRef.current !== undefined) window.clearTimeout(metricsTimerRef.current);
+      view.destroy();
+      viewRef.current = null;
+    };
+    // The editor instance is stable for the lifetime of this mounted file.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const mapped = mapDiagnostics(diagnostics, view.state.doc);
+    view.dispatch({ effects: setDiagnostics.of(mapped) });
+  }, [diagnostics]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const from = Math.max(0, Math.min(focusRange?.start ?? 0, view.state.doc.length));
+    if (!focusRange) return;
+    const to = Math.max(from, Math.min(from + focusRange.length, view.state.doc.length));
+    view.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
+    view.focus();
   }, [focusRange]);
 
-  return (
-    <CodeMirror
-      value={value}
-      height="100%"
-      theme="dark"
-      extensions={[java()]}
-      onChange={onChange}
-      onCreateEditor={(editorView) => { view.current = editorView; }}
-      readOnly={readOnly}
-      basicSetup={{
-        foldGutter: true,
-        highlightActiveLine: false,
-        highlightSelectionMatches: true,
-      }}
-      className="java-editor"
-      aria-label="Исходный код Java"
-    />
-  );
-}
+  return <div ref={containerRef} className="java-editor" aria-label="Исходный код Java" style={{ height: "100%" }} />;
+});

@@ -37,6 +37,7 @@ import {
 } from "@/lib/api";
 
 gsap.registerPlugin(useGSAP);
+const NO_DIAGNOSTICS: AnalysisResult["diagnostics"] = [];
 
 const JavaEditor = dynamic(
   () => import("@/components/java-editor").then((module) => module.JavaEditor),
@@ -112,8 +113,9 @@ function WorkspaceEditor({
   reload: () => Promise<unknown>;
 }) {
   const [project, setProject] = useState(initialProject);
-  const [source, setSource] = useState(initialSource);
-  const [savedSource, setSavedSource] = useState(initialSource);
+  const editorRef = useRef<import("@/components/java-editor").JavaEditorHandle>(null);
+  const [dirty, setDirty] = useState(false);
+  const [sourceStats, setSourceStats] = useState(() => sourceMetrics(initialSource));
   const [revision, setRevision] = useState(initialRevision);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "conflict" | "error">("idle");
   const [saveError, setSaveError] = useState("");
@@ -125,8 +127,7 @@ function WorkspaceEditor({
   const previousViewMode = useRef(viewMode);
   const workspaceRef = useRef<HTMLElement>(null);
   const [reloading, setReloading] = useState(false);
-  const dirty = source !== savedSource;
-  const lineCount = source.length ? source.split("\n").length : 0;
+  const { lineCount, byteLength } = sourceStats;
   const selectSourceRange = useCallback((range: { start: number; length: number } | null) => {
     setSelectedSourceRange(range);
   }, []);
@@ -159,13 +160,19 @@ function WorkspaceEditor({
 
     const media = gsap.matchMedia();
     media.add("(prefers-reduced-motion: no-preference)", () => {
-      gsap.fromTo(".method-row, .diagnostic-item", { autoAlpha: 0, y: 5 }, { autoAlpha: 1, y: 0, duration: 0.2, stagger: 0.025, ease: "power2.out" });
+      const targets = gsap.utils.toArray<Element>(".method-row, .diagnostic-item");
+      gsap.fromTo(targets, { autoAlpha: 0, y: 5 }, {
+        autoAlpha: 1, y: 0, duration: 0.2,
+        stagger: targets.length > 30 ? 0 : 0.025,
+        ease: "power2.out",
+      });
     });
     return () => media.revert();
   }, { scope: workspaceRef, dependencies: [analysisState], revertOnUpdate: true });
 
   async function saveSource() {
     if (!dirty || saveState === "saving") return;
+    const source = editorRef.current?.getValue() ?? initialSource;
     if (new TextEncoder().encode(source).byteLength > MAX_SOURCE_BYTES) {
       setSaveError("Исходник превышает лимит API — 2 МиБ.");
       setSaveState("error");
@@ -177,7 +184,7 @@ function WorkspaceEditor({
       const updated = await updateProjectSource(projectId, source, revision);
       setProject(updated);
       setRevision(updated.revision);
-      setSavedSource(source);
+      editorRef.current?.markSaved(source);
       setAnalysis(null);
       setAnalysisState("idle");
       setSaveState("saved");
@@ -272,7 +279,7 @@ function WorkspaceEditor({
                 <Waypoints size={16} /> Поток выполнения <span className="tab-status">M2</span>
               </button>
             </div>
-            <span className="source-summary">{lineCount} строк <i /> {new TextEncoder().encode(source).length.toLocaleString("ru-RU")} байт</span>
+            <span className="source-summary">{lineCount} строк <i /> {byteLength.toLocaleString("ru-RU")} байт</span>
           </div>
 
           {viewMode === "source" ? (
@@ -281,7 +288,23 @@ function WorkspaceEditor({
                 <div className="editor-file"><span className="java-file-icon">J</span><strong>{project.filename}</strong><span className="file-tag">JAVA</span></div>
                 <div className="editor-toolbar-meta"><span><Code2 size={14} /> UTF-8</span><span><GitBranch size={14} /> Ред. {revision}</span></div>
               </div>
-              <div className="editor-body"><JavaEditor value={source} focusRange={selectedSourceRange} onChange={(next) => { setSource(next); setSelectedSourceRange(null); setSaveError(""); if (saveState === "error") setSaveState("idle"); }} /></div>
+              <div className="editor-body"><JavaEditor
+                ref={editorRef}
+                value={initialSource}
+                diagnostics={analysisState === "complete" && !dirty ? analysis?.diagnostics ?? NO_DIAGNOSTICS : NO_DIAGNOSTICS}
+                focusRange={selectedSourceRange}
+                onDirtyChange={(nextDirty) => {
+                  setDirty((current) => current === nextDirty ? current : nextDirty);
+                  if (nextDirty) {
+                    setSaveError("");
+                    setSaveState((current) => current === "error" ? "idle" : current);
+                  }
+                }}
+                onMetricsChange={setSourceStats}
+                onSourceSelection={(range) => setSelectedSourceRange((current) =>
+                  current?.start === range?.start && current?.length === range?.length ? current : range,
+                )}
+              /></div>
               <footer className="editor-footer"><span><TerminalSquare size={14} /> Java</span><span>{dirty ? "Есть несохранённые изменения" : "Исходник не изменён анализом"}</span></footer>
             </section>
           ) : (
@@ -359,4 +382,11 @@ function analysisErrorMessage(cause: unknown) {
 function russianNoun(count: number, one: string, few: string, many: string) {
   const form = new Intl.PluralRules("ru").select(count);
   return form === "one" ? one : form === "few" ? few : many;
+}
+
+function sourceMetrics(source: string) {
+  return {
+    lineCount: source.length ? source.split("\n").length : 0,
+    byteLength: new TextEncoder().encode(source).byteLength,
+  };
 }
