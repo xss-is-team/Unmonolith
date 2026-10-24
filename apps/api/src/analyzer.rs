@@ -61,6 +61,13 @@ pub struct ValidatedTransformation {
     pub analysis: Vec<u8>,
 }
 
+#[derive(Serialize)]
+struct WorkerTransformRequest<'a> {
+    method_id: &'a str,
+    node_id: &'a str,
+    operation: &'a TransformOperation,
+}
+
 #[derive(Debug, Deserialize)]
 struct ParserResult {
     protocol_version: u32,
@@ -182,7 +189,12 @@ impl JavaAnalyzer {
         .await?;
         let operation_path = stage.join("operation.json");
         let output_path = stage.join(filename);
-        let operation = serde_json::to_vec(request).map_err(|error| {
+        let worker_request = WorkerTransformRequest {
+            method_id: &request.method_id,
+            node_id: &request.node_id,
+            operation: &request.operation,
+        };
+        let operation = serde_json::to_vec(&worker_request).map_err(|error| {
             tracing::error!(%error, "could not serialize transform request");
             ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -248,7 +260,7 @@ impl JavaAnalyzer {
                 "Java transformer exited unsuccessfully"
             );
             let message = worker_result
-                .get("message")
+                .pointer("/error/message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("Java transformer rejected the requested change");
             return Err(ApiError::new(

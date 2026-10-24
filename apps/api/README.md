@@ -65,12 +65,14 @@ then invokes the configured JAR without a shell:
 java -jar <jar> transform --input <absolute-source-path> --operation <operation-json-path> --output <absolute-output-path>
 ```
 
-The operation file contains the request JSON above. On success the worker must
-write UTF-8 Java source to the output path, exit zero, and write exactly one JSON
-document `{"status":"completed"}` to stdout. On a rejected transformation it
-must exit nonzero and return `{"status":"failed","message":"..."}`. The API
-bounds stdout/stderr, enforces the configured timeout, and uses a per-request
-temporary directory.
+The operation file contains `method_id`, `node_id`, and `operation` from the HTTP
+request; `base_revision` is Rust-owned concurrency metadata and is not sent to
+the Java worker. On success the worker writes UTF-8 Java source to the output
+path, exits zero, and returns a JSON document with `status: "completed"`. On a
+rejected transformation it exits nonzero and returns
+`{"status":"failed","error":{"code":"...","message":"..."}}`. The API bounds
+stdout/stderr, enforces the configured timeout, and uses a per-request temporary
+directory.
 
 Before committing, Rust runs the unchanged positional analysis CLI against the
 candidate. Only a `completed` parse with semantic diagnostics free of errors and

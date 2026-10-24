@@ -85,8 +85,8 @@ data/
 ### Java worker transform protocol
 
 - Rust invokes `java -jar <jar> transform --input <absolute source> --operation <absolute JSON> --output <absolute output>` with direct argv. The positional analysis CLI is unchanged.
-- The operation JSON is `{base_revision, method_id, node_id, operation:{type:"replace_condition", expression}}`. Rust validates the revision, method and branch node against that revision's stored analysis before invocation.
-- A successful worker exits zero, writes the transformed UTF-8 Java source to the output file, and emits exactly `{"status":"completed"}` on stdout. A rejected change exits nonzero with `{"status":"failed","message":"..."}`.
+- The operation JSON is `{method_id, node_id, operation:{type:"replace_condition", expression}}`. `base_revision` remains Rust-owned concurrency metadata. Rust validates the revision, method and branch node against that revision's stored analysis before invocation.
+- A successful worker exits zero, writes the transformed UTF-8 Java source to the output file, and emits a JSON document with `status: "completed"` on stdout. A rejected change exits nonzero with `{"status":"failed","error":{"code":"...","message":"..."}}`.
 - Rust uses an isolated temporary directory, bounded stdout/stderr, kill-on-drop and the configured analyzer timeout. It reparses the candidate and rejects partial analysis or a missing selected method CFG.
 - The accepted source and complete new-revision analysis artifact are written before atomically advancing project metadata. Transformations share the source-write lock, so concurrent requests based on the same revision cannot both commit.
 

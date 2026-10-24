@@ -777,12 +777,16 @@ if [ "$#" -eq 9 ] && [ "$1" = "-jar" ] && [ "$3" = "transform" ] && [ "$4" = "--
       exec sleep 2
       ;;
     failure)
-      printf %s '{"status":"failed","message":"fake worker failure"}'
+      printf %s '{"status":"failed","error":{"code":"internal_error","message":"fake worker failure"}}'
       exit 1
       ;;
     *)
+      if grep -q '"base_revision"' "$7"; then
+        printf %s '{"status":"failed","error":{"code":"invalid_operation","message":"base_revision leaked to worker"}}'
+        exit 1
+      fi
       if grep -q '"expression":"bad +"' "$7"; then
-        printf %s '{"status":"failed","message":"invalid Java expression"}'
+        printf %s '{"status":"failed","error":{"code":"invalid_expression","message":"invalid Java expression"}}'
         exit 1
       fi
       sed 's/count > 0/count >= 0/' "$5" > "$9"
@@ -846,6 +850,28 @@ fi
             java_bin: java,
             analyzer_timeout,
             analyzer_output_bytes: 16 * 1024,
+        })
+        .await
+        .unwrap();
+        app(state)
+    }
+
+    async fn test_app_with_real_worker(data: &TestData) -> axum::Router {
+        let jar = std::env::var_os("BLUEPRINTS_REAL_JAR")
+            .map(PathBuf::from)
+            .expect("BLUEPRINTS_REAL_JAR must point to the built parser fat JAR");
+        let java = std::env::var_os("BLUEPRINTS_REAL_JAVA")
+            .map(PathBuf::from)
+            .expect("BLUEPRINTS_REAL_JAVA must point to an OpenJDK 21 java executable");
+        let state = AppState::new(Config {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            data_dir: data.0.clone(),
+            max_project_bytes: 4096,
+            secure_cookies: false,
+            analyzer_jar: Some(jar),
+            java_bin: java,
+            analyzer_timeout: Duration::from_secs(10),
+            analyzer_output_bytes: 1024 * 1024,
         })
         .await
         .unwrap();
@@ -1266,6 +1292,242 @@ fi
         assert_eq!(response_json(response).await["code"], "revision_conflict");
     }
 
+    #[tokio::test]
+    #[ignore = "requires a built parser JAR and OpenJDK 21 via BLUEPRINTS_REAL_JAR/BLUEPRINTS_REAL_JAVA"]
+    async fn real_ast_rewrite_http_end_to_end() {
+        const SOURCE: &str = "public class Example {\n    public static void main(String[] args) {\n        int count = 1;\n        if (count > 0) {\n            System.out.println(\"positive\");\n        }\n    }\n}\n";
+
+        let data = TestData::new();
+        let app = test_app_with_real_worker(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let project =
+            response_json(upload_source(&app, &cookie, "Example.java", SOURCE).await).await;
+        let project_id = project["id"].as_str().unwrap();
+        let directory = project_directory(&data, &cookie, project_id);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/api/v1/projects/{project_id}/analyze"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let initial_analysis = response_json(response).await;
+        assert_eq!(initial_analysis["status"], "completed");
+        assert!(initial_analysis["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|diagnostic| !diagnostic["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("must be defined in its own file")));
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/methods"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let methods = response_json(response).await;
+        assert_eq!(methods["revision"], 1);
+        assert_eq!(methods["methods"][0]["id"], "Example.main(String[])");
+        let selector = methods["methods"][0]["selector"].as_str().unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/v1/projects/{project_id}/methods/{selector}/cfg"
+                ))
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let cfg = response_json(response).await;
+        let branch = cfg["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["text"] == "count > 0")
+            .unwrap();
+        let node_id = branch["id"].as_str().unwrap().to_owned();
+        assert_eq!(node_id, "m0.n3");
+        assert_eq!(
+            branch["source_range"]["start"],
+            SOURCE[..SOURCE.find("count > 0").unwrap()]
+                .encode_utf16()
+                .count()
+        );
+        assert_eq!(
+            branch["source_range"]["length"],
+            "count > 0".encode_utf16().count()
+        );
+
+        let response = app
+            .clone()
+            .oneshot(transform_request(
+                &cookie,
+                project_id,
+                1,
+                "Example.main(String[])",
+                &node_id,
+                "count >= 0",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let transformed = response_json(response).await;
+        assert_eq!(transformed["revision"], 2);
+        assert!(transformed["source"]
+            .as_str()
+            .unwrap()
+            .contains("if (count >= 0)"));
+
+        assert_eq!(
+            fs::read_to_string(directory.join("revisions/1/Example.java"))
+                .await
+                .unwrap(),
+            SOURCE
+        );
+        assert!(
+            fs::read_to_string(directory.join("revisions/2/Example.java"))
+                .await
+                .unwrap()
+                .contains("if (count >= 0)")
+        );
+        assert!(!directory.join("revisions/2/Out.java").exists());
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/api/v1/projects/{project_id}/analyze"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let updated_analysis = response_json(response).await;
+        assert_eq!(updated_analysis["revision"], 2);
+        assert_eq!(updated_analysis["status"], "completed");
+        assert!(updated_analysis["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|diagnostic| !diagnostic["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("must be defined in its own file")));
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/methods"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let methods = response_json(response).await;
+        assert_eq!(methods["revision"], 2);
+        let selector = methods["methods"][0]["selector"].as_str().unwrap();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/v1/projects/{project_id}/methods/{selector}/cfg"
+                ))
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let updated_cfg = response_json(response).await;
+        let updated_branch = updated_cfg["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["text"] == "count >= 0")
+            .unwrap();
+        assert_eq!(updated_branch["id"], "m0.n3");
+        assert_eq!(updated_branch["source_range"]["start"], 103);
+        assert_eq!(updated_branch["source_range"]["length"], 10);
+
+        let stale = app
+            .clone()
+            .oneshot(transform_request(
+                &cookie,
+                project_id,
+                1,
+                "Example.main(String[])",
+                "m0.n3",
+                "count == 0",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+
+        let unknown = app
+            .clone()
+            .oneshot(transform_request(
+                &cookie,
+                project_id,
+                2,
+                "Example.main(String[])",
+                "m0.n99",
+                "count == 0",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(unknown).await["code"], "node_not_found");
+
+        let invalid = app
+            .oneshot(transform_request(
+                &cookie,
+                project_id,
+                2,
+                "Example.main(String[])",
+                "m0.n3",
+                "count +",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let invalid = response_json(invalid).await;
+        assert_eq!(invalid["code"], "transformation_failed");
+        assert_eq!(
+            invalid["message"],
+            "Replacement expression contains a syntax error"
+        );
+        let metadata: Value =
+            serde_json::from_slice(&fs::read(directory.join("project.json")).await.unwrap())
+                .unwrap();
+        assert_eq!(metadata["revision"], 2);
+        assert!(!directory.join("revisions/3/Example.java").exists());
+        assert!(std::fs::read_dir(&directory).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".transform-")));
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn transform_commits_validated_source_and_analysis_as_a_new_revision() {
@@ -1413,10 +1675,9 @@ fi
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(
-            response_json(response).await["code"],
-            "transformation_failed"
-        );
+        let error = response_json(response).await;
+        assert_eq!(error["code"], "transformation_failed");
+        assert_eq!(error["message"], "invalid Java expression");
 
         let metadata = app
             .oneshot(
