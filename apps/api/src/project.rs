@@ -79,13 +79,9 @@ pub async fn update(
     request: UpdateSourceRequest,
 ) -> Result<Project, ApiError> {
     if request.expected_revision != project.revision {
-        return Err(ApiError::new(
-            axum::http::StatusCode::CONFLICT,
-            "revision_conflict",
-            format!(
-                "expected revision {} but current revision is {}",
-                request.expected_revision, project.revision
-            ),
+        return Err(revision_conflict(
+            request.expected_revision,
+            project.revision,
         ));
     }
     let revision = project
@@ -95,6 +91,35 @@ pub async fn update(
     atomic_write(
         &source_path(directory, revision, &project.filename),
         request.source.as_bytes(),
+    )
+    .await?;
+    project.revision = revision;
+    let metadata = serde_json::to_vec_pretty(&project).map_err(internal_json_error)?;
+    atomic_write(&directory.join("project.json"), &metadata).await?;
+    Ok(project)
+}
+
+pub async fn commit_transformation(
+    directory: &Path,
+    mut project: Project,
+    base_revision: u64,
+    source: &[u8],
+    analysis: &[u8],
+) -> Result<Project, ApiError> {
+    if base_revision != project.revision {
+        return Err(revision_conflict(base_revision, project.revision));
+    }
+    let revision = project
+        .revision
+        .checked_add(1)
+        .ok_or_else(|| ApiError::bad_request("source revision limit reached"))?;
+
+    // Publish the metadata last. If either artifact write fails, the current project
+    // revision remains unchanged and the incomplete next revision is unreachable.
+    atomic_write(&source_path(directory, revision, &project.filename), source).await?;
+    atomic_write(
+        &directory.join("analysis").join(format!("{revision}.json")),
+        analysis,
     )
     .await?;
     project.revision = revision;
@@ -138,5 +163,13 @@ fn internal_json_error(error: serde_json::Error) -> ApiError {
         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         "internal_error",
         "stored project metadata is invalid",
+    )
+}
+
+fn revision_conflict(expected: u64, current: u64) -> ApiError {
+    ApiError::new(
+        axum::http::StatusCode::CONFLICT,
+        "revision_conflict",
+        format!("expected revision {expected} but current revision is {current}"),
     )
 }
