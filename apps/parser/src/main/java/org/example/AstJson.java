@@ -21,6 +21,7 @@ final class AstJson {
     private final boolean bindings;
     private final List<Object> methods = new ArrayList<>();
     private final List<Object> cfgFailures = new ArrayList<>();
+    private final Map<MethodDeclaration, ProjectGraph.Link> methodLinks = new java.util.IdentityHashMap<>();
     private int cfgCount;
 
     /** @param bindings whether the unit was parsed with resolved bindings (semantic information) */
@@ -57,10 +58,27 @@ final class AstJson {
         }
         out.put("types", types);
         out.put("methods", methods);
+        out.put("project_graph", projectGraph());
         List<Object> diagnostics = diagnostics(problems);
         diagnostics.addAll(cfgFailures);
         out.put("diagnostics", diagnostics);
         return out;
+    }
+
+    /** Best effort like the CFG: a failure becomes a warning and `project_graph: null`. */
+    private Map<String, Object> projectGraph() {
+        try {
+            return new ProjectGraph(this, cu, methodLinks).build();
+        } catch (RuntimeException | StackOverflowError e) {
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("code", "project_graph_failed");
+            d.put("category", "analysis");
+            d.put("severity", "warning");
+            d.put("message", "Project graph could not be built: " + e);
+            d.put("source_range", range(0, 0));
+            cfgFailures.add(d);
+            return null;
+        }
     }
 
     // ---------- diagnostics ----------
@@ -177,6 +195,7 @@ final class AstJson {
         m.put("body", md.getBody() == null ? null : block(md.getBody()));
         Map<String, Object> cfg = md.getBody() == null ? null : cfg(md, id);
         m.put("cfg", cfg);
+        methodLinks.put(md, new ProjectGraph.Link(id, cfg == null ? null : (String) cfg.get("entry")));
         m.put("analysis", md.getBody() == null ? null : analysis(md, id, cfg));
 
         Map<String, Object> summary = new LinkedHashMap<>();
