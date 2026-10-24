@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{collections::HashSet, convert::Infallible, path::PathBuf, sync::Arc};
 
 use axum::{
     body::Body,
@@ -14,7 +14,11 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
-use tokio::{fs, sync::Mutex};
+use tokio::{
+    fs,
+    sync::{mpsc, Mutex},
+};
+use tokio_stream::wrappers::ReceiverStream;
 use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
@@ -25,7 +29,7 @@ use crate::{
         SourceRange, TransformOperation, TransformRequest,
     },
     error::{ApiError, ApiErrorBody},
-    project::{self, Project, UpdateSourceRequest},
+    project::{self, Project, RevisionDetail, RevisionSummary, UpdateSourceRequest},
     runner::{
         BehaviorMismatch, CapturedStream, CompilationResult, CompilationStatus,
         ExecutionObservation, JavaRunner, MismatchField, RunnerDiagnostic, TestCaseResult,
@@ -82,6 +86,9 @@ impl AppState {
         get_project_source,
         update_project_source,
         analyze_project,
+        analyze_project_stream,
+        list_project_revisions,
+        get_project_revision,
         list_methods,
         get_method_cfg,
         get_method_analysis,
@@ -102,6 +109,8 @@ impl AppState {
         Diagnostic,
         DiagnosticSeverity,
         SourceRange,
+        RevisionSummary,
+        RevisionDetail,
         MethodsResponse,
         CfgMethod,
         Cfg,
@@ -168,6 +177,18 @@ pub fn app(state: AppState) -> Router {
             get(get_project_source).put(update_project_source),
         )
         .route("/projects/{project_id}/analyze", post(analyze_project))
+        .route(
+            "/projects/{project_id}/analyze/stream",
+            post(analyze_project_stream),
+        )
+        .route(
+            "/projects/{project_id}/revisions",
+            get(list_project_revisions),
+        )
+        .route(
+            "/projects/{project_id}/revisions/{revision}",
+            get(get_project_revision),
+        )
         .route("/projects/{project_id}/methods", get(list_methods))
         .route(
             "/projects/{project_id}/methods/{method_selector}/cfg",
@@ -570,6 +591,127 @@ async fn analyze_project(
             .analyzer
             .analyze(directory, project.revision, &project.filename)
             .await?,
+    ))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/analyze/stream",
+    tag = "Analysis",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "Server-sent analysis lifecycle events", content_type = "text/event-stream"),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody)
+    )
+)]
+async fn analyze_project_stream(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    let revision = project.revision;
+    let filename = project.filename;
+    let analyzer = state.0.analyzer.clone();
+    let (sender, receiver) = mpsc::channel::<Result<String, Infallible>>(4);
+
+    tokio::spawn(async move {
+        if sender
+            .send(Ok(format!(
+                "event: started\ndata: {{\"revision\":{revision}}}\n\n"
+            )))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        if sender
+            .send(Ok(format!(
+                "event: progress\ndata: {{\"stage\":\"analyzing\",\"revision\":{revision}}}\n\n"
+            )))
+            .await
+            .is_err()
+        {
+            return;
+        }
+
+        let event = match analyzer.analyze(directory, revision, &filename).await {
+            Ok(result) => format!(
+                "event: completed\ndata: {}\n\n",
+                serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_owned())
+            ),
+            Err(error) => format!(
+                "event: failed\ndata: {}\n\n",
+                serde_json::json!({
+                    "code": error.code,
+                    "message": error.message,
+                    "revision": revision,
+                })
+            ),
+        };
+        let _ = sender.send(Ok(event)).await;
+    });
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache, no-transform")
+        .header(header::CONNECTION, "keep-alive")
+        .body(Body::from_stream(ReceiverStream::new(receiver)))
+        .expect("SSE response headers are valid"))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/revisions",
+    tag = "Projects",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = [RevisionSummary]),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody)
+    )
+)]
+async fn list_project_revisions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+) -> Result<Json<Vec<RevisionSummary>>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    Ok(Json(
+        project::list_revisions(&directory, project.revision, &project.filename).await?,
+    ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/revisions/{revision}",
+    tag = "Projects",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path), ("revision" = u64, Path)),
+    responses(
+        (status = 200, body = RevisionDetail),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody)
+    )
+)]
+async fn get_project_revision(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, revision)): Path<(String, u64)>,
+) -> Result<Json<RevisionDetail>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    Ok(Json(
+        project::read_revision(&directory, revision, project.revision, &project.filename).await?,
     ))
 }
 
@@ -1730,6 +1872,110 @@ esac
     }
 
     #[tokio::test]
+    async fn revision_history_returns_only_owned_published_revisions() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let owner = guest_cookie(&app).await;
+        let other = guest_cookie(&app).await;
+        let baseline = "class Example { static void main(String[] args) {} }\n";
+        let candidate =
+            "class Example { static void main(String[] args) { System.out.println(1); } }\n";
+        let project_id = project_with_revisions(&app, &owner, baseline, candidate).await;
+        store_analysis(&data, &owner, &project_id, &cfg_artifact(1)).await;
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/revisions"))
+                    .header(header::COOKIE, &owner)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let revisions = response_json(response).await;
+        assert_eq!(
+            revisions,
+            serde_json::json!([
+                {"revision": 2, "has_analysis": false},
+                {"revision": 1, "has_analysis": true}
+            ])
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/revisions/1"))
+                    .header(header::COOKIE, &owner)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({"revision": 1, "source": baseline, "has_analysis": true})
+        );
+
+        let missing = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/revisions/3"))
+                    .header(header::COOKIE, &owner)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(missing).await["code"], "revision_not_found");
+
+        let foreign = app
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/revisions"))
+                    .header(header::COOKIE, &other)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(foreign).await["code"], "project_not_found");
+    }
+
+    #[tokio::test]
+    async fn analysis_stream_reports_real_analyzer_failure_as_sse() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let project = response_json(upload(&app, &cookie, "Main.java").await).await;
+        let project_id = project["id"].as_str().unwrap();
+
+        let response = app
+            .oneshot(
+                Request::post(format!("/api/v1/projects/{project_id}/analyze/stream"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert!(body.contains("event: started"));
+        assert!(body.contains("event: progress"));
+        assert!(body.contains("event: failed"));
+        assert!(body.contains("analyzer_unavailable"));
+    }
+
+    #[tokio::test]
     async fn lists_nested_methods_and_returns_exact_cfg() {
         let data = TestData::new();
         let app = test_app(&data).await;
@@ -1984,6 +2230,14 @@ esac
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let document = response_json(response).await;
+        assert!(
+            document["paths"]["/api/v1/projects/{project_id}/analyze/stream"]["post"].is_object()
+        );
+        assert!(document["paths"]["/api/v1/projects/{project_id}/revisions"]["get"].is_object());
+        assert!(
+            document["paths"]["/api/v1/projects/{project_id}/revisions/{revision}"]["get"]
+                .is_object()
+        );
         assert!(document["paths"]["/api/v1/projects/{project_id}/methods"]["get"].is_object());
         assert!(
             document["paths"]["/api/v1/projects/{project_id}/methods/{method_selector}/cfg"]["get"]
@@ -2001,6 +2255,7 @@ esac
         assert!(document["components"]["schemas"]["TransformRequest"].is_object());
         assert!(document["components"]["schemas"]["MethodAnalysisResponse"].is_object());
         assert!(document["components"]["schemas"]["PersistedVerificationReport"].is_object());
+        assert!(document["components"]["schemas"]["RevisionDetail"].is_object());
         assert!(
             document["components"]["schemas"]["MethodAnalysisResponse"]["properties"]["analysis"]
                 .is_object()

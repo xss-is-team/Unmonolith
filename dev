@@ -2,6 +2,9 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Nixpkgs can provide a newer pnpm than package.json pins. Keep the executable
+# from the active environment instead of downloading a generic Linux binary.
+export NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS="${NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS:-false}"
 
 usage() {
   cat <<'EOF'
@@ -97,6 +100,7 @@ case "$command" in
     ;;
   web-check)
     cd "$ROOT/apps/web"
+    pnpm exec tsc --noEmit
     pnpm lint
     pnpm build
     ;;
