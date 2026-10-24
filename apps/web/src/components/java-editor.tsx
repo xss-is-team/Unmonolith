@@ -32,18 +32,18 @@ export type JavaEditorHandle = {
   markSaved: (savedValue: string) => void;
 };
 
-// Custom light theme matching the existing editor styles
+// Dark IDE theme; layout remains in CSS so CodeMirror can measure the dock.
 const javaTheme = EditorView.theme({
   "&": { height: "100%", fontSize: "12px", fontFamily: "var(--font-code), monospace" },
-  ".cm-scroller": { minHeight: "100%", padding: "13px 0 25px", lineHeight: "1.72", fontFamily: "inherit" },
-  ".cm-content": { color: "#283b37" },
-  ".cm-gutters": { border: "0", background: "#fbfaf6", color: "#a2a79d", fontFamily: "var(--font-code), monospace", fontSize: "10px" },
+  ".cm-scroller": { minHeight: "100%", padding: "9px 0 18px", lineHeight: "1.62", fontFamily: "inherit" },
+  ".cm-content": { color: "#d8e1ed", caretColor: "#67e8f9" },
+  ".cm-gutters": { border: "0", background: "#08101d", color: "#526178", fontFamily: "var(--font-code), monospace", fontSize: "10px" },
   ".cm-lineNumbers .cm-gutterElement": { minWidth: "43px", padding: "0 12px 0 10px" },
-  ".cm-activeLine": { background: "rgba(222,231,213,.28)" },
-  ".cm-cursor": { borderLeftColor: "#226a58" },
-  ".cm-selectionBackground, ::selection": { background: "rgba(167,201,74,.25) !important" },
-  ".cm-focused .cm-selectionBackground": { background: "rgba(167,201,74,.3) !important" },
-  ".cm-selectionMatch": { background: "rgba(23,76,67,.12)" },
+  ".cm-activeLine, .cm-activeLineGutter": { background: "rgba(96,165,250,.07)" },
+  ".cm-cursor": { borderLeftColor: "#67e8f9" },
+  ".cm-selectionBackground, ::selection": { background: "rgba(34,211,238,.2) !important" },
+  ".cm-focused .cm-selectionBackground": { background: "rgba(34,211,238,.25) !important" },
+  ".cm-selectionMatch": { background: "rgba(96,165,250,.13)" },
   ".cm-foldGutter .cm-gutterElement": { padding: "0 4px" },
   ".cm-diagnosticMark": { textDecoration: "underline wavy", textUnderlineOffset: "3px", cursor: "help" },
   ".cm-diagnosticMark--error": { textDecorationColor: "#b6533d" },
@@ -54,9 +54,9 @@ const javaTheme = EditorView.theme({
   ".cm-diagnostic-marker": { display: "block", width: "6px", height: "6px", borderRadius: "50%", background: "#4a7790" },
   ".cm-diagnostic-marker--error": { background: "#b6533d" },
   ".cm-diagnostic-marker--warning": { background: "#c18a3d" },
-  ".cm-diagnostic-tooltip": { maxWidth: "360px", padding: "9px 11px", border: "1px solid #d8d9cf", borderRadius: "6px", color: "#34453a", background: "#fffefa", boxShadow: "0 8px 24px rgba(34,50,42,.12)", font: "12px/1.45 system-ui, sans-serif" },
+  ".cm-diagnostic-tooltip": { maxWidth: "360px", padding: "9px 11px", border: "1px solid #334155", borderRadius: "6px", color: "#d8e1ed", background: "#111827", boxShadow: "0 10px 28px rgba(0,0,0,.38)", font: "12px/1.45 system-ui, sans-serif" },
   ".cm-diagnostic-tooltip strong": { display: "block", marginBottom: "3px", fontFamily: "var(--font-code), monospace", fontSize: "10px" },
-}, { dark: false });
+}, { dark: true });
 
 const javaHighlight = HighlightStyle.define([
   { tag: tags.keyword, color: "#a8d8bf", fontWeight: "600" },
@@ -387,8 +387,8 @@ export const JavaEditor = forwardRef<JavaEditorHandle, {
   }, [focusRange]);
 
   return (
-    <div className="java-editor" aria-label="Исходный код Java" style={{ height: "100%" }}>
-      <div ref={containerRef} className="java-editor-surface" />
+    <div className="relative h-full overflow-hidden font-mono text-xs" aria-label="Исходный код Java">
+      <div ref={containerRef} className="size-full min-h-0 min-w-0 overflow-hidden" />
       <div ref={overviewRulerRef} className="cm-diagnostic-overview" role="group" aria-label="Обзор диагностик по файлу" />
     </div>
   );

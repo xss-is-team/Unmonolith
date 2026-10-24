@@ -10,8 +10,7 @@ Repository-wide rules (case location, commands, git safety, boundaries): root `A
   attach unnecessary screenshots. Full policy: root `AGENTS.md` → "Image inspection (frontend)".
 - Views: source editor, diagnostics, CFG (React Flow), Big O, revision diff, verify panel, and the
   Project Overview tab (project graph via `GET /projects/{id}/graph`; `graph: null` is rendered as
-  an explicit unavailable state). `/demo` hosts clearly-labeled frontend prototypes (fixtures only,
-  no API fallback).
+  an explicit unavailable state).
 
 <!-- BEGIN:nextjs-agent-rules -->
 
