@@ -2,7 +2,7 @@
 
 ## Current application
 
-The web client lives in `apps/web/` and uses Next.js App Router. It provides source-linked diagnostics, per-method CFG and Big O views, a Project Overview UI, revision diff, `replace_condition`, and behavioral verification. The overview waits for the planned graph endpoint; its explicitly labeled local fixture is for development only. The Rust/Axum service in `apps/api/` remains the API and owns guest sessions, project storage, revisions, analysis and runner reports. Next proxies `/api/v1/*` to Axum so browser requests and the session cookie stay same-origin.
+The web client lives in `apps/web/` and uses Next.js App Router. It provides source-linked diagnostics, per-method CFG and Big O views, a Project Overview UI, revision diff, `replace_condition`, and behavioral verification. Project Overview reads the revisioned graph endpoint for the current single-file project; its explicitly labeled multi-file fixture is only for `/demo`. The Rust/Axum service in `apps/api/` remains the API and owns guest sessions, project storage, revisions, analysis and runner reports. Next proxies `/api/v1/*` to Axum so browser requests and the session cookie stay same-origin.
 
 The three application folders share one Git repository: `apps/api/` (Rust), `apps/parser/` (Java/Maven), and `apps/web/` (Next.js). Install the tools with your OS package manager, or use the optional root `flake.nix` with `nix develop`.
 
@@ -43,6 +43,8 @@ BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21 ./dev api
 ```
 
 Open <http://localhost:3001>. The API listens on port 3000; the web app proxies its requests to it. Set `BLUEPRINTS_API_ORIGIN` if Axum listens elsewhere. Set `BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21` when starting the API to enable verification. `./dev` lists the parser and runner commands. Frontend details are in `apps/web/README.md`.
+
+For a quick frontend check during UI work, run `./dev web-fast-check` (TypeScript and lint). Run `./dev web-check` before handing work off; it also makes a production build.
 ## Run after cloning
 
 After installing the host tools listed above, run one command from the repository root:
@@ -70,11 +72,11 @@ Changes happen through a separate editable BPMN-style process diagram. Its suppo
 ## Current scope
 
 - The API currently accepts one `.java` file per project; Maven/Gradle import, whole-project classpath analysis, and project-wide transformations are not implemented.
-- The parser produces AST data, per-method CFGs and complexity findings, plus a compilation-unit `project_graph`. The Rust API does not expose that graph yet.
+- The parser produces AST data, per-method CFGs and complexity findings, plus a compilation-unit `project_graph`. The Rust API exposes it through the revisioned `GET /api/v1/projects/{id}/graph` endpoint.
 - The web app supports source editing, method CFG/Big O, a limited condition transformation, revision diff, and optional isolated behavioral verification.
 - Project Overview currently has a type-and-relationship graph for one source file and clearly labeled frontend demos for nested flowcharts, modernization actions, and an editable BPMN plan. The demos do not analyze or change the uploaded source.
 - Open `/demo` to explore those frontend prototypes without uploading a source file or calling the project-graph API. Flowchart nodes can reveal excerpts from a synthetic `LegacyOrderApp.java` using source ranges; this code is demo data, not a parsed project.
-- Project Overview requests the planned graph endpoint. Until it is available, a local fixture is available only as an explicitly labeled development example.
+- Project Overview requests the real graph endpoint for an analyzed single Java file. Multi-file project navigation and the nested-flow, modernization, and BPMN examples remain explicitly labeled demo fixtures; API failures never fall back to them.
 
 ## Core concepts
 
