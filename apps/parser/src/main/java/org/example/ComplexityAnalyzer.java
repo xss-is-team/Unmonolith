@@ -695,11 +695,6 @@ final class ComplexityAnalyzer {
                 return Bound.unknown("Bound '" + text + "' is a method call with no known size model.");
             }
             case InfixExpression ie -> {
-                if (ie.hasExtendedOperands()) {
-                    return Bound.unknown("Bound '" + text + "' is too complex.");
-                }
-                Expression l = strip(ie.getLeftOperand());
-                Expression r = strip(ie.getRightOperand());
                 InfixExpression.Operator op = ie.getOperator();
                 boolean arithmetic = op == InfixExpression.Operator.PLUS || op == InfixExpression.Operator.MINUS
                         || op == InfixExpression.Operator.TIMES || op == InfixExpression.Operator.DIVIDE
@@ -707,24 +702,17 @@ final class ComplexityAnalyzer {
                 if (!arithmetic) {
                     return Bound.unknown("Bound '" + text + "' is not a recognised size.");
                 }
-                Bound lb = classify(l, env);
-                Bound rb = classify(r, env);
-                if (lb.kind() == Kind.CONST && rb.kind() == Kind.CONST) {
-                    return Bound.CONST;
+                // JDT keeps "a - b - c" as one node with extended operands: fold left to right
+                Bound acc = classify(ie.getLeftOperand(), env);
+                List<Expression> rest = new ArrayList<>();
+                rest.add(ie.getRightOperand());
+                for (Object o : ie.extendedOperands()) {
+                    rest.add((Expression) o);
                 }
-                if (rb.kind() == Kind.CONST) {
-                    return lb;
+                for (Expression operand : rest) {
+                    acc = combine(op, acc, classify(operand, env), text);
                 }
-                if (lb.kind() == Kind.CONST && op != InfixExpression.Operator.MINUS && op != InfixExpression.Operator.DIVIDE) {
-                    return rb;
-                }
-                if (op == InfixExpression.Operator.MINUS && lb.kind() != Kind.UNKNOWN) {
-                    return lb;
-                }
-                if (op == InfixExpression.Operator.DIVIDE && lb.kind() != Kind.UNKNOWN) {
-                    return lb;
-                }
-                return Bound.unknown("Bound '" + text + "' combines several variable sizes.");
+                return acc;
             }
             case CastExpression ce -> {
                 return classify(ce.getExpression(), env);
@@ -733,6 +721,24 @@ final class ComplexityAnalyzer {
                 return Bound.unknown("Bound '" + text + "' is not a recognised size.");
             }
         }
+    }
+
+    /** {@code l op r} where one side is a constant keeps the other side's size; a difference/quotient keeps the left. */
+    private static Bound combine(InfixExpression.Operator op, Bound lb, Bound rb, String text) {
+        if (lb.kind() == Kind.CONST && rb.kind() == Kind.CONST) {
+            return Bound.CONST;
+        }
+        if (rb.kind() == Kind.CONST) {
+            return lb;
+        }
+        boolean commutative = op == InfixExpression.Operator.PLUS || op == InfixExpression.Operator.TIMES;
+        if (lb.kind() == Kind.CONST && commutative) {
+            return rb;
+        }
+        if ((op == InfixExpression.Operator.MINUS || op == InfixExpression.Operator.DIVIDE) && lb.kind() != Kind.UNKNOWN) {
+            return lb;
+        }
+        return Bound.unknown("Bound '" + text + "' combines several variable sizes.");
     }
 
     private Bound collectionBound(String text, String what) {
@@ -1036,8 +1042,10 @@ final class ComplexityAnalyzer {
                 return Set.of("println", "print", "printf", "format").contains(name) ? Cost.constant() : null;
             }
             case "java.lang.String" -> {
-                return Set.of("length", "charAt", "isEmpty", "equals", "equalsIgnoreCase", "compareTo", "hashCode",
-                        "startsWith", "endsWith", "valueOf", "toString").contains(name) ? Cost.constant(ASSUME_STRING) : null;
+                return Set.of("length", "charAt", "isEmpty", "isBlank", "equals", "equalsIgnoreCase", "compareTo",
+                        "compareToIgnoreCase", "hashCode", "startsWith", "endsWith", "valueOf", "toString", "trim", "strip",
+                        "toLowerCase", "toUpperCase", "contains", "indexOf", "substring", "concat", "replace", "split",
+                        "format", "formatted", "join").contains(name) ? Cost.constant(ASSUME_STRING) : null;
             }
             case "java.lang.StringBuilder", "java.lang.StringBuffer", "java.lang.AbstractStringBuilder" -> {
                 return Set.of("append", "length", "charAt", "toString", "setLength").contains(name)
@@ -1246,6 +1254,11 @@ final class ComplexityAnalyzer {
                     b = strip((Expression) mi.arguments().get(1));
                 }
                 if (a == null || mentions(a, inner) == mentions(b, inner)) {
+                    return true;
+                }
+                // comparing with a constant (x == 0, s.equals("a")) filters elements; it is not a keyed lookup
+                Expression other = mentions(a, inner) ? b : a;
+                if (other.resolveConstantExpressionValue() != null || other instanceof NullLiteral) {
                     return true;
                 }
                 String unsafe = null;

@@ -157,7 +157,10 @@ final class AstJson {
         Map<String, Object> m = node(md.isConstructor() ? "constructor" : "method", md);
         String name = md.getName().getIdentifier();
         List<String> ptypes = new ArrayList<>();
-        for (Object o : md.parameters()) {
+        // a compact record constructor has no parameter list of its own: its parameters are the components
+        List<?> declaredParameters = md.isCompactConstructor() && md.getParent() instanceof RecordDeclaration rd
+                ? rd.recordComponents() : md.parameters();
+        for (Object o : declaredParameters) {
             SingleVariableDeclaration p = (SingleVariableDeclaration) o;
             ptypes.add(text(p.getType()) + (p.isVarargs() ? "..." : ""));
         }
@@ -168,7 +171,7 @@ final class AstJson {
         m.put("return_type", md.getReturnType2() == null ? null : text(md.getReturnType2()));
         IMethodBinding mb = md.resolveBinding();
         m.put("resolved_return_type", mb == null ? null : typeInfo(mb.getReturnType()));
-        m.put("parameters", parameters(md.parameters()));
+        m.put("parameters", parameters(declaredParameters));
         m.put("throws", texts(md.thrownExceptionTypes()));
         m.put("resolved_throws", mb == null ? null : typeInfos(mb.getExceptionTypes()));
         m.put("body", md.getBody() == null ? null : block(md.getBody()));
