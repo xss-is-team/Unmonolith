@@ -1,10 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import useSWR from "swr";
-import ELK from "elkjs/lib/elk.bundled.js";
-import dagre from "@dagrejs/dagre";
 import {
   Background,
   Controls,
@@ -43,7 +41,6 @@ import {
 
 const NODE_WIDTH = 236;
 const NODE_HEIGHT = 92;
-const elk = new ELK();
 
 type FlowData = CfgNode & {
   hasFinding: boolean;
@@ -51,28 +48,29 @@ type FlowData = CfgNode & {
 };
 type FlowNode = Node<FlowData, "cfg">;
 
-function CfgFlowNode({ data }: NodeProps<FlowNode>) {
+const CfgFlowNode = memo(function CfgFlowNode({ data, selected }: NodeProps<FlowNode>) {
   const condition = data.kind === "branch";
   const label = data.text || data.statement_kind || data.kind;
   return (
     <div
       className={[
-        "cfg-node",
-        `cfg-node--${safeKind(data.kind)}`,
-        data.reachable === false ? "cfg-node--unreachable" : "",
-        data.hasFinding ? "cfg-node--complexity-high" : "",
+        "relative flex h-[92px] w-[236px] flex-col items-center justify-center gap-1.5 rounded-lg border bg-slate-900 px-3.5 py-3 text-center text-slate-300 shadow-lg",
+        data.kind === "branch" ? "border-amber-700 bg-[#251e15]" : ["entry", "exit", "return"].includes(data.kind) ? "border-emerald-800 bg-[#10231b]" : "border-slate-600",
+        data.reachable === false ? "opacity-45" : "",
+        data.hasFinding ? "ring-2 ring-rose-400/30" : "",
+        selected ? "border-cyan-400 ring-2 ring-cyan-400/20" : "",
       ].filter(Boolean).join(" ")}
       title={condition ? "Нажмите, чтобы выбрать условие и подсветить ветвь." : undefined}
     >
       <Handle type="target" position={Position.Top} />
-      <span>{formatNodeKind(data.kind, data.statement_kind)}</span>
-      <strong>{label}</strong>
-      {data.complexityFragment ? <small className="cfg-complexity-mark">{data.complexityFragment}</small> : null}
-      {condition ? <small className="cfg-node__click-hint">Условие можно изменить ниже</small> : null}
+      <span className="font-mono text-[8px] font-semibold tracking-[.06em] text-slate-500">{formatNodeKind(data.kind, data.statement_kind)}</span>
+      <strong className="max-w-full overflow-hidden text-ellipsis font-mono text-[10px] font-medium leading-5 text-slate-200">{label}</strong>
+      {data.complexityFragment ? <small className="absolute -top-2 right-2 rounded border border-rose-900 bg-rose-950 px-1.5 py-1 font-mono text-[8px] font-semibold text-rose-300">{data.complexityFragment}</small> : null}
+      {condition ? <small className="text-[7px] text-amber-300/70">Условие можно изменить ниже</small> : null}
       <Handle type="source" position={Position.Bottom} />
     </div>
   );
-}
+});
 
 const nodeTypes = { cfg: CfgFlowNode };
 
@@ -85,6 +83,7 @@ export function CfgViewer({
   onSelectedMethodSelectorChange,
   onSourceRangeSelect,
   onTransformed,
+  showAnalysisSummary = true,
 }: {
   projectId: string;
   revision: number;
@@ -94,6 +93,7 @@ export function CfgViewer({
   onSelectedMethodSelectorChange: (selector: string) => void;
   onSourceRangeSelect: (range: SourceRange | null, keepGraphVisible?: boolean) => void;
   onTransformed: () => Promise<void>;
+  showAnalysisSummary?: boolean;
 }) {
   const selector = methods.some((method) => method.selector === selectedMethodSelector)
     ? selectedMethodSelector
@@ -139,7 +139,7 @@ export function CfgViewer({
   useEffect(() => {
     let cancelled = false;
     if (!cfg?.nodes.length) return;
-    void elk.layout({
+    void import("elkjs/lib/elk.bundled.js").then(({ default: ELK }) => new ELK().layout({
       id: "cfg",
       layoutOptions: {
         "elk.algorithm": "layered",
@@ -159,7 +159,7 @@ export function CfgViewer({
         sources: [edge.from],
         targets: [edge.to],
       })),
-    }).then((graph) => {
+    })).then((graph) => {
       if (!cancelled) {
         setPositions(new Map(
           graph.children?.map((node) => [
@@ -169,7 +169,7 @@ export function CfgViewer({
         ));
       }
     }).catch(() => {
-      if (!cancelled) setPositions(layoutDagre(cfg));
+      if (!cancelled) setPositions(layoutGrid(cfg.nodes));
     });
     return () => {
       cancelled = true;
@@ -268,15 +268,16 @@ export function CfgViewer({
         : "ready";
 
   return (
-    <section className="cfg-panel" aria-label="Граф потока управления">
-      <header className="cfg-header">
-        <div className="cfg-title">
-          <span className="cfg-icon"><GitBranch size={17} /></span>
-          <div><span className="panel-kicker">CFG / UTF-16 SOURCE MAP</span><h2>Поток выполнения</h2></div>
+    <section className="flex size-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#080f1b]" aria-label="Граф потока управления">
+      <header className="flex min-h-[49px] items-center justify-between gap-2.5 border-b border-slate-800 bg-[#0d1625] px-2.5 py-2">
+        <div className="flex items-center gap-2">
+          <span className="grid size-7 place-items-center rounded border border-slate-700 bg-violet-400/5 text-violet-400"><GitBranch size={17} /></span>
+          <div><span className="block font-mono text-[8px] font-semibold tracking-[.07em] text-slate-500">CFG / UTF-16 SOURCE MAP</span><h2 className="mt-1 mb-0 text-[11px] text-slate-300">Поток выполнения</h2></div>
         </div>
-        <div className="cfg-controls">
-          <label htmlFor="cfg-method">Метод</label>
+        <div className="flex min-w-0 items-center gap-2">
+          <label className="text-[8px] text-slate-500" htmlFor="cfg-method">Метод</label>
           <select
+            className="h-7 min-w-44 rounded border border-slate-700 bg-[#0c1422] px-2 font-mono text-[9px] text-slate-300 outline-none"
             id="cfg-method"
             value={selector}
             onChange={(event) => {
@@ -305,22 +306,22 @@ export function CfgViewer({
         </div>
       </header>
 
-      <div className="cfg-content">
+      <div className="min-h-0 flex-1">
         {cfgState === "loading" ? (
-          <div className="cfg-state" role="status"><LoaderCircle className="spin" /><strong>Загружаем CFG</strong><span>Селектор {selector} · ревизия {revision}</span></div>
+          <div className="flex min-h-full flex-col items-center justify-center gap-2 p-7 text-center text-slate-500" role="status"><LoaderCircle className="spin text-cyan-400" /><strong className="text-slate-300">Загружаем CFG</strong><span>Селектор {selector} · ревизия {revision}</span></div>
         ) : null}
         {cfgState === "error" ? (
-          <div className="cfg-state cfg-state--error" role="alert"><AlertCircle /><strong>CFG недоступен</strong><span>{apiMessage(cfgRequest.error)}</span><Button variant="outline" size="sm" onClick={() => void cfgRequest.mutate()}><RefreshCw size={14} /> Повторить</Button></div>
+          <div className="flex min-h-full flex-col items-center justify-center gap-2 p-7 text-center text-slate-500" role="alert"><AlertCircle className="text-rose-400" /><strong className="text-slate-300">CFG недоступен</strong><span>{apiMessage(cfgRequest.error)}</span><Button variant="outline" size="sm" onClick={() => void cfgRequest.mutate()}><RefreshCw size={14} /> Повторить</Button></div>
         ) : null}
         {cfgState === "empty" ? (
-          <div className="cfg-state"><GitBranch /><strong>Нет методов с CFG</strong><span>Завершите анализ сохранённой ревизии.</span></div>
+          <div className="flex min-h-full flex-col items-center justify-center gap-2 p-7 text-center text-slate-500"><GitBranch className="text-cyan-400" /><strong className="text-slate-300">Нет методов с CFG</strong><span>Завершите анализ сохранённой ревизии.</span></div>
         ) : null}
         {cfgState === "ready" && cfg && !cfg.nodes.length ? (
-          <div className="cfg-state"><GitBranch /><strong>Граф пуст</strong></div>
+          <div className="flex min-h-full flex-col items-center justify-center gap-2 p-7 text-center text-slate-500"><GitBranch className="text-cyan-400" /><strong className="text-slate-300">Граф пуст</strong></div>
         ) : null}
         {cfgState === "ready" && cfg?.nodes.length ? (
-          <div className="cfg-canvas">
-            <p className="cfg-canvas-help"><GitBranch size={12} /> Узлы связаны с UTF-16 диапазонами редактора. Back edge показан пунктиром.</p>
+          <div className="relative size-full bg-[#080f1b] [background-image:linear-gradient(rgba(51,65,85,.18)_1px,transparent_1px),linear-gradient(90deg,rgba(51,65,85,.18)_1px,transparent_1px)] [background-size:24px_24px]">
+            <p className="absolute top-2 left-2 z-10 m-0 flex items-center gap-1.5 rounded border border-slate-700 bg-slate-950/90 px-2 py-1.5 text-[8px] text-slate-500"><GitBranch size={12} /> Узлы связаны с UTF-16 диапазонами редактора. Back edge показан пунктиром.</p>
             <ReactFlow
               nodes={flow.nodes}
               edges={flow.edges}
@@ -341,19 +342,20 @@ export function CfgViewer({
         ) : null}
       </div>
 
-      {methodAnalysis ? <BigOPanel analysis={methodAnalysis} onSelect={onSourceRangeSelect} /> : analysisRequest.error ? (
-        <div className="cfg-analysis-error"><AlertCircle size={15} /> Big O для метода недоступна: {apiMessage(analysisRequest.error)}</div>
-      ) : selector ? (
-        <div className="cfg-analysis-error"><LoaderCircle className="spin" size={15} /> Загружаем Big O…</div>
+      {showAnalysisSummary && methodAnalysis ? <BigOPanel analysis={methodAnalysis} onSelect={onSourceRangeSelect} /> : showAnalysisSummary && analysisRequest.error ? (
+        <div className="flex min-h-[30px] items-center gap-1.5 border-t border-slate-800 bg-[#0d1625] px-2.5 text-[8px] text-slate-400"><AlertCircle size={15} /> Big O для метода недоступна: {apiMessage(analysisRequest.error)}</div>
+      ) : showAnalysisSummary && selector ? (
+        <div className="flex min-h-[30px] items-center gap-1.5 border-t border-slate-800 bg-[#0d1625] px-2.5 text-[8px] text-slate-400"><LoaderCircle className="spin" size={15} /> Загружаем Big O…</div>
       ) : null}
 
       {selectedNode?.kind === "branch" && method ? (
-        <div className="cfg-transform" aria-label="Изменение условия через ASTRewrite">
-          <div>
-            <strong><WandSparkles size={15} /> ASTRewrite: заменить условие</strong>
-            <span>{method.id} · {selectedNode.id}. Будет создана новая ревизия и выполнен повторный разбор.</span>
+        <div className="grid grid-cols-[minmax(210px,.8fr)_minmax(200px,1fr)_auto] items-center gap-2 border-t border-slate-800 bg-[#0d1625] px-2.5 py-2" aria-label="Изменение условия через ASTRewrite">
+          <div className="min-w-0">
+            <strong className="flex items-center gap-1 text-[9px] text-violet-200"><WandSparkles size={15} /> ASTRewrite: заменить условие</strong>
+            <span className="mt-1 block overflow-hidden text-ellipsis whitespace-nowrap text-[8px] text-slate-500">{method.id} · {selectedNode.id}. Будет создана новая ревизия и выполнен повторный разбор.</span>
           </div>
           <input
+            className="h-[29px] w-full rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[10px] text-slate-200 outline-none focus:border-cyan-500"
             aria-label="Новое Java-условие"
             value={conditionExpression}
             onChange={(event) => setConditionDraft({ nodeId: selectedNode.id, value: event.target.value })}
@@ -366,8 +368,8 @@ export function CfgViewer({
             {transformState === "saving" ? <LoaderCircle className="spin" /> : <WandSparkles />}
             {transformState === "saving" ? "Применяем" : "Создать ревизию"}
           </Button>
-          {transformState === "error" ? <p role="alert">{transformError}</p> : null}
-          {transformState === "done" ? <p><Check size={14} /> Новая ревизия создана.</p> : null}
+          {transformState === "error" ? <p className="col-start-2 col-end-[-1] m-0 text-[8px] text-rose-300" role="alert">{transformError}</p> : null}
+          {transformState === "done" ? <p className="col-start-2 col-end-[-1] m-0 flex items-center gap-1 text-[8px] text-emerald-300"><Check size={14} /> Новая ревизия создана.</p> : null}
         </div>
       ) : null}
     </section>
@@ -382,8 +384,8 @@ function BigOPanel({
   onSelect: (range: SourceRange | null, keepGraphVisible?: boolean) => void;
 }) {
   return (
-    <section className="big-o-panel" aria-label="Оценка сложности метода">
-      <div className="big-o-summary">
+    <section className="grid grid-cols-[150px_1fr] gap-2 border-t border-slate-800 bg-slate-950 p-2.5" aria-label="Оценка сложности метода">
+      <div className="grid gap-1 rounded border border-slate-700 bg-violet-400/5 p-2">
         <span><Sparkles size={15} /> BIG O</span>
         <strong>{analysis.complexity.time}</strong>
         <small>уверенность: {confidenceLabel(analysis.complexity.confidence)}</small>
@@ -393,16 +395,16 @@ function BigOPanel({
         <ul>{analysis.complexity.assumptions.map((item) => <li key={item}>{item}</li>)}</ul>
       ) : null}
       {analysis.findings.length ? (
-        <div className="big-o-findings">
+        <div className="grid gap-1">
           {analysis.findings.map((finding) => (
-            <button type="button" key={finding.id} onClick={() => onSelect(finding.source_range)}>
+            <button className="grid gap-1 rounded border border-slate-700 bg-slate-900 p-2 text-left text-[8px] text-slate-400" type="button" key={finding.id} onClick={() => onSelect(finding.source_range)}>
               <strong>{finding.message}</strong>
               <span>{finding.explanation}</span>
               <small>Рекомендация: {finding.recommendation}</small>
             </button>
           ))}
         </div>
-      ) : <small className="big-o-clean">Рекомендаций для выбранного метода нет.</small>}
+      ) : <small className="text-emerald-300">Рекомендаций для выбранного метода нет.</small>}
     </section>
   );
 }
@@ -477,17 +479,12 @@ function branchFootprint(cfg: Cfg, branch: CfgEdge) {
   return result;
 }
 
-function layoutDagre(cfg: Cfg) {
-  const graph = new dagre.graphlib.Graph();
-  graph.setGraph({ rankdir: "TB", nodesep: 38, ranksep: 66, marginx: 32, marginy: 32 });
-  graph.setDefaultEdgeLabel(() => ({}));
-  cfg.nodes.forEach((node) => graph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
-  cfg.edges.forEach((edge) => graph.setEdge(edge.from, edge.to));
-  dagre.layout(graph);
-  return new Map(cfg.nodes.map((node) => {
-    const point = graph.node(node.id);
-    return [node.id, { x: point.x - NODE_WIDTH / 2, y: point.y - NODE_HEIGHT / 2 }];
-  }));
+function layoutGrid(nodes: CfgNode[]) {
+  const columns = Math.max(1, Math.ceil(Math.sqrt(nodes.length)));
+  return new Map(nodes.map((node, index) => [
+    node.id,
+    { x: (index % columns) * (NODE_WIDTH + 38), y: Math.floor(index / columns) * (NODE_HEIGHT + 66) },
+  ]));
 }
 
 function formatNodeKind(kind: string, statementKind?: string) {
@@ -517,10 +514,6 @@ function formatEdgeKind(kind: string) {
     default: "default",
   };
   return labels[kind] ?? kind;
-}
-
-function safeKind(kind: string) {
-  return kind.toLowerCase().replace(/[_/]/g, "-").replace(/[^a-z0-9-]/g, "-");
 }
 
 function confidenceLabel(value: string) {

@@ -36,9 +36,9 @@ export function UploadPanel() {
   }
 
   return (
-    <div className="upload-stack">
+    <div className="mt-7">
       <button
-        className={`dropzone${dragging ? " dropzone--active" : ""}`}
+        className={`flex min-h-[92px] w-full items-center gap-4 rounded-lg border border-dashed p-[18px] text-left text-slate-200 transition hover:-translate-y-px hover:border-cyan-400 hover:bg-[#0e1b2d] disabled:cursor-progress disabled:opacity-70 ${dragging ? "-translate-y-px border-cyan-400 bg-[#0e1b2d]" : "border-slate-600 bg-[#0a1221]"}`}
         type="button"
         onClick={() => inputRef.current?.click()}
         onDragEnter={(event) => {
@@ -54,14 +54,14 @@ export function UploadPanel() {
         }}
         disabled={busy}
       >
-        <span className="dropzone-icon">
+        <span className="grid size-[42px] shrink-0 place-items-center rounded-lg bg-cyan-400/10 text-cyan-400 [&_svg]:size-5">
           {busy ? <LoaderCircle className="spin" /> : <FileUp />}
         </span>
-        <span className="dropzone-copy">
-          <strong>{busy ? "Загружаем проект…" : "Перетащите .java сюда"}</strong>
-          <span>{busy ? "Создаём приватную сессию и сохраняем исходник" : "или выберите файл на компьютере"}</span>
+        <span className="flex min-w-0 flex-1 flex-col gap-1">
+          <strong className="text-xs text-slate-200">{busy ? "Загружаем проект…" : "Перетащите .java сюда"}</strong>
+          <span className="text-[10px] text-slate-400">{busy ? "Создаём приватную сессию и сохраняем исходник" : "или выберите файл на компьютере"}</span>
         </span>
-        <ArrowUpRight className="dropzone-arrow" />
+        <ArrowUpRight className="w-4 text-slate-500" />
       </button>
       <input
         ref={inputRef}
@@ -75,10 +75,10 @@ export function UploadPanel() {
           event.currentTarget.value = "";
         }}
       />
-      {error ? <p className="form-error" role="alert">{error}</p> : null}
-      <div className="upload-meta">
-        <span><FileCode2 size={15} /> Один файл · до 2 МБ</span>
-        <span><LockKeyhole size={14} /> Приватная гостевая сессия</span>
+      {error ? <p className="mt-2.5 text-[11px] text-rose-300" role="alert">{error}</p> : null}
+      <div className="mt-2.5 flex justify-between gap-3 font-mono text-[9px] text-slate-500 max-[700px]:flex-col">
+        <span className="inline-flex items-center gap-1.5"><FileCode2 size={15} /> Один файл · до 2 МБ</span>
+        <span className="inline-flex items-center gap-1.5"><LockKeyhole size={14} /> Приватная гостевая сессия</span>
       </div>
     </div>
   );
