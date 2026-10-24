@@ -59,20 +59,27 @@ export function CfgViewer({
   projectId,
   revision,
   analysis,
+  selectedSourceRange,
+  selectedMethodId,
+  onSelectedMethodIdChange,
+  mode,
+  onModeChange,
   onSourceRangeSelect,
 }: {
   projectId: string;
   revision: number;
   analysis: AnalysisResult | null;
+  selectedSourceRange: { start: number; length: number } | null;
+  selectedMethodId: string;
+  onSelectedMethodIdChange: (methodId: string) => void;
+  mode: "api" | "fixture";
+  onModeChange: (mode: "api" | "fixture") => void;
   onSourceRangeSelect: (range: { start: number; length: number } | null) => void;
 }) {
   const methods = useMemo(() => analysis?.methods ?? [], [analysis]);
-  const [requestedMethodId, setRequestedMethodId] = useState("");
-  const [mode, setMode] = useState<"api" | "fixture">("api");
   const [conditionValue, setConditionValue] = useState("");
-  const [selectedNodeId, setSelectedNodeId] = useState("");
-  const methodId = methods.some((method) => method.id === requestedMethodId)
-    ? requestedMethodId
+  const methodId = methods.some((method) => method.id === selectedMethodId)
+    ? selectedMethodId
     : methods[0]?.id ?? "";
   const canRequest = Boolean(mode === "api" && methodId && analysis && analysis.revision === revision);
   const { data: apiCfg, error: apiError, isLoading, mutate } = useSWR(
@@ -103,17 +110,17 @@ export function CfgViewer({
 
   const onNodeClick = useCallback((_event: MouseEvent, node: FlowNode) => {
     if (mode === "fixture") {
-      setSelectedNodeId(node.id);
       onSourceRangeSelect(null);
       return;
     }
-    setSelectedNodeId(node.id);
     setConditionValue(node.data.label);
     onSourceRangeSelect(node.data.source_range);
   }, [mode, onSourceRangeSelect]);
 
-  const selectedCondition = cfg?.nodes.find((node) => node.id === selectedNodeId) ?? null;
-  const flow = useMemo(() => cfg ? toFlow(cfg) : { nodes: [], edges: [] }, [cfg]);
+  const selectedCondition = mode === "api" && cfg && selectedSourceRange
+    ? matchingNode(cfg, selectedSourceRange)
+    : null;
+  const flow = useMemo(() => cfg ? toFlow(cfg, selectedCondition?.id) : { nodes: [], edges: [] }, [cfg, selectedCondition?.id]);
 
   return (
     <section className="cfg-panel" aria-label="Граф потока управления">
@@ -122,11 +129,10 @@ export function CfgViewer({
         <div className="cfg-controls">
           <label htmlFor="cfg-method">Метод</label>
           <select id="cfg-method" value={mode === "fixture" ? fixtureCfg.method_id : methodId} onChange={(event) => {
-            setSelectedNodeId("");
             setConditionValue("");
             onSourceRangeSelect(null);
-            if (event.target.value === fixtureCfg.method_id) setMode("fixture");
-            else { setMode("api"); setRequestedMethodId(event.target.value); }
+            if (event.target.value === fixtureCfg.method_id) onModeChange("fixture");
+            else { onModeChange("api"); onSelectedMethodIdChange(event.target.value); }
           }}>
             <option value="" disabled>{methods.length ? "Выберите метод" : "Сначала запустите анализ"}</option>
             {methods.map((method) => <option key={method.id} value={method.id}>{method.name}</option>)}
@@ -139,9 +145,9 @@ export function CfgViewer({
 
       <div className="cfg-content">
         {state === "loading" ? <div className="cfg-state" role="status"><LoaderCircle className="spin" /><strong>Загружаем CFG</strong><span>Получаем граф выбранного метода для ревизии {revision}.</span></div> : null}
-        {state === "unsupported" ? <div className="cfg-state" role="status"><AlertCircle /><strong>CFG недоступен</strong><span>{errorMessage}</span><Button variant="outline" size="sm" onClick={() => { setSelectedNodeId(""); onSourceRangeSelect(null); setMode("fixture"); }}><Beaker size={14} /> Открыть тестовый пример</Button></div> : null}
+        {state === "unsupported" ? <div className="cfg-state" role="status"><AlertCircle /><strong>CFG недоступен</strong><span>{errorMessage}</span><Button variant="outline" size="sm" onClick={() => { onSourceRangeSelect(null); onModeChange("fixture"); }}><Beaker size={14} /> Открыть тестовый пример</Button></div> : null}
         {state === "error" ? <div className="cfg-state cfg-state--error" role="alert"><AlertCircle /><strong>Не удалось получить граф</strong><span>{errorMessage}</span><Button variant="outline" size="sm" onClick={() => void mutate()}><RefreshCw size={14} /> Повторить</Button></div> : null}
-        {state === "empty" ? <div className="cfg-state" role="status"><GitBranch /><strong>{analysis ? "Выберите метод" : "Сначала разберите исходник"}</strong><span>{analysis ? "Для каждого метода строится отдельный граф." : "Запустите анализ, затем откройте граф метода."}</span>{!analysis ? <Button variant="outline" size="sm" onClick={() => { onSourceRangeSelect(null); setMode("fixture"); }}><Beaker size={14} /> Посмотреть пример</Button> : null}</div> : null}
+        {state === "empty" ? <div className="cfg-state" role="status"><GitBranch /><strong>{analysis ? "Выберите метод" : "Сначала разберите исходник"}</strong><span>{analysis ? "Для каждого метода строится отдельный граф." : "Запустите анализ, затем откройте граф метода."}</span>{!analysis ? <Button variant="outline" size="sm" onClick={() => { onSourceRangeSelect(null); onModeChange("fixture"); }}><Beaker size={14} /> Посмотреть пример</Button> : null}</div> : null}
         {state === "ready" && cfg?.nodes.length === 0 ? <div className="cfg-state"><GitBranch /><strong>Граф пуст</strong><span>Для этого метода backend не вернул узлов CFG.</span></div> : null}
         {state === "ready" && cfg?.nodes.length ? (
           <div className="cfg-canvas">
@@ -157,7 +163,7 @@ export function CfgViewer({
       {state === "ready" && mode === "api" && selectedCondition && isCondition(selectedCondition.kind) ? (
         <div className="cfg-transform" aria-label="Редактирование условия">
           <div><strong>Условие узла</strong><span>Изменения будут доступны после подключения transform endpoint.</span></div>
-          <input aria-label="Новое условие" value={conditionValue} onChange={(event) => setConditionValue(event.target.value)} />
+          <input aria-label="Новое условие" value={conditionValue || selectedCondition.label} onChange={(event) => setConditionValue(event.target.value)} />
           <Button disabled>Применить</Button>
         </div>
       ) : null}
@@ -181,7 +187,19 @@ function validateCfg(cfg: Cfg, methodId: string) {
   }
 }
 
-function toFlow(cfg: Cfg): { nodes: FlowNode[]; edges: Edge[] } {
+function matchingNode(cfg: Cfg, range: { start: number; length: number }) {
+  const selectionEnd = range.start + Math.max(range.length, 1);
+  return cfg.nodes
+    .map((node) => ({
+      node,
+      start: node.source_range.start,
+      end: node.source_range.start + Math.max(node.source_range.length, 1),
+    }))
+    .filter(({ start, end }) => start < selectionEnd && range.start < end)
+    .sort((a, b) => (a.end - a.start) - (b.end - b.start))[0]?.node ?? null;
+}
+
+function toFlow(cfg: Cfg, selectedNodeId?: string): { nodes: FlowNode[]; edges: Edge[] } {
   const graph = new dagre.graphlib.Graph();
   graph.setGraph({ rankdir: "TB", nodesep: 38, ranksep: 64, marginx: 32, marginy: 32 });
   graph.setDefaultEdgeLabel(() => ({}));
@@ -197,6 +215,7 @@ function toFlow(cfg: Cfg): { nodes: FlowNode[]; edges: Edge[] } {
         type: "cfg",
         position: { x: position.x - NODE_WIDTH / 2, y: position.y - NODE_HEIGHT / 2 },
         data: node,
+        selected: node.id === selectedNodeId,
       };
     }),
     edges: cfg.edges.map((edge, index) => ({

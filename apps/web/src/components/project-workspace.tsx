@@ -123,6 +123,8 @@ function WorkspaceEditor({
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analysisError, setAnalysisError] = useState("");
   const [selectedSourceRange, setSelectedSourceRange] = useState<{ start: number; length: number } | null>(null);
+  const [cfgMethodId, setCfgMethodId] = useState("");
+  const [cfgMode, setCfgMode] = useState<"api" | "fixture">("api");
   const [viewMode, setViewMode] = useState<"source" | "cfg">("source");
   const previousViewMode = useRef(viewMode);
   const workspaceRef = useRef<HTMLElement>(null);
@@ -312,6 +314,11 @@ function WorkspaceEditor({
               projectId={projectId}
               revision={revision}
               analysis={analysisState === "complete" && !dirty ? analysis : null}
+              selectedSourceRange={selectedSourceRange}
+              selectedMethodId={cfgMethodId}
+              onSelectedMethodIdChange={setCfgMethodId}
+              mode={cfgMode}
+              onModeChange={setCfgMode}
               onSourceRangeSelect={(range) => { selectSourceRange(range); if (range) setViewMode("source"); }}
             />
           )}
