@@ -115,9 +115,19 @@ function WorkspaceEditor({
   const [project, setProject] = useState(initialProject);
   const editorRef = useRef<import("@/components/java-editor").JavaEditorHandle>(null);
   const [dirty, setDirty] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "conflict" | "error">("idle");
+  const dirtyRef = useRef(false);
+  const revisionRef = useRef(initialRevision);
+  const saveStateRef = useRef(saveState);
+  const saveInFlightRef = useRef(false);
+  const autosaveTimerRef = useRef<number | undefined>(undefined);
+  const saveSourceRef = useRef<() => Promise<void>>(async () => {});
+  const analysisInFlightRef = useRef(false);
+  const rerunAnalysisRef = useRef(false);
+  const analysisTimerRef = useRef<number | undefined>(undefined);
+  const runAnalysisRef = useRef<() => Promise<void>>(async () => {});
   const [sourceStats, setSourceStats] = useState(() => sourceMetrics(initialSource));
   const [revision, setRevision] = useState(initialRevision);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "conflict" | "error">("idle");
   const [saveError, setSaveError] = useState("");
   const [analysisState, setAnalysisState] = useState<"idle" | "loading" | "complete" | "unavailable" | "error">("idle");
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
@@ -132,6 +142,29 @@ function WorkspaceEditor({
   const { lineCount, byteLength } = sourceStats;
   const selectSourceRange = useCallback((range: { start: number; length: number } | null) => {
     setSelectedSourceRange(range);
+  }, []);
+  const scheduleAutosave = useCallback(() => {
+    if (autosaveTimerRef.current !== undefined) window.clearTimeout(autosaveTimerRef.current);
+    if (saveStateRef.current === "conflict") return;
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = undefined;
+      void saveSourceRef.current();
+    }, 500);
+  }, []);
+  const scheduleAnalysis = useCallback(() => {
+    if (analysisTimerRef.current !== undefined) window.clearTimeout(analysisTimerRef.current);
+    analysisTimerRef.current = window.setTimeout(() => {
+      analysisTimerRef.current = undefined;
+      if (analysisInFlightRef.current) {
+        rerunAnalysisRef.current = true;
+        return;
+      }
+      void runAnalysisRef.current();
+    }, 700);
+  }, []);
+  const setSaveStatus = useCallback((next: typeof saveState) => {
+    saveStateRef.current = next;
+    setSaveState(next);
   }, []);
 
   useGSAP(() => {
@@ -172,44 +205,96 @@ function WorkspaceEditor({
     return () => media.revert();
   }, { scope: workspaceRef, dependencies: [analysisState], revertOnUpdate: true });
 
-  async function saveSource() {
-    if (!dirty || saveState === "saving") return;
+  const saveSource = useCallback(async () => {
+    if (!dirtyRef.current || saveInFlightRef.current) return;
     const source = editorRef.current?.getValue() ?? initialSource;
     if (new TextEncoder().encode(source).byteLength > MAX_SOURCE_BYTES) {
       setSaveError("Исходник превышает лимит API — 2 МиБ.");
-      setSaveState("error");
+      setSaveStatus("error");
       return;
     }
-    setSaveState("saving");
+    if (autosaveTimerRef.current !== undefined) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = undefined;
+    }
+    saveInFlightRef.current = true;
+    setSaveStatus("saving");
     setSaveError("");
     try {
-      const updated = await updateProjectSource(projectId, source, revision);
+      const updated = await updateProjectSource(projectId, source, revisionRef.current);
       setProject(updated);
+      revisionRef.current = updated.revision;
       setRevision(updated.revision);
       editorRef.current?.markSaved(source);
       setAnalysis(null);
       setAnalysisState("idle");
-      setSaveState("saved");
-      window.setTimeout(() => setSaveState((state) => state === "saved" ? "idle" : state), 2200);
+      scheduleAnalysis();
+      setSaveStatus("saved");
+      window.setTimeout(() => {
+        if (saveStateRef.current === "saved") setSaveStatus("idle");
+      }, 2200);
+      if (editorRef.current?.getValue() !== source) scheduleAutosave();
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 409) {
-        setSaveState("conflict");
+        setSaveStatus("conflict");
       } else {
-        setSaveState("error");
+        setSaveStatus("error");
         setSaveError(saveErrorMessage(cause));
       }
+    } finally {
+      saveInFlightRef.current = false;
     }
-  }
+  }, [initialSource, projectId, scheduleAnalysis, scheduleAutosave, setSaveStatus]);
+
+  useEffect(() => {
+    saveSourceRef.current = saveSource;
+  }, [saveSource]);
+
+  const onEditorDirtyChange = useCallback((nextDirty: boolean) => {
+    dirtyRef.current = nextDirty;
+    setDirty((current) => current === nextDirty ? current : nextDirty);
+    if (nextDirty) {
+      setSaveError("");
+      if (analysisInFlightRef.current) setAnalysisState("idle");
+      if (saveStateRef.current === "error") {
+        setSaveStatus("idle");
+      }
+      scheduleAutosave();
+    } else if (autosaveTimerRef.current !== undefined) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = undefined;
+    }
+  }, [scheduleAutosave, setSaveStatus]);
+
+  useEffect(() => () => {
+    if (autosaveTimerRef.current !== undefined) window.clearTimeout(autosaveTimerRef.current);
+    if (analysisTimerRef.current !== undefined) window.clearTimeout(analysisTimerRef.current);
+  }, []);
 
   const runAnalysis = useCallback(async () => {
-    if (dirty || analysisState === "loading") return;
+    if (dirtyRef.current || analysisInFlightRef.current) return;
+    const requestedRevision = revisionRef.current;
+    analysisInFlightRef.current = true;
     setAnalysisState("loading");
     setAnalysisError("");
     setSelectedSourceRange(null);
     try {
-      setAnalysis(await analyzeProject(projectId));
+      const result = await analyzeProject(projectId);
+      if (result.revision !== requestedRevision || revisionRef.current !== requestedRevision || dirtyRef.current) {
+        setAnalysis(null);
+        setAnalysisState("idle");
+        if (!dirtyRef.current && revisionRef.current !== requestedRevision) rerunAnalysisRef.current = true;
+        return;
+      }
+      setAnalysis(result);
       setAnalysisState("complete");
     } catch (cause) {
+      if (revisionRef.current !== requestedRevision || dirtyRef.current) {
+        setAnalysis(null);
+        setAnalysisState("idle");
+        if (!dirtyRef.current && revisionRef.current !== requestedRevision) rerunAnalysisRef.current = true;
+        return;
+      }
       if (cause instanceof ApiError && cause.code === "analyzer_unavailable") {
         setAnalysisState("unavailable");
         setAnalysisError("Сервис анализа сейчас недоступен. Исходник сохранён; попробуйте запустить анализ позже.");
@@ -217,8 +302,17 @@ function WorkspaceEditor({
         setAnalysisState("error");
         setAnalysisError(analysisErrorMessage(cause));
       }
+    } finally {
+      analysisInFlightRef.current = false;
+      if (rerunAnalysisRef.current && !dirtyRef.current) {
+        rerunAnalysisRef.current = false;
+        scheduleAnalysis();
+      }
     }
-  }, [analysisState, dirty, projectId]);
+  }, [projectId, scheduleAnalysis]);
+  useEffect(() => {
+    runAnalysisRef.current = runAnalysis;
+  }, [runAnalysis]);
 
   useEffect(() => {
     function onShortcut(event: KeyboardEvent) {
@@ -255,7 +349,7 @@ function WorkspaceEditor({
             {saveState === "saving" ? "Сохраняем" : dirty ? "Не сохранено" : saveState === "saved" ? "Сохранено" : "Сохранено"}
           </span>
           <Button className="action-button action-button--quiet" onClick={() => void saveSource()} disabled={!dirty || saveState === "saving"}>
-            {saveState === "saving" ? <LoaderCircle className="spin" /> : <Save />}{saveState === "saving" ? "Сохранение" : "Сохранить"}
+            {saveState === "saving" ? <LoaderCircle className="spin" /> : <Save />}{saveState === "saving" ? "Сохранение" : "Сохранить сейчас"}
           </Button>
           <Button className="action-button action-button--primary" onClick={() => void runAnalysis()} disabled={dirty || analysisState === "loading"} title="Анализ сохранённой версии · Ctrl+Enter" aria-keyshortcuts="Control+Enter Meta+Enter">
             {analysisState === "loading" ? <LoaderCircle className="spin" /> : <Play />}{analysisState === "loading" ? "Анализируем" : "Запустить анализ"}
@@ -295,13 +389,7 @@ function WorkspaceEditor({
                 value={initialSource}
                 diagnostics={analysisState === "complete" && !dirty ? analysis?.diagnostics ?? NO_DIAGNOSTICS : NO_DIAGNOSTICS}
                 focusRange={selectedSourceRange}
-                onDirtyChange={(nextDirty) => {
-                  setDirty((current) => current === nextDirty ? current : nextDirty);
-                  if (nextDirty) {
-                    setSaveError("");
-                    setSaveState((current) => current === "error" ? "idle" : current);
-                  }
-                }}
+                onDirtyChange={onEditorDirtyChange}
                 onMetricsChange={setSourceStats}
                 onSourceSelection={(range) => setSelectedSourceRange((current) =>
                   current?.start === range?.start && current?.length === range?.length ? current : range,
@@ -327,7 +415,7 @@ function WorkspaceEditor({
         <aside className="analysis-panel">
           <div className="panel-heading"><div><span className="panel-kicker">ОТЧЁТ</span><h2>Анализ кода</h2></div><span className={`worker-mark worker-mark--${analysisState}`}><Sparkles size={16} /></span></div>
 
-          {analysisState === "complete" && analysis ? (
+          {analysisState === "complete" && analysis && !dirty ? (
             <div className="analysis-result">
               <div className="result-banner"><span className="result-check"><Check size={15} /></span><div><strong>{analysis.status === "completed" ? "Анализ завершён" : "Частичный результат"}</strong><small>Ревизия {analysis.revision} · протокол {analysis.protocol_version}</small></div></div>
               <div className="result-stats"><div><strong>{analysis.methods.length}</strong><span>{russianNoun(analysis.methods.length, "метод", "метода", "методов")}</span></div><div><strong>{analysis.diagnostics.length}</strong><span>{russianNoun(analysis.diagnostics.length, "замечание", "замечания", "замечаний")}</span></div></div>
@@ -339,13 +427,13 @@ function WorkspaceEditor({
           ) : analysisState === "error" ? (
             <div className="worker-state worker-state--error"><span className="state-icon"><AlertCircle /></span><strong>Анализ не выполнен</strong><p>{analysisError}</p><Button variant="outline" onClick={() => void runAnalysis()}><RefreshCw /> Попробовать снова</Button></div>
           ) : (
-            <div className="worker-state"><span className="state-icon"><ShieldCheck /></span><strong>{analysisState === "loading" ? "Разбираем исходник" : "Отчёт появится здесь"}</strong><p>{analysisState === "loading" ? "Ищем методы и диагностики." : "Нажмите «Запустить анализ» — найдём методы и замечания."}</p>{analysisState === "loading" ? <div className="state-footnote"><span className="status-pip status-pip--pulse" />Редакция {revision}</div> : null}</div>
+            <div className="worker-state"><span className="state-icon"><ShieldCheck /></span><strong>{analysisState === "loading" ? "Разбираем исходник" : dirty ? "Отчёт устарел" : "Отчёт появится здесь"}</strong><p>{analysisState === "loading" ? "Ищем методы и диагностики." : dirty ? `Результат относится к сохранённой ревизии ${analysis?.revision ?? revision}. После автосохранения он обновится.` : "Нажмите «Запустить анализ» — найдём методы и замечания."}</p>{analysisState === "loading" ? <div className="state-footnote"><span className="status-pip status-pip--pulse" />Редакция {revision}</div> : null}</div>
           )}
 
         </aside>
       </div>
 
-      <footer className="workspace-bottom"><span>Изменения сохраняются только по кнопке «Сохранить»</span><span><ShieldCheck size={13} /> Приватная сессия</span></footer>
+      <footer className="workspace-bottom"><span>Автосохранение после паузы · 500 мс</span><span><ShieldCheck size={13} /> Приватная сессия</span></footer>
     </main>
   );
 }
