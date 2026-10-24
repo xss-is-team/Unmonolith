@@ -7,7 +7,6 @@ import {
   Background,
   Controls,
   Handle,
-  MiniMap,
   MarkerType,
   Position,
   ReactFlow,
@@ -39,8 +38,8 @@ import {
   type SourceRange,
 } from "@/lib/api";
 
-const NODE_WIDTH = 236;
-const NODE_HEIGHT = 92;
+const NODE_WIDTH = 248;
+const NODE_HEIGHT = 124;
 
 type FlowData = CfgNode & {
   hasFinding: boolean;
@@ -50,24 +49,44 @@ type FlowNode = Node<FlowData, "cfg">;
 
 const CfgFlowNode = memo(function CfgFlowNode({ data, selected }: NodeProps<FlowNode>) {
   const condition = data.kind === "branch";
+  const terminal = data.kind === "entry" || data.kind === "exit";
+  const connector = data.kind === "merge";
   const label = data.text || data.statement_kind || data.kind;
+  const verticalInset = condition ? 2 : terminal ? 28 : connector ? 26 : 16;
+  const borderClass = selected
+    ? "border-cyan-400"
+    : terminal ? "border-emerald-700" : connector ? "border-slate-500" : "border-slate-600";
+  const surfaceClass = terminal ? "bg-[#10231b]" : "bg-slate-900";
   return (
     <div
       className={[
-        "relative flex h-[92px] w-[236px] flex-col items-center justify-center gap-1.5 rounded-lg border bg-slate-900 px-3.5 py-3 text-center text-slate-300 shadow-lg",
-        data.kind === "branch" ? "border-amber-700 bg-[#251e15]" : ["entry", "exit", "return"].includes(data.kind) ? "border-emerald-800 bg-[#10231b]" : "border-slate-600",
+        "relative flex h-[124px] w-[248px] flex-col items-center justify-center text-center text-slate-300",
         data.reachable === false ? "opacity-45" : "",
-        data.hasFinding ? "ring-2 ring-rose-400/30" : "",
-        selected ? "border-cyan-400 ring-2 ring-cyan-400/20" : "",
       ].filter(Boolean).join(" ")}
       title={condition ? "Нажмите, чтобы выбрать условие и подсветить ветвь." : undefined}
     >
-      <Handle type="target" position={Position.Top} />
-      <span className="font-mono text-[8px] font-semibold tracking-[.06em] text-slate-500">{formatNodeKind(data.kind, data.statement_kind)}</span>
-      <strong className="max-w-full overflow-hidden text-ellipsis font-mono text-[10px] font-medium leading-5 text-slate-200">{label}</strong>
-      {data.complexityFragment ? <small className="absolute -top-2 right-2 rounded border border-rose-900 bg-rose-950 px-1.5 py-1 font-mono text-[8px] font-semibold text-rose-300">{data.complexityFragment}</small> : null}
-      {condition ? <small className="text-[7px] text-amber-300/70">Условие можно изменить ниже</small> : null}
-      <Handle type="source" position={Position.Bottom} />
+      <Handle type="target" position={Position.Top} style={{ top: verticalInset }} />
+      {condition ? (
+        <div
+          className={`absolute inset-x-0 inset-y-0 ${selected ? "bg-cyan-400" : "bg-amber-700"}`}
+          style={{ clipPath: "polygon(50% 0, 100% 50%, 50% 100%, 0 50%)" }}
+          aria-hidden="true"
+        >
+          <div className="absolute inset-[2px] bg-[#251e15]" style={{ clipPath: "polygon(50% 0, 100% 50%, 50% 100%, 0 50%)" }} />
+        </div>
+      ) : connector ? (
+        <div className={`absolute top-[26px] left-[88px] size-[72px] rounded-full border ${borderClass} ${surfaceClass}`} aria-hidden="true" />
+      ) : (
+        <div className={`absolute inset-x-1 top-4 bottom-4 border ${terminal ? "rounded-full" : "rounded-sm"} ${borderClass} ${surfaceClass}`} aria-hidden="true" />
+      )}
+      {data.hasFinding ? <div className={`pointer-events-none absolute ${condition ? "inset-2 [clip-path:polygon(50%_0,100%_50%,50%_100%,0_50%)]" : terminal ? "inset-x-3 top-7 bottom-7 rounded-full" : connector ? "top-[24px] left-[86px] size-[76px] rounded-full" : "inset-x-0 top-3 bottom-3 rounded"} ring-2 ring-rose-400/35`} aria-hidden="true" /> : null}
+      <div className={`relative z-10 flex flex-col items-center justify-center gap-1 ${condition ? "max-w-[154px]" : connector ? "max-w-16" : "max-w-[214px]"}`}>
+        <span className={`font-mono text-[10px] font-semibold tracking-[.06em] ${condition ? "text-amber-300/75" : terminal ? "text-emerald-300/70" : "text-slate-500"}`}>{formatNodeKind(data.kind, data.statement_kind)}</span>
+        {!connector ? <strong className="line-clamp-2 max-w-full font-mono text-[13px] font-medium leading-[18px] text-slate-200">{label}</strong> : null}
+        {condition ? <small className="text-[10px] text-amber-300/70">клик — ветвь и код</small> : null}
+      </div>
+      {data.complexityFragment ? <small className="absolute top-1 right-1 z-20 rounded border border-rose-900 bg-rose-950 px-1.5 py-1 font-mono text-[10px] font-semibold text-rose-300">{data.complexityFragment}</small> : null}
+      <Handle type="source" position={Position.Bottom} style={{ bottom: verticalInset }} />
     </div>
   );
 });
@@ -269,15 +288,15 @@ export function CfgViewer({
 
   return (
     <section className="flex size-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#080f1b]" aria-label="Граф потока управления">
-      <header className="flex min-h-[49px] items-center justify-between gap-2.5 border-b border-slate-800 bg-[#0d1625] px-2.5 py-2">
-        <div className="flex items-center gap-2">
-          <span className="grid size-7 place-items-center rounded border border-slate-700 bg-violet-400/5 text-violet-400"><GitBranch size={17} /></span>
-          <div><span className="block font-mono text-[8px] font-semibold tracking-[.07em] text-slate-500">CFG / UTF-16 SOURCE MAP</span><h2 className="mt-1 mb-0 text-[11px] text-slate-300">Поток выполнения</h2></div>
+      <header className="flex min-h-[46px] items-center justify-between gap-3 border-b border-slate-800 bg-[#0d1625] px-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <GitBranch size={16} className="shrink-0 text-violet-400" />
+          <h2 className="m-0 text-[14px] font-medium text-slate-200">Поток выполнения</h2>
         </div>
         <div className="flex min-w-0 items-center gap-2">
-          <label className="text-[8px] text-slate-500" htmlFor="cfg-method">Метод</label>
+          <label className="text-[13px] text-slate-500" htmlFor="cfg-method">Метод</label>
           <select
-            className="h-7 min-w-44 rounded border border-slate-700 bg-[#0c1422] px-2 font-mono text-[9px] text-slate-300 outline-none"
+            className="h-8 min-w-52 rounded border border-slate-700 bg-[#0c1422] px-2 font-mono text-[13px] text-slate-300 outline-none"
             id="cfg-method"
             value={selector}
             onChange={(event) => {
@@ -321,7 +340,7 @@ export function CfgViewer({
         ) : null}
         {cfgState === "ready" && cfg?.nodes.length ? (
           <div className="relative size-full bg-[#080f1b] [background-image:linear-gradient(rgba(51,65,85,.18)_1px,transparent_1px),linear-gradient(90deg,rgba(51,65,85,.18)_1px,transparent_1px)] [background-size:24px_24px]">
-            <p className="absolute top-2 left-2 z-10 m-0 flex items-center gap-1.5 rounded border border-slate-700 bg-slate-950/90 px-2 py-1.5 text-[8px] text-slate-500"><GitBranch size={12} /> Узлы связаны с UTF-16 диапазонами редактора. Back edge показан пунктиром.</p>
+            <p className="absolute top-2 left-2 z-10 m-0 rounded border border-slate-700 bg-slate-950/90 px-2 py-1 text-[12px] text-slate-500">Клик по узлу подсвечивает код; пунктир — возврат цикла.</p>
             <ReactFlow
               nodes={flow.nodes}
               edges={flow.edges}
@@ -336,26 +355,25 @@ export function CfgViewer({
             >
               <Background color="#d7dbd3" gap={20} size={1} />
               <Controls showInteractive={false} />
-              {cfg.nodes.length >= 24 ? <MiniMap pannable zoomable nodeColor="#86a08f" nodeStrokeColor="#466450" /> : null}
             </ReactFlow>
           </div>
         ) : null}
       </div>
 
       {showAnalysisSummary && methodAnalysis ? <BigOPanel analysis={methodAnalysis} onSelect={onSourceRangeSelect} /> : showAnalysisSummary && analysisRequest.error ? (
-        <div className="flex min-h-[30px] items-center gap-1.5 border-t border-slate-800 bg-[#0d1625] px-2.5 text-[8px] text-slate-400"><AlertCircle size={15} /> Big O для метода недоступна: {apiMessage(analysisRequest.error)}</div>
+        <div className="flex min-h-[30px] items-center gap-1.5 border-t border-slate-800 bg-[#0d1625] px-3 text-[13px] text-slate-400"><AlertCircle size={15} /> Big O для метода недоступна: {apiMessage(analysisRequest.error)}</div>
       ) : showAnalysisSummary && selector ? (
-        <div className="flex min-h-[30px] items-center gap-1.5 border-t border-slate-800 bg-[#0d1625] px-2.5 text-[8px] text-slate-400"><LoaderCircle className="spin" size={15} /> Загружаем Big O…</div>
+        <div className="flex min-h-[30px] items-center gap-1.5 border-t border-slate-800 bg-[#0d1625] px-3 text-[13px] text-slate-400"><LoaderCircle className="spin" size={15} /> Загружаем Big O…</div>
       ) : null}
 
       {selectedNode?.kind === "branch" && method ? (
-        <div className="grid grid-cols-[minmax(210px,.8fr)_minmax(200px,1fr)_auto] items-center gap-2 border-t border-slate-800 bg-[#0d1625] px-2.5 py-2" aria-label="Изменение условия через ASTRewrite">
+        <div className="grid grid-cols-[minmax(210px,.8fr)_minmax(200px,1fr)_auto] items-center gap-3 border-t border-slate-800 bg-[#0d1625] px-3 py-2.5" aria-label="Изменение условия через ASTRewrite">
           <div className="min-w-0">
-            <strong className="flex items-center gap-1 text-[9px] text-violet-200"><WandSparkles size={15} /> ASTRewrite: заменить условие</strong>
-            <span className="mt-1 block overflow-hidden text-ellipsis whitespace-nowrap text-[8px] text-slate-500">{method.id} · {selectedNode.id}. Будет создана новая ревизия и выполнен повторный разбор.</span>
+            <strong className="flex items-center gap-1.5 text-[13px] text-violet-200"><WandSparkles size={15} /> Заменить условие (ASTRewrite)</strong>
+            <span className="mt-1 block text-[12px] leading-5 text-slate-500">{method.id} · узел {selectedNode.id}. Создаётся новая ревизия: затем сравните её в «Ревизиях» и запустите «Проверку».</span>
           </div>
           <input
-            className="h-[29px] w-full rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[10px] text-slate-200 outline-none focus:border-cyan-500"
+            className="h-8 w-full rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[13px] text-slate-200 outline-none focus:border-cyan-500"
             aria-label="Новое Java-условие"
             value={conditionExpression}
             onChange={(event) => setConditionDraft({ nodeId: selectedNode.id, value: event.target.value })}
@@ -368,8 +386,8 @@ export function CfgViewer({
             {transformState === "saving" ? <LoaderCircle className="spin" /> : <WandSparkles />}
             {transformState === "saving" ? "Применяем" : "Создать ревизию"}
           </Button>
-          {transformState === "error" ? <p className="col-start-2 col-end-[-1] m-0 text-[8px] text-rose-300" role="alert">{transformError}</p> : null}
-          {transformState === "done" ? <p className="col-start-2 col-end-[-1] m-0 flex items-center gap-1 text-[8px] text-emerald-300"><Check size={14} /> Новая ревизия создана.</p> : null}
+          {transformState === "error" ? <p className="col-start-2 col-end-[-1] m-0 text-[12px] text-rose-300" role="alert">{transformError}</p> : null}
+          {transformState === "done" ? <p className="col-start-2 col-end-[-1] m-0 flex items-center gap-1.5 text-[12px] text-emerald-300"><Check size={14} /> Новая ревизия создана. Сравните её с текущей и запустите проверку поведения.</p> : null}
         </div>
       ) : null}
     </section>
@@ -384,27 +402,32 @@ function BigOPanel({
   onSelect: (range: SourceRange | null, keepGraphVisible?: boolean) => void;
 }) {
   return (
-    <section className="grid grid-cols-[150px_1fr] gap-2 border-t border-slate-800 bg-slate-950 p-2.5" aria-label="Оценка сложности метода">
-      <div className="grid gap-1 rounded border border-slate-700 bg-violet-400/5 p-2">
-        <span><Sparkles size={15} /> BIG O</span>
-        <strong>{analysis.complexity.time}</strong>
-        <small>уверенность: {confidenceLabel(analysis.complexity.confidence)}</small>
+    <section className="grid grid-cols-[170px_1fr] gap-3 border-t border-slate-800 bg-slate-950 p-3" aria-label="Оценка сложности метода">
+      <div className="grid gap-1 rounded border border-slate-700 bg-violet-400/5 p-2.5 text-[12px]">
+        <span className="flex items-center gap-1.5 text-slate-500"><Sparkles size={15} /> Big O</span>
+        <strong className="font-mono text-[18px] text-violet-200">{analysis.complexity.time}</strong>
+        <small className="text-slate-500">уверенность: {confidenceLabel(analysis.complexity.confidence)}</small>
       </div>
-      <p>{analysis.complexity.reason}</p>
-      {analysis.complexity.assumptions.length ? (
-        <ul>{analysis.complexity.assumptions.map((item) => <li key={item}>{item}</li>)}</ul>
-      ) : null}
-      {analysis.findings.length ? (
-        <div className="grid gap-1">
-          {analysis.findings.map((finding) => (
-            <button className="grid gap-1 rounded border border-slate-700 bg-slate-900 p-2 text-left text-[8px] text-slate-400" type="button" key={finding.id} onClick={() => onSelect(finding.source_range)}>
-              <strong>{finding.message}</strong>
-              <span>{finding.explanation}</span>
-              <small>Рекомендация: {finding.recommendation}</small>
-            </button>
-          ))}
-        </div>
-      ) : <small className="text-emerald-300">Рекомендаций для выбранного метода нет.</small>}
+      <div className="grid content-start gap-1.5 text-[13px] leading-5 text-slate-400">
+        <p className="m-0">{analysis.complexity.reason}</p>
+        {analysis.complexity.assumptions.length ? (
+          <details className="text-[12px]"><summary className="cursor-pointer text-slate-500">Допущения · {analysis.complexity.assumptions.length}</summary><ul className="mt-1 [&_li]:leading-5">{analysis.complexity.assumptions.map((item) => <li key={item}>{item}</li>)}</ul></details>
+        ) : null}
+        {analysis.findings.length ? (
+          <div className="grid gap-1.5">
+            {analysis.findings.map((finding) => (
+              <details key={finding.id} className="rounded border border-slate-700 bg-slate-900">
+                <summary className="cursor-pointer p-2 text-[13px] text-slate-300">{finding.message}</summary>
+                <div className="border-t border-slate-800 p-2 text-[12px] leading-5">
+                  <p className="m-0">{finding.explanation}</p>
+                  <p className="mt-1 mb-0 text-slate-300">Рекомендация: {finding.recommendation}</p>
+                  <Button variant="ghost" size="sm" className="mt-1.5" onClick={() => onSelect(finding.source_range)}>К коду</Button>
+                </div>
+              </details>
+            ))}
+          </div>
+        ) : <small className="text-emerald-300">Рекомендаций для выбранного метода нет.</small>}
+      </div>
     </section>
   );
 }

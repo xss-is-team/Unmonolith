@@ -19,7 +19,9 @@ import org.eclipse.jdt.core.dom.*;
  * and a log power. Sequential code adds costs (the dominant term wins), a loop multiplies the
  * per-iteration cost by its iteration factor. Anything that cannot be bounded from the source
  * (unknown loop shape, call without a known cost model) makes the result {@code unknown} instead
- * of guessing. Only the method's own AST is inspected: no call graph, no data flow.
+ * of guessing. Only the method's own AST is inspected, plus one narrow exception: a call to a method
+ * of the same file counts as O(1) when that method is itself proven constant by this analyzer (see
+ * {@link #userMethodCost}). There is no general call graph and no data flow.
  */
 final class ComplexityAnalyzer {
     // ---------- cost model ----------
@@ -177,16 +179,34 @@ final class ComplexityAnalyzer {
     private final List<LoopInfo> stack = new ArrayList<>();
     private final List<Object> findings = new ArrayList<>();
     private final List<Object> fragments = new ArrayList<>();
+    /** Methods being analyzed right now (this one plus the callees being summarized): recursion guard. */
+    private final Set<MethodDeclaration> active;
+    /** Keys of fields that called same-file methods may write (only filled while summarizing callees). */
+    private final Set<String> writes = new LinkedHashSet<>();
+    /** The summarized callee may change state reachable from its arguments, so its cost is not trusted. */
+    private boolean impure;
 
     ComplexityAnalyzer(AstJson json, CompilationUnit cu, MethodDeclaration method, Map<String, Object> cfg) {
+        this(json, cu, method, cfg, new LinkedHashSet<>());
+        active.add(method);
+    }
+
+    private ComplexityAnalyzer(AstJson json, CompilationUnit cu, MethodDeclaration method, Map<String, Object> cfg,
+                               Set<MethodDeclaration> active) {
         this.json = json;
         this.cu = cu;
         this.method = method;
         this.cfg = cfg;
+        this.active = active;
     }
 
     Map<String, Object> analyze() {
         Cost total = block(method.getBody().statements(), Map.of());
+        String bound = writtenLoopBound();
+        if (bound != null) {
+            total = total.plus(Cost.unknown("A called method of this file may modify '" + bound
+                    + "', which a loop bound of this method depends on."));
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("complexity", render(total));
         out.put("fragments", fragments);
@@ -940,7 +960,177 @@ final class ComplexityAnalyzer {
             return Cost.constant();
         }
         String shown = decl.substring(decl.lastIndexOf('.') + 1) + "." + name + "()";
-        return Cost.unknown("Call to " + shown + " has no known cost model.");
+        Cost user = userMethodCost(b, shown);
+        return user != null ? user : Cost.unknown("Call to " + shown + " has no known cost model.");
+    }
+
+    private static final int MAX_CALL_DEPTH = 8;
+
+    /**
+     * Cost of a call to a method declared in this file, or {@code null} when it cannot be trusted. The callee is
+     * analyzed on its own; the call is O(1) only if that analysis is exactly constant (no loop over input, no
+     * unknown call), the callee is not recursive and cannot be overridden, and it does not mutate its arguments.
+     * Anything else stays {@code unknown}: a callee's cost depends on its arguments, which are not tracked.
+     */
+    private Cost userMethodCost(IMethodBinding b, String shown) {
+        if (!(cu.findDeclaringNode(b.getMethodDeclaration()) instanceof MethodDeclaration callee)
+                || callee.getBody() == null || callee.isConstructor()
+                || active.contains(callee) || active.size() >= MAX_CALL_DEPTH || isOverridden(b)) {
+            return null;
+        }
+        ComplexityAnalyzer sub = new ComplexityAnalyzer(json, cu, callee, null, active);
+        active.add(callee);
+        Cost cost;
+        try {
+            cost = sub.block(callee.getBody().statements(), Map.of());
+            sub.scanEffects(callee.getBody());
+        } finally {
+            active.remove(callee);
+        }
+        if (sub.impure || !cost.unknown.isEmpty() || cost.monos.stream().anyMatch(m -> !m.vars().isEmpty())) {
+            return null;
+        }
+        writes.addAll(sub.writes);
+        Cost result = Cost.constant();
+        result.notes.addAll(cost.notes);
+        result.notes.add("Call to " + shown + " is O(1): the method is declared in this file and was analyzed.");
+        result.weak = cost.weak;
+        return result;
+    }
+
+    /** True when another method of this file overrides {@code b}, so the call target may differ at run time. */
+    private boolean isOverridden(IMethodBinding b) {
+        if (Modifier.isPrivate(b.getModifiers()) || Modifier.isStatic(b.getModifiers())
+                || Modifier.isFinal(b.getModifiers())) {
+            return false;
+        }
+        boolean[] found = {false};
+        cu.accept(new ASTVisitor() {
+            @Override
+            public boolean visit(MethodDeclaration md) {
+                IMethodBinding mb = md.resolveBinding();
+                if (mb != null && mb != b.getMethodDeclaration() && mb.overrides(b.getMethodDeclaration())) {
+                    found[0] = true;
+                }
+                return !found[0];
+            }
+        });
+        return found[0];
+    }
+
+    /** Records the fields a callee body writes, and flags writes through arguments or unresolvable targets. */
+    private void scanEffects(ASTNode body) {
+        body.accept(new ASTVisitor() {
+            @Override
+            public boolean visit(LambdaExpression n) {
+                return false;
+            }
+
+            @Override
+            public boolean visit(AnonymousClassDeclaration n) {
+                return false;
+            }
+
+            @Override
+            public boolean visit(Assignment n) {
+                recordWrite(n.getLeftHandSide(), false);
+                return true;
+            }
+
+            @Override
+            public boolean visit(PostfixExpression n) {
+                recordWrite(n.getOperand(), false);
+                return true;
+            }
+
+            @Override
+            public boolean visit(PrefixExpression n) {
+                if (n.getOperator() == PrefixExpression.Operator.INCREMENT
+                        || n.getOperator() == PrefixExpression.Operator.DECREMENT) {
+                    recordWrite(n.getOperand(), false);
+                }
+                return true;
+            }
+
+            @Override
+            public boolean visit(MethodInvocation n) {
+                if (n.getExpression() != null && MUTATORS.contains(n.getName().getIdentifier())) {
+                    recordWrite(n.getExpression(), true);
+                }
+                return true;
+            }
+        });
+    }
+
+    private void recordWrite(Expression target, boolean mutatorCall) {
+        Expression t = strip(target);
+        if (t instanceof ThisExpression || t instanceof ArrayAccess) {
+            return; // `this.add(..)` is a call of this file's own method; array elements never change a loop bound
+        }
+        IBinding binding = switch (t) {
+            case SimpleName n -> n.resolveBinding();
+            case QualifiedName n -> n.resolveBinding();
+            case FieldAccess n -> n.getName().resolveBinding();
+            default -> null;
+        };
+        if (binding instanceof IVariableBinding vb) {
+            if (vb.isField()) {
+                writes.add(vb.getKey());
+            } else if (vb.isParameter() && mutatorCall) {
+                impure = true; // mutator call on an argument: the caller's object changes
+            }
+            return;
+        }
+        impure = true;
+    }
+
+    /** Name of a field written by a called method that also appears in a loop header of this method, or null. */
+    private String writtenLoopBound() {
+        if (writes.isEmpty()) {
+            return null;
+        }
+        String[] hit = {null};
+        method.getBody().accept(new ASTVisitor() {
+            private void header(Expression e) {
+                if (e != null && hit[0] == null) {
+                    e.accept(new ASTVisitor() {
+                        @Override
+                        public boolean visit(SimpleName n) {
+                            if (hit[0] == null && n.resolveBinding() instanceof IVariableBinding vb && vb.isField()
+                                    && writes.contains(vb.getKey())) {
+                                hit[0] = vb.getName();
+                            }
+                            return true;
+                        }
+                    });
+                }
+            }
+
+            @Override
+            public boolean visit(ForStatement n) {
+                header(n.getExpression());
+                return true;
+            }
+
+            @Override
+            public boolean visit(WhileStatement n) {
+                header(n.getExpression());
+                return true;
+            }
+
+            @Override
+            public boolean visit(DoStatement n) {
+                header(n.getExpression());
+                return true;
+            }
+
+            @Override
+            public boolean visit(EnhancedForStatement n) {
+                header(n.getExpression());
+                return true;
+            }
+        });
+        return hit[0];
     }
 
     private Cost constructorCost(ClassInstanceCreation n) {
