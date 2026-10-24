@@ -19,11 +19,33 @@ export type Diagnostic = {
   source_range: SourceRange;
 };
 
+export type ComplexityHotspot = {
+  source_range: SourceRange;
+  kind: string;
+  cyclomatic_increment: number;
+  cognitive_increment: number;
+  nesting_depth: number;
+};
+
+export type MethodComplexity = {
+  cyclomatic_complexity: number;
+  cognitive_complexity: number;
+  max_nesting_depth: number;
+  hotspots: ComplexityHotspot[];
+};
+
+export type MethodSummary = {
+  id: string;
+  name: string;
+  source_range: SourceRange;
+  complexity?: MethodComplexity;
+};
+
 export type AnalysisResult = {
   protocol_version: 1;
   status: "completed" | "partial";
   revision: number;
-  methods: { id: string; name: string; source_range: SourceRange }[];
+  methods: MethodSummary[];
   diagnostics: Diagnostic[];
 };
 

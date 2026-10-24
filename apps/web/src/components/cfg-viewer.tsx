@@ -21,22 +21,49 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import { AlertCircle, GitBranch, LoaderCircle, RefreshCw } from "lucide-react";
-import { ApiError, getMethodCfg, type AnalysisResult, type Cfg, type CfgNode } from "@/lib/api";
+import { ApiError, getMethodCfg, type AnalysisResult, type Cfg, type CfgNode, type ComplexityHotspot } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 const NODE_WIDTH = 220;
 const NODE_HEIGHT = 82;
 const elkLayout = new ELK();
 gsap.registerPlugin(useGSAP);
+const COMPLEXITY_CFG_KINDS: Record<string, readonly string[]> = {
+  if: ["if"],
+  else_if: ["if"],
+  for: ["for"],
+  enhanced_for: ["foreach"],
+  while: ["while"],
+  do_while: ["do_while"],
+  switch: ["switch"],
+  switch_expression: ["switch"],
+  case: ["case"],
+  catch: ["catch"],
+  labeled_break: ["break"],
+  labeled_continue: ["continue"],
+  logical_sequence: ["if", "for", "foreach", "while", "do_while", "switch"],
+};
 
-type FlowNode = Node<CfgNode, "cfg">;
+type FlowNodeData = CfgNode & { cognitiveContribution: number; cyclomaticContribution: number };
+type FlowNode = Node<FlowNodeData, "cfg">;
 
 function CfgFlowNode({ data }: NodeProps<FlowNode>) {
+  const complexityLevel = data.cognitiveContribution >= 4 || data.cyclomaticContribution >= 3
+    ? "high"
+    : data.cognitiveContribution >= 2
+      ? "medium"
+      : "low";
+  const hasComplexity = data.cognitiveContribution > 0 || data.cyclomaticContribution > 0;
   return (
-    <div className={`cfg-node cfg-node--${safeKind(data.kind)}`}>
+    <div className={`cfg-node cfg-node--${safeKind(data.kind)}${hasComplexity ? ` cfg-node--complexity-${complexityLevel}` : ""}`}>
       <Handle type="target" position={Position.Top} />
       <span>{formatNodeKind(data.kind)}</span>
       <strong>{data.label}</strong>
+      {data.cognitiveContribution > 0 || data.cyclomaticContribution > 0 ? (
+        <small className="cfg-complexity-mark" title="Вклад узла в структурную сложность метода">
+          +{data.cognitiveContribution} Cog · +{data.cyclomaticContribution} CC
+        </small>
+      ) : null}
       <Handle type="source" position={Position.Bottom} />
     </div>
   );
@@ -70,6 +97,8 @@ export function CfgViewer({
   const methodId = methods.some((method) => method.id === selectedMethodId)
     ? selectedMethodId
     : methods[0]?.id ?? "";
+  const methodComplexity = methods.find((method) => method.id === methodId)?.complexity;
+  const complexityHotspots = useMemo(() => methodComplexity?.hotspots ?? [], [methodComplexity]);
   const canRequest = Boolean(methodId && analysis && analysis.revision === revision);
   const { data: apiCfg, error: apiError, isLoading, mutate } = useSWR(
     canRequest ? `cfg:${projectId}:${revision}:${methodId}` : null,
@@ -115,6 +144,7 @@ export function CfgViewer({
     : null;
 
   const activeEdges = useMemo(() => cfg && activeBranch ? branchFootprint(cfg, activeBranch) : new Set<number>(), [cfg, activeBranch]);
+  const complexityByNode = useMemo(() => mapComplexityToCfg(cfg, complexityHotspots), [cfg, complexityHotspots]);
   const flow = useMemo(() => ({
     nodes: cfg?.nodes.map((node) => ({
       id: node.id,
@@ -122,7 +152,7 @@ export function CfgViewer({
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
       position: positions.get(node.id) ?? { x: 0, y: 0 },
-      data: node,
+      data: { ...node, ...(complexityByNode.get(node.id) ?? { cognitiveContribution: 0, cyclomaticContribution: 0 }) },
       selected: node.id === selectedCondition?.id,
     })) ?? [],
     edges: cfg?.edges.map((edge, index) => {
@@ -145,7 +175,7 @@ export function CfgViewer({
         labelBgBorderRadius: 2,
       };
     }) ?? [],
-  }), [cfg, positions, selectedCondition?.id, activeEdges]);
+  }), [cfg, positions, selectedCondition?.id, activeEdges, complexityByNode]);
 
   useGSAP(() => {
     const canvas = canvasRef.current;
@@ -281,6 +311,75 @@ function matchingNode(cfg: Cfg, range: { start: number; length: number }) {
     }))
     .filter(({ start, end }) => start < selectionEnd && range.start < end)
     .sort((a, b) => (a.end - a.start) - (b.end - b.start))[0]?.node ?? null;
+}
+
+function mapComplexityToCfg(cfg: Cfg | null, hotspots: ComplexityHotspot[]) {
+  const result = new Map<string, { cognitiveContribution: number; cyclomaticContribution: number }>();
+  if (!cfg) return result;
+  const nodesByKind = new Map<string, CfgNode[]>();
+  const eligibleNodes = cfg.nodes.filter((node) => !["entry", "exit", "merge"].includes(node.kind));
+  for (const node of eligibleNodes) {
+    const nodes = nodesByKind.get(node.kind) ?? [];
+    nodes.push(node);
+    nodesByKind.set(node.kind, nodes);
+  }
+  eligibleNodes.sort((left, right) => left.source_range.start - right.source_range.start);
+  for (const nodes of nodesByKind.values()) nodes.sort((left, right) => left.source_range.start - right.source_range.start);
+
+  for (const hotspot of hotspots) {
+    // The current CFG models else as a labeled edge, not a node; don't attribute its score to a nested block.
+    if (hotspot.kind === "else") continue;
+    const start = hotspot.source_range.start;
+    const end = start + Math.max(hotspot.source_range.length, 1);
+    const preferredKinds = COMPLEXITY_CFG_KINDS[hotspot.kind];
+    let target: CfgNode | null = null;
+    for (const kind of preferredKinds ?? []) {
+      const candidate = nearestOverlappingNode(nodesByKind.get(kind) ?? [], start, end);
+      if (candidate && (!target || nodeDistance(candidate, start) < nodeDistance(target, start))) target = candidate;
+    }
+    target ??= nearestOverlappingNode(eligibleNodes, start, end);
+    if (!target) continue;
+    const current = result.get(target.id) ?? { cognitiveContribution: 0, cyclomaticContribution: 0 };
+    result.set(target.id, {
+      cognitiveContribution: current.cognitiveContribution + hotspot.cognitive_increment,
+      cyclomaticContribution: current.cyclomaticContribution + hotspot.cyclomatic_increment,
+    });
+  }
+  return result;
+}
+
+function nearestOverlappingNode(nodes: CfgNode[], start: number, end: number) {
+  let low = 0;
+  let high = nodes.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (nodes[middle].source_range.start < start) low = middle + 1;
+    else high = middle;
+  }
+
+  let left = low - 1;
+  let right = low;
+  let nearest: CfgNode | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  while (left >= 0 || right < nodes.length) {
+    const leftDistance = left >= 0 ? start - nodes[left].source_range.start : Number.POSITIVE_INFINITY;
+    const rightDistance = right < nodes.length ? nodes[right].source_range.start - start : Number.POSITIVE_INFINITY;
+    const distance = Math.min(leftDistance, rightDistance);
+    if (distance > nearestDistance) break;
+    const node = leftDistance <= rightDistance ? nodes[left--] : nodes[right++];
+    const nodeStart = node.source_range.start;
+    const nodeEnd = nodeStart + Math.max(node.source_range.length, 1);
+    if (start < nodeEnd && nodeStart < end && (distance < nearestDistance
+        || node.source_range.length < (nearest?.source_range.length ?? Number.POSITIVE_INFINITY))) {
+      nearest = node;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function nodeDistance(node: CfgNode, start: number) {
+  return Math.abs(node.source_range.start - start);
 }
 
 function branchFootprint(cfg: Cfg, branch: { source: string; target: string; kind: string }) {

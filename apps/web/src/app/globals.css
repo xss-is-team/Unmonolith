@@ -219,6 +219,10 @@ a { color: inherit; text-decoration: none; }
 .cfg-node > span { color: #788278; font-family: var(--font-code), monospace; font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
 .cfg-node > strong { color: #273a34; font-family: var(--font-code), monospace; font-size: 10px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
 .cfg-node--condition, .cfg-node--if, .cfg-node--while, .cfg-node--for, .cfg-node--do-while { border-color: #d6c38f; background: #fff9e9; }
+.cfg-node--complexity-low { border-left: 3px solid #d6a84e; }
+.cfg-node--complexity-medium { border-color: #cb9850; background: #fff5df; }
+.cfg-node--complexity-high { border-color: #ba6854; background: #fff0e9; box-shadow: 0 0 0 2px rgba(186,104,84,.12), 0 3px 12px rgba(28,48,39,.07); }
+.cfg-complexity-mark { position: absolute; top: 7px; right: 8px; padding: 2px 4px; border-radius: 3px; color: #70562b; background: rgba(250,238,208,.92); font: 7px/1.2 var(--font-code), monospace; white-space: nowrap; }
 .cfg-node--entry, .cfg-node--exit { width: 168px; min-height: 56px; align-items: center; border-radius: 28px; border-color: #b4cbb5; background: #f0f6ec; }
 .cfg-node .react-flow__handle { width: 7px; height: 7px; border: 1px solid #fbfaf6; background: #70877a; }
 .cfg-transform { display: grid; grid-template-columns: minmax(170px, 1fr) minmax(240px, 1.3fr) auto; align-items: center; gap: 12px; padding: 13px 17px; border-top: 1px solid #e7e7df; background: #fbfaf6; }
@@ -288,7 +292,11 @@ a { color: inherit; text-decoration: none; }
 .list-label { color: #8b948a; font-family: var(--font-code), monospace; font-size: 8px; letter-spacing: .12em; }
 .method-row { display: flex; align-items: center; gap: 7px; padding: 8px 1px; border-bottom: 1px solid #ededE5; color: #52635a; }
 .method-row svg { color: #829284; }
-.method-row > span { overflow: hidden; flex: 1; font-family: var(--font-code), monospace; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.method-row-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; overflow: hidden; }
+.method-row-copy > span { overflow: hidden; font-family: var(--font-code), monospace; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.method-complexity { color: #77867b; font-family: var(--font-code), monospace; font-size: 7px; white-space: nowrap; }
+.method-complexity--medium { color: #9b6b27; }
+.method-complexity--high { color: #a74634; }
 .method-row small, .more-methods { color: #92998f; font-size: 8px; }
 .more-methods { display: block; padding: 7px 0; }
 .workspace-bottom { display: flex; justify-content: space-between; padding-top: 14px; color: #8a9188; font-family: var(--font-code), monospace; font-size: 8px; letter-spacing: .06em; }

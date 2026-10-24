@@ -83,6 +83,26 @@ pub struct Method {
     pub id: String,
     pub name: String,
     pub source_range: SourceRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub complexity: Option<MethodComplexity>,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct MethodComplexity {
+    pub cyclomatic_complexity: u32,
+    pub cognitive_complexity: u32,
+    pub max_nesting_depth: u32,
+    #[serde(default)]
+    pub hotspots: Vec<ComplexityHotspot>,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct ComplexityHotspot {
+    pub source_range: SourceRange,
+    pub kind: String,
+    pub cyclomatic_increment: u32,
+    pub cognitive_increment: u32,
+    pub nesting_depth: u32,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]

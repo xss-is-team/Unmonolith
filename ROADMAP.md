@@ -50,14 +50,18 @@
 - [ ] В CFG-узле показывать вычисленный тип выражения в tooltip.
 - [ ] Приёмка: файл из `legacy/commons-math-3.6.1/` с обычными generic-типами разбирается без `partial`-статуса.
 
-### E — Complexity и метрики — TODO
+### E — Complexity и метрики — DONE
 
-- [ ] **Cyclomatic complexity** для каждого метода (число рёбер − число узлов + 2). Показывать в analysis panel.
-- [ ] **Cognitive complexity** (по Sonar-методике) — штраф за вложенность.
-- [ ] **Глубина вложенности** (max nesting depth) как отдельная метрика.
-- [ ] Диагностика `high_complexity` при CC > 10, `very_high_complexity` при CC > 20.
-- [ ] В CFG: цветовое кодирование путей по сложности (горячие пути).
-- [ ] Приёмка: метрики совпадают с `javancss` для методов Commons Math с известной сложностью.
+- [x] **Cyclomatic complexity (CCN)** по AST: базовое значение 1 плюс точки ветвления JavaNCSS; выводится для каждого метода.
+- [x] **Cognitive complexity** по правилам Sonar: структурные точки, вложенность и серии `&&` / `||`.
+- [x] **Глубина вложенности** (max nesting depth) передаётся для каждого метода.
+- [x] Диагностики `high_complexity` при CC > 10 и `very_high_complexity` при CC > 20.
+- [x] CFG подсвечивает узлы с вкладом в структурную сложность. Это не runtime hot paths.
+- [x] Приёмка: тестовые значения Commons Math сверены с JavaNCSS 33.54; cognitive complexity покрыта эталоном Sonar и сценариями вложенности.
+
+JavaNCSS расхождение: `Pair.equals(Object)` даёт CCN 8 в JavaNCSS и 6 по AST; лишние два пункта совпадают с `?` wildcard в `Pair<?, ?>`. Счётчик по AST не принимает эти типы за тернарные выражения.
+
+Определения: [JavaNCSS CCN](https://javancss.github.io/specification.html), [Sonar Cognitive Complexity](https://github.com/SonarSource/sonar-java/blob/master/java-frontend/src/main/java/org/sonar/java/ast/visitors/CognitiveComplexityVisitor.java). Метрики ограничены телом одного метода; вложенные локальные и анонимные классы исключаются из метрик внешнего метода.
 
 ### F — Рефакторинг с diff — TODO
 
@@ -123,9 +127,10 @@
 | Загрузка, анализ, CFG, переход к исходнику | ✓ Chromium, последняя запись |
 | Автосохранение, повторный анализ, история/diff | ✓ |
 | Клавиатурная навигация, 320/390 px | ✓ |
-| parser unit-тесты | ✓ 22 теста |
-| API тесты | ✓ 16 тестов |
-| Frontend lint + production build | ✓ |
+| Parser | ✓ 29 unit-тестов; `mvn package` |
+| Rust API | ✓ `cargo check`, 16 тестов |
+| Frontend | ✓ ESLint и production build |
+| Complexity UI | ✓ Chromium: анализ файла, значения метрик и CFG-вклад; API analysis/CFG HTTP 200 |
 | ELK vs Dagre на 5 больших CFG | ELK выиграл 4/5; суммарная ширина −10% |
 | Commons Math: 100 методов одного файла | 1 756 узлов, 1 925 рёбер; анализ partial (нет classpath) |
 | Commons Math с Maven classpath | ✗ Не проверено — задача H |

@@ -21,6 +21,7 @@ final class AstJson {
     private final boolean bindings;
     private final List<Object> methods = new ArrayList<>();
     private final List<Object> cfgs = new ArrayList<>();
+    private final List<Object> complexityDiagnostics = new ArrayList<>();
 
     /** @param bindings whether the unit was parsed with resolved bindings (semantic information) */
     AstJson(CompilationUnit cu, String src, boolean bindings) {
@@ -57,7 +58,9 @@ final class AstJson {
         out.put("types", types);
         out.put("methods", methods);
         out.put("cfgs", cfgs);
-        out.put("diagnostics", diagnostics(problems));
+        List<Object> allDiagnostics = diagnostics(problems);
+        allDiagnostics.addAll(complexityDiagnostics);
+        out.put("diagnostics", allDiagnostics);
         return out;
     }
 
@@ -175,7 +178,18 @@ final class AstJson {
         summary.put("id", id);
         summary.put("name", name);
         summary.put("source_range", range(md));
+        ComplexityAnalyzer.Metrics complexity = ComplexityAnalyzer.measure(cu, md);
+        summary.put("complexity", ComplexityAnalyzer.toJson(complexity));
         methods.add(summary);
+        if (complexity.cyclomaticComplexity() > 10) {
+            Map<String, Object> diagnostic = new LinkedHashMap<>();
+            diagnostic.put("code", complexity.cyclomaticComplexity() > 20 ? "very_high_complexity" : "high_complexity");
+            diagnostic.put("severity", "warning");
+            diagnostic.put("message", "Cyclomatic complexity is " + complexity.cyclomaticComplexity()
+                    + "; consider simplifying or extracting part of this method.");
+            diagnostic.put("source_range", range(md));
+            complexityDiagnostics.add(diagnostic);
+        }
         if (md.getBody() != null) cfgs.add(new CfgBuilder(cu, src).build(id, md));
         return m;
     }
