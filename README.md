@@ -42,6 +42,15 @@ Then start API and web in separate terminals:
 ```
 
 Open <http://localhost:3001>. The API listens on port 3000; the web app proxies its requests to it. Set `BLUEPRINTS_API_ORIGIN` if Axum listens elsewhere. `./dev` lists the parser build and verification commands. Frontend details are in `apps/web/README.md`.
+## Run after cloning
+
+After installing the host tools listed above, run one command from the repository root:
+
+```sh
+./dev up
+```
+
+It installs frontend packages, builds the parser and API, then starts both services. Open <http://localhost:3001>; the API is at <http://localhost:3000>. Press Ctrl+C to stop both. `./dev` lists individual build and check commands. Frontend details are in `apps/web/README.md`.
 
 ## Parser integration
 

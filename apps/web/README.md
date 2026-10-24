@@ -18,10 +18,16 @@ Then start the API and web app in separate terminals:
 ```sh
 ./dev api
 ./dev web
+After installing host tools, start the whole app from the repository root with:
+
+```sh
+./dev up
 ```
 
 Open <http://localhost:3001>. By default Next proxies to Axum at
 `http://127.0.0.1:3000`; set `BLUEPRINTS_API_ORIGIN` to change the target.
+The command installs frontend packages, builds the parser and API, and starts
+both services. Press Ctrl+C to stop them.
 
 The current UI supports one `.java` file per project, source viewing and
 revision-checked saving. With the parser built, analysis shows returned methods
