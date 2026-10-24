@@ -18,7 +18,7 @@ export default function Home() {
       <header className="landing-topbar">
         <Brand />
         <div className="topbar-center"><span className="topbar-rule" /> ENGINEERING WORKSPACE <span className="topbar-rule" /></div>
-        <a className="help-link" href="/swagger-ui" target="_blank" rel="noreferrer"><CircleHelp size={16} /> API</a>
+        <a className="help-link" href="/swagger-ui/" target="_blank" rel="noreferrer"><CircleHelp size={16} /> API</a>
       </header>
 
       <section className="landing-hero">
@@ -40,15 +40,15 @@ export default function Home() {
             <span className="stage-status stage-status--ready">READY</span>
           </div>
           <div className="pipeline-link"><span /><ArrowDownRight size={17} /><span /></div>
-          <div className="visual-stage visual-stage--waiting">
+          <div className="visual-stage visual-stage--active">
             <span className="stage-icon"><Braces size={20} /></span>
-            <div className="stage-copy"><small>JAVA WORKER</small><strong>Разбор и диагностика</strong><span>Подключается отдельно</span></div>
-            <span className="stage-status stage-status--waiting">ОЖИДАЕТ</span>
+            <div className="stage-copy"><small>JDT PARSER</small><strong>Разбор и диагностика</strong><span>Подключён к API · AST и семантика</span></div>
+            <span className="stage-status stage-status--ready">READY</span>
           </div>
           <div className="pipeline-link pipeline-link--muted"><span /><ArrowDownRight size={17} /><span /></div>
           <div className="visual-stage visual-stage--later">
             <span className="stage-icon"><GitBranch size={19} /></span>
-            <div className="stage-copy"><small>СЛЕДУЮЩИЙ ЭТАП</small><strong>Визуальная структура</strong><span>Покажем, когда будет готов backend</span></div>
+            <div className="stage-copy"><small>СЛЕДУЮЩИЙ ЭТАП</small><strong>CFG и визуальный граф</strong><span>Пока не реализованы</span></div>
             <span className="stage-status stage-status--later">ПОЗЖЕ</span>
           </div>
           <div className="visual-footnote"><ScanLine size={15} /><span>Текущий экран работает с настоящим API M1</span><Sparkles size={14} /></div>

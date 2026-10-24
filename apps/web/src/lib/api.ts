@@ -21,11 +21,13 @@ export type Diagnostic = {
 
 export type AnalysisResult = {
   protocol_version: 1;
-  status: "completed" | "partial" | "failed";
+  status: "completed" | "partial";
   revision: number;
   methods: { id: string; name: string; source_range: SourceRange }[];
   diagnostics: Diagnostic[];
 };
+
+export const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 
 export class ApiError extends Error {
   constructor(
@@ -100,16 +102,31 @@ export async function getProjectSource(projectId: string) {
 
   return {
     source: await response.text(),
-    revision: Number(response.headers.get("X-Source-Revision") ?? "1"),
+    revision: parseRevision(response.headers.get("X-Source-Revision")),
   };
 }
 
+function parseRevision(value: string | null) {
+  const revision = value === null ? Number.NaN : Number(value);
+  if (!Number.isSafeInteger(revision) || revision < 1) {
+    throw new ApiError("API вернул некорректную ревизию исходника.", 502, "invalid_response");
+  }
+  return revision;
+}
+
 export async function getProjectWorkspace(projectId: string) {
-  const [project, current] = await Promise.all([
-    getProject(projectId),
-    getProjectSource(projectId),
-  ]);
-  return { project, source: current.source, revision: current.revision };
+  // Project metadata and source are separate endpoints. Retry if a save lands
+  // between them so the editor never starts with mismatched revisions.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const [project, current] = await Promise.all([
+      getProject(projectId),
+      getProjectSource(projectId),
+    ]);
+    if (project.revision === current.revision) {
+      return { project, source: current.source, revision: current.revision };
+    }
+  }
+  throw new ApiError("Исходник менялся во время загрузки. Обновите страницу.", 409, "revision_conflict");
 }
 
 export function updateProjectSource(
