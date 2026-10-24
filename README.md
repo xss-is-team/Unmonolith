@@ -37,7 +37,7 @@ It installs frontend packages, builds the parser and API, then starts both servi
 
 ## Parser integration
 
-`./dev parser-build` creates an executable JAR. `./dev api` points the API at that JAR automatically; `BLUEPRINTS_ANALYZER_JAR` can override it. The API invokes the parser for each analysis request and stores its JSON result with the project revision. If the JAR has not been built, analysis returns `analyzer_unavailable`. The parser provides an AST, semantic diagnostics, and statement-level CFG. Complexity analysis, transformations, Java generation, compilation, and behavior verification are not implemented yet.
+`./dev parser-build` creates an executable JAR. `./dev api` points the API at that JAR automatically; `BLUEPRINTS_ANALYZER_JAR` can override it. The API invokes the parser for each analysis request and stores its JSON result with the project revision. If the JAR has not been built, analysis returns `analyzer_unavailable`. The parser provides an AST, diagnostics, statement-level CFG, per-method cyclomatic and cognitive complexity, and nesting depth. Analysis streams per-method results while the parser works. Graph transformations, Java generation, and application-level compile/behavior verification after refactoring are not implemented yet; see [`ROADMAP.md`](ROADMAP.md).
 
 ## Whole-project support
 
