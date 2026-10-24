@@ -2,6 +2,7 @@ mod analyzer;
 mod api;
 mod error;
 mod project;
+mod runner;
 mod session;
 
 use std::{env, io, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
@@ -18,6 +19,11 @@ pub struct Config {
     pub java_bin: PathBuf,
     pub analyzer_timeout: Duration,
     pub analyzer_output_bytes: u64,
+    pub runner_image: Option<String>,
+    pub container_bin: PathBuf,
+    pub runner_compile_timeout: Duration,
+    pub runner_case_timeout: Duration,
+    pub runner_output_bytes: u64,
 }
 
 impl Config {
@@ -38,6 +44,21 @@ impl Config {
                 "10000",
             )?),
             analyzer_output_bytes: parse_env("BLUEPRINTS_ANALYZER_OUTPUT_BYTES", "2097152")?,
+            runner_image: env::var("BLUEPRINTS_RUNNER_IMAGE")
+                .ok()
+                .filter(|image| !image.trim().is_empty()),
+            container_bin: PathBuf::from(
+                env::var("BLUEPRINTS_CONTAINER_BIN").unwrap_or_else(|_| "docker".into()),
+            ),
+            runner_compile_timeout: Duration::from_millis(parse_env(
+                "BLUEPRINTS_RUNNER_COMPILE_TIMEOUT_MS",
+                "10000",
+            )?),
+            runner_case_timeout: Duration::from_millis(parse_env(
+                "BLUEPRINTS_RUNNER_CASE_TIMEOUT_MS",
+                "2000",
+            )?),
+            runner_output_bytes: parse_env("BLUEPRINTS_RUNNER_OUTPUT_BYTES", "65536")?,
         })
     }
 }

@@ -9,7 +9,7 @@ Official brief's initial scale is about 1,000 lines in a Java monolith. Support 
 - Rust/Axum: HTTP, guest sessions, project persistence, optimistic revision control, worker process invocation, output validation, result delivery, OpenAPI.
 - Java/JDT: parsing, bindings, semantic errors, CFG, AST-aware changes and generation, diagnostics/complexity. Never implement a second Java parser in Rust.
 - Browser: display and layout of nodes/edges.
-- Future sandbox runner: compile and run original/modified Java with identical fixtures.
+- Isolated Docker runner: compile and run stored revisions with identical fixtures; never execute uploaded Java in the API host process.
 
 ## 1. Delivery milestones (in order)
 **M1 — Foundation (FIRST CODEX TASK)**
@@ -41,9 +41,9 @@ Official brief's initial scale is about 1,000 lines in a Java monolith. Support 
 
 ### Current implemented slice
 
-M1 is complete. The API now also implements the M2 CFG read path and the single
-M3 operation `replace_condition`. No other M3 operation or M4/M5 behavior is
-implemented. The parser CFG is nested on each method/constructor member in
+M1 is complete. The API now also implements the M2 CFG read path, the single
+M3 operation `replace_condition`, and the separate M4 revision verification
+operation. Verification does not gate transformations. The parser CFG is nested on each method/constructor member in
 `types[].members[]` (including nested types); the flat root `methods[]` list is
 only a summary and is not the CFG source.
 
@@ -89,6 +89,15 @@ data/
 - A successful worker exits zero, writes the transformed UTF-8 Java source to the output file, and emits a JSON document with `status: "completed"` on stdout. A rejected change exits nonzero with `{"status":"failed","error":{"code":"...","message":"..."}}`.
 - Rust uses an isolated temporary directory, bounded stdout/stderr, kill-on-drop and the configured analyzer timeout. It reparses the candidate and rejects partial analysis or a missing selected method CFG.
 - The accepted source and complete new-revision analysis artifact are written before atomically advancing project metadata. Transformations share the source-write lock, so concurrent requests based on the same revision cannot both commit.
+
+### Isolated Java runner protocol
+
+- `POST /projects/{project_id}/verify` accepts two existing owned revisions and 1-20 named UTF-8 stdin fixtures. It does not mutate either revision or change transform semantics.
+- The runner image is optional configuration. If it or the Docker-compatible CLI/daemon is unavailable, the API returns `503`; it never runs the submitted program on the API host.
+- Each revision is compiled under its stored Java filename with fixed Java 21 settings. Compilation failure, timeout, output overflow and a missing conventional `main` are represented in the verification report and prevent case execution.
+- Containers use a non-root numeric user, no network, a read-only root filesystem, writable size-limited tmpfs work areas, CPU/memory/PID/fd limits, dropped capabilities and `no-new-privileges`. No host paths are mounted. Source is copied into tmpfs over a bounded stdin pipe.
+- Cases receive only predefined UTF-8 stdin and fixed JVM options. stdout bytes, stderr bytes, exit code, timeout and overflow states are compared exactly; a timeout or overflow fails the case because the complete behavior was not observed. A matching report applies only to the supplied fixtures and is not proof of equivalence.
+- Docker is risk reduction, not a formal sandbox. Public untrusted use requires stronger VM/microVM isolation and operational controls.
 
 ## 4. Safety
 - All uploaded source is untrusted. Java analysis must not run the submitted program, `main`, build scripts or annotation processors.

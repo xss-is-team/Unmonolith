@@ -6,19 +6,19 @@ The web client lives in `apps/web/` and uses Next.js App Router. It provides a J
 
 The three application folders share one Git repository: `apps/api/` (Rust), `apps/parser/` (Java/Maven), and `apps/web/` (Next.js). Install the tools with your OS package manager, or use the optional root `flake.nix` with `nix develop`.
 
-Required tools: stable Rust, JDK 21 or newer, Maven, Node.js 22 or newer, pnpm 11, Git, and pkg-config.
+Required tools: stable Rust, JDK 21, Maven, Node.js 22 or newer, pnpm 11, Git, and pkg-config. Docker is required only for isolated Java execution and behavioral verification.
 
 Arch Linux:
 
 ```sh
-sudo pacman -S --needed rustup jdk-openjdk maven nodejs pnpm git pkgconf
+sudo pacman -S --needed rustup jdk21-openjdk maven nodejs pnpm git pkgconf docker
 rustup default stable
 ```
 
 macOS with Homebrew:
 
 ```sh
-brew install rustup openjdk@25 maven node@22 pnpm@11 pkgconf git
+brew install rustup openjdk@21 maven node@22 pnpm@11 pkgconf git docker
 export PATH="$(brew --prefix rustup)/bin:$PATH"
 rustup default stable
 ```
@@ -32,6 +32,7 @@ The root `./dev` wrapper keeps routine commands short. Install web dependencies 
 ```sh
 ./dev web-install
 ./dev parser-build
+./dev runner-build
 ```
 
 Then start API and web in separate terminals:
@@ -41,7 +42,7 @@ Then start API and web in separate terminals:
 ./dev web
 ```
 
-Open <http://localhost:3001>. The API listens on port 3000; the web app proxies its requests to it. Set `BLUEPRINTS_API_ORIGIN` if Axum listens elsewhere. `./dev` lists the parser build and verification commands. Frontend details are in `apps/web/README.md`.
+Open <http://localhost:3001>. The API listens on port 3000; the web app proxies its requests to it. Set `BLUEPRINTS_API_ORIGIN` if Axum listens elsewhere. Set `BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21` when starting the API to enable verification. `./dev` lists the parser and runner commands. Frontend details are in `apps/web/README.md`.
 ## Run after cloning
 
 After installing the host tools listed above, run one command from the repository root:
@@ -54,7 +55,9 @@ It installs frontend packages, builds the parser and API, then starts both servi
 
 ## Parser integration
 
-`./dev parser-build` creates an executable JAR. `./dev api` points the API at that JAR automatically; `BLUEPRINTS_ANALYZER_JAR` can override it. The API invokes the parser for each analysis request and stores its JSON result with the project revision. If the JAR has not been built, analysis returns `analyzer_unavailable`. The parser currently provides AST and semantic diagnostics; CFG and complexity analysis are not implemented yet.
+`./dev parser-build` creates an executable JAR. `./dev api` points the API at that JAR automatically; `BLUEPRINTS_ANALYZER_JAR` can override it. The API invokes the parser for each analysis request and stores its JSON result with the project revision. If the JAR has not been built, analysis returns `analyzer_unavailable`. The parser provides AST data, semantic diagnostics, per-method CFGs, and the restricted `replace_condition` rewrite.
+
+`./dev runner-build` creates the Java 21 image used by the separate `/verify` operation. The runner is opt-in and never falls back to host execution; see `apps/api/README.md` for configuration and security limitations.
 
 ## Data flow
 
