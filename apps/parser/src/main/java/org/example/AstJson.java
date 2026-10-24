@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.io.PrintStream;
 
 import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.core.dom.*;
@@ -19,15 +20,17 @@ final class AstJson {
     private final CompilationUnit cu;
     private final String src;
     private final boolean bindings;
+    private final PrintStream progress;
     private final List<Object> methods = new ArrayList<>();
     private final List<Object> cfgs = new ArrayList<>();
     private final List<Object> complexityDiagnostics = new ArrayList<>();
 
     /** @param bindings whether the unit was parsed with resolved bindings (semantic information) */
-    AstJson(CompilationUnit cu, String src, boolean bindings) {
+    AstJson(CompilationUnit cu, String src, boolean bindings, PrintStream progress) {
         this.cu = cu;
         this.src = src;
         this.bindings = bindings;
+        this.progress = progress;
     }
 
     Map<String, Object> convert() {
@@ -179,8 +182,10 @@ final class AstJson {
         summary.put("name", name);
         summary.put("source_range", range(md));
         ComplexityAnalyzer.Metrics complexity = ComplexityAnalyzer.measure(cu, md);
-        summary.put("complexity", ComplexityAnalyzer.toJson(complexity));
+        Map<String, Object> complexityJson = ComplexityAnalyzer.toJson(complexity);
+        summary.put("complexity", complexityJson);
         methods.add(summary);
+        List<Object> methodDiagnostics = new ArrayList<>();
         if (complexity.cyclomaticComplexity() > 10) {
             Map<String, Object> diagnostic = new LinkedHashMap<>();
             diagnostic.put("code", complexity.cyclomaticComplexity() > 20 ? "very_high_complexity" : "high_complexity");
@@ -189,8 +194,19 @@ final class AstJson {
                     + "; consider simplifying or extracting part of this method.");
             diagnostic.put("source_range", range(md));
             complexityDiagnostics.add(diagnostic);
+            methodDiagnostics.add(diagnostic);
         }
         if (md.getBody() != null) cfgs.add(new CfgBuilder(cu, src).build(id, md));
+        if (progress != null) {
+            Map<String, Object> partialSummary = new LinkedHashMap<>(summary);
+            Map<String, Object> partialComplexity = new LinkedHashMap<>(complexityJson);
+            partialComplexity.put("hotspots", List.of());
+            partialSummary.put("complexity", partialComplexity);
+            Map<String, Object> partial = new LinkedHashMap<>();
+            partial.put("method", partialSummary);
+            partial.put("diagnostics", methodDiagnostics);
+            progress.println("partial: " + Json.pretty(partial).replace("\n", ""));
+        }
         return m;
     }
 

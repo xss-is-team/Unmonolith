@@ -49,6 +49,12 @@ export type AnalysisResult = {
   diagnostics: Diagnostic[];
 };
 
+export type AnalysisPartial = {
+  revision: number;
+  method: MethodSummary;
+  diagnostics: Diagnostic[];
+};
+
 export type CfgNode = {
   id: string;
   kind: string;
@@ -188,6 +194,7 @@ export function analyzeProject(projectId: string) {
 export async function analyzeProjectStream(
   projectId: string,
   onProgress: (stage: string) => void,
+  onPartial: (partial: AnalysisPartial) => void,
 ): Promise<AnalysisResult> {
   const response = await fetch(`/api/v1/projects/${projectId}/analyze/stream`, {
     method: "POST", credentials: "include", cache: "no-store",
@@ -210,6 +217,7 @@ export async function analyzeProjectStream(
       if (!eventName || !data) continue;
       if (eventName === "started") onProgress("started");
       if (eventName === "progress") onProgress((JSON.parse(data) as { stage: string }).stage);
+      if (eventName === "partial") onPartial(JSON.parse(data) as AnalysisPartial);
       if (eventName === "completed") result = JSON.parse(data) as AnalysisResult;
       if (eventName === "failed") {
         const failure = JSON.parse(data) as { code?: string; message?: string };

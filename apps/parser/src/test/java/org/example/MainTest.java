@@ -64,7 +64,12 @@ class MainTest {
         assertEquals(0, cli.exit());
         assertTrue(cli.stderr().contains("progress: source_loaded"));
         assertTrue(cli.stderr().contains("progress: ast_ready"));
+        assertTrue(cli.stderr().contains("partial: {"));
         assertTrue(cli.stderr().contains("progress: model_ready"));
+        String partialLine = cli.stderr().lines().filter(line -> line.startsWith("partial: ")).findFirst().orElseThrow();
+        JsonNode partial = JSON.readTree(partialLine.substring("partial: ".length()));
+        assertEquals("Example.f(int,int)", partial.at("/method/id").asText());
+        assertEquals(0, partial.at("/method/complexity/hotspots").size());
         assertEquals(1, root.get("protocol_version").asInt());
         assertEquals("completed", root.get("status").asText());
         assertEquals(0, root.get("diagnostics").size());

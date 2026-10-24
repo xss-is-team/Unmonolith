@@ -65,6 +65,12 @@ struct ParserResult {
     cfgs: Vec<Cfg>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct ParserPartial {
+    pub(crate) method: Method,
+    pub(crate) diagnostics: Vec<Diagnostic>,
+}
+
 struct CapturedOutput {
     bytes: Vec<u8>,
     overflowed: bool,
@@ -354,8 +360,11 @@ async fn read_bounded(
             while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
                 let line: Vec<_> = pending.drain(..=newline).collect();
                 if let Ok(line) = std::str::from_utf8(&line) {
-                    if let Some(stage) = line.trim().strip_prefix("progress: ") {
+                    let line = line.trim();
+                    if let Some(stage) = line.strip_prefix("progress: ") {
                         let _ = progress.send(stage.to_owned());
+                    } else if line.starts_with("partial: ") {
+                        let _ = progress.send(line.to_owned());
                     }
                 }
             }
@@ -415,6 +424,10 @@ esac
 mode=
 IFS= read -r mode < "$2" || :
 case "$mode" in
+  streaming)
+    printf '%s\n' 'progress: ast_ready' 'partial: {"method":{"id":"Main.run()","name":"run","source_range":{"start":13,"length":13,"line":1},"complexity":{"cyclomatic_complexity":1,"cognitive_complexity":0,"max_nesting_depth":0,"hotspots":[]}},"diagnostics":[]}' >&2
+    printf %s '{"protocol_version":1,"status":"completed","package":null,"types":[{"kind":"class"}],"methods":[{"id":"Main.run()","name":"run","source_range":{"start":13,"length":13,"line":1,"end_line":1}}],"diagnostics":[]}'
+    ;;
   valid)
     chunk=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
     i=0
@@ -488,6 +501,24 @@ esac
                 .analyze(self.project_dir.clone(), self.revision, "Main.java")
                 .await
         }
+
+        async fn analyze_with_progress(
+            &self,
+        ) -> (
+            Result<super::AnalysisResult, crate::error::ApiError>,
+            Vec<String>,
+        ) {
+            let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+            let result = self
+                .analyzer
+                .analyze_with_progress(self.project_dir.clone(), self.revision, "Main.java", sender)
+                .await;
+            let mut events = Vec::new();
+            while let Ok(event) = receiver.try_recv() {
+                events.push(event);
+            }
+            (result, events)
+        }
     }
 
     impl Drop for Fixture {
@@ -517,6 +548,24 @@ esac
         assert_eq!(artifact["revision"], fixture.revision);
         assert_eq!(artifact["types"][0]["kind"], "class");
         assert_eq!(artifact["methods"][0]["source_range"]["end_line"], 1);
+    }
+
+    #[tokio::test]
+    async fn forwards_partial_method_results_from_parser_stderr() {
+        let fixture = Fixture::new("streaming", Duration::from_secs(2), 4096).await;
+
+        let (result, events) = fixture.analyze_with_progress().await;
+
+        assert!(result.is_ok());
+        assert!(events.contains(&"ast_ready".to_owned()));
+        let partial = events
+            .iter()
+            .find(|event| event.starts_with("partial: "))
+            .unwrap();
+        let partial: Value =
+            serde_json::from_str(partial.strip_prefix("partial: ").unwrap()).unwrap();
+        assert_eq!(partial["method"]["id"], "Main.run()");
+        assert_eq!(partial["diagnostics"], serde_json::json!([]));
     }
 
     #[tokio::test]

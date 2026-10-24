@@ -18,7 +18,6 @@ import {
   GitBranch,
   History,
   LoaderCircle,
-  Play,
   RefreshCw,
   Save,
   ShieldCheck,
@@ -35,7 +34,10 @@ import {
   getProjectRevisions,
   getProjectWorkspace,
   MAX_SOURCE_BYTES,
+  type AnalysisPartial,
   type AnalysisResult,
+  type Diagnostic,
+  type MethodSummary,
   type Project,
   updateProjectSource,
 } from "@/lib/api";
@@ -140,6 +142,11 @@ function WorkspaceEditor({
   const analysisInFlightRef = useRef(false);
   const rerunAnalysisRef = useRef(false);
   const analysisTimerRef = useRef<number | undefined>(undefined);
+  const partialFlushTimerRef = useRef<number | undefined>(undefined);
+  const partialAccumulatorRef = useRef({
+    methods: new Map<string, MethodSummary>(),
+    diagnostics: new Map<string, Diagnostic>(),
+  });
   const runAnalysisRef = useRef<() => Promise<void>>(async () => {});
   const [sourceStats, setSourceStats] = useState(() => sourceMetrics(initialSource));
   const [savedSource, setSavedSource] = useState(initialSource);
@@ -147,14 +154,28 @@ function WorkspaceEditor({
   const [saveError, setSaveError] = useState("");
   const [analysisState, setAnalysisState] = useState<"idle" | "loading" | "complete" | "unavailable" | "error">("idle");
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [partialAnalysis, setPartialAnalysis] = useState<{ methods: MethodSummary[]; diagnostics: Diagnostic[] } | null>(null);
   const [analysisError, setAnalysisError] = useState("");
   const [selectedSourceRange, setSelectedSourceRange] = useState<{ start: number; length: number } | null>(null);
   const [cfgMethodId, setCfgMethodId] = useState("");
   const [viewMode, setViewMode] = useState<"source" | "cfg">("source");
   const previousViewMode = useRef(viewMode);
   const workspaceRef = useRef<HTMLElement>(null);
+  const autoAnalysisStartedRef = useRef(false);
   const [reloading, setReloading] = useState(false);
   const { lineCount, byteLength } = sourceStats;
+  const displayedAnalysis = analysisState === "complete" && !dirty
+    ? analysis
+    : analysisState === "loading" && !dirty && partialAnalysis
+      && (partialAnalysis.methods.length > 0 || partialAnalysis.diagnostics.length > 0)
+      ? {
+        protocol_version: 1 as const,
+        status: "partial" as const,
+        revision,
+        methods: partialAnalysis.methods,
+        diagnostics: partialAnalysis.diagnostics,
+      }
+      : null;
   const selectSourceRange = useCallback((range: { start: number; length: number } | null) => {
     setSelectedSourceRange(range);
   }, []);
@@ -243,6 +264,7 @@ function WorkspaceEditor({
       setRevision(updated.revision);
       editorRef.current?.markSaved(source);
       setAnalysis(null);
+      setPartialAnalysis(null);
       setAnalysisState("idle");
       scheduleAnalysis();
       setSaveStatus("saved");
@@ -285,6 +307,7 @@ function WorkspaceEditor({
   useEffect(() => () => {
     if (autosaveTimerRef.current !== undefined) window.clearTimeout(autosaveTimerRef.current);
     if (analysisTimerRef.current !== undefined) window.clearTimeout(analysisTimerRef.current);
+    if (partialFlushTimerRef.current !== undefined) window.clearTimeout(partialFlushTimerRef.current);
   }, []);
 
   const runAnalysis = useCallback(async () => {
@@ -293,18 +316,47 @@ function WorkspaceEditor({
     analysisInFlightRef.current = true;
     setAnalysisState("loading");
     setAnalysisError("");
+    if (partialFlushTimerRef.current !== undefined) window.clearTimeout(partialFlushTimerRef.current);
+    partialFlushTimerRef.current = undefined;
+    partialAccumulatorRef.current = { methods: new Map(), diagnostics: new Map() };
+    setPartialAnalysis({ methods: [], diagnostics: [] });
     setSelectedSourceRange(null);
     try {
-      const result = await analyzeProjectStream(projectId, (stage) => setAnalysisError(analysisProgressLabel(stage)));
+      const result = await analyzeProjectStream(
+        projectId,
+        (stage) => setAnalysisError(analysisProgressLabel(stage)),
+        (partial: AnalysisPartial) => {
+          if (partial.revision !== requestedRevision || revisionRef.current !== requestedRevision || dirtyRef.current) return;
+          const accumulator = partialAccumulatorRef.current;
+          accumulator.methods.set(partial.method.id, partial.method);
+          for (const diagnostic of partial.diagnostics) {
+            accumulator.diagnostics.set(diagnosticKey(diagnostic), diagnostic);
+          }
+          if (partialFlushTimerRef.current === undefined) {
+            partialFlushTimerRef.current = window.setTimeout(() => {
+              partialFlushTimerRef.current = undefined;
+              const current = partialAccumulatorRef.current;
+              setPartialAnalysis({ methods: [...current.methods.values()], diagnostics: [...current.diagnostics.values()] });
+            }, 60);
+          }
+        },
+      );
+      if (partialFlushTimerRef.current !== undefined) window.clearTimeout(partialFlushTimerRef.current);
+      partialFlushTimerRef.current = undefined;
       if (result.revision !== requestedRevision || revisionRef.current !== requestedRevision || dirtyRef.current) {
         setAnalysis(null);
+        setPartialAnalysis(null);
         setAnalysisState("idle");
         if (!dirtyRef.current && revisionRef.current !== requestedRevision) rerunAnalysisRef.current = true;
         return;
       }
       setAnalysis(result);
+      setPartialAnalysis(null);
       setAnalysisState("complete");
     } catch (cause) {
+      if (partialFlushTimerRef.current !== undefined) window.clearTimeout(partialFlushTimerRef.current);
+      partialFlushTimerRef.current = undefined;
+      setPartialAnalysis(null);
       if (revisionRef.current !== requestedRevision || dirtyRef.current) {
         setAnalysis(null);
         setAnalysisState("idle");
@@ -331,15 +383,10 @@ function WorkspaceEditor({
   }, [runAnalysis]);
 
   useEffect(() => {
-    function onShortcut(event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-        event.preventDefault();
-        void runAnalysis();
-      }
-    }
-    window.addEventListener("keydown", onShortcut);
-    return () => window.removeEventListener("keydown", onShortcut);
-  }, [runAnalysis]);
+    if (autoAnalysisStartedRef.current || analysis || dirtyRef.current) return;
+    autoAnalysisStartedRef.current = true;
+    void runAnalysisRef.current();
+  }, [analysis]);
 
   useEffect(() => {
     if (!selectedSourceRange || !window.matchMedia("(max-width: 820px)").matches) return;
@@ -369,9 +416,6 @@ function WorkspaceEditor({
           </Button>
           <Button className="action-button action-button--quiet" onClick={() => { setHistoryOpen((open) => !open); setShowRevisionDiff(false); }} aria-expanded={historyOpen}>
             <History /> История
-          </Button>
-          <Button className="action-button action-button--primary" onClick={() => void runAnalysis()} disabled={dirty || analysisState === "loading"} title="Анализ сохранённой версии · Ctrl+Enter" aria-keyshortcuts="Control+Enter Meta+Enter">
-            {analysisState === "loading" ? <LoaderCircle className="spin" /> : <Play />}{analysisState === "loading" ? "Анализируем" : "Запустить анализ"}
           </Button>
         </div>
         <Link className="back-link" href="/"><ArrowLeft size={15} /> Другой файл</Link>
@@ -465,19 +509,19 @@ function WorkspaceEditor({
         <aside className="analysis-panel">
           <div className="panel-heading"><div><span className="panel-kicker">ОТЧЁТ</span><h2>Анализ кода</h2></div><span className={`worker-mark worker-mark--${analysisState}`}><Sparkles size={16} /></span></div>
 
-          {analysisState === "complete" && analysis && !dirty ? (
-            <div className="analysis-result">
-              <div className="result-banner"><span className="result-check"><Check size={15} /></span><div><strong>{analysis.status === "completed" ? "Анализ завершён" : "Частичный результат"}</strong><small>Ревизия {analysis.revision} · протокол {analysis.protocol_version}</small></div></div>
-              <div className="result-stats"><div><strong>{analysis.methods.length}</strong><span>{russianNoun(analysis.methods.length, "метод", "метода", "методов")}</span></div><div><strong>{analysis.diagnostics.length}</strong><span>{russianNoun(analysis.diagnostics.length, "замечание", "замечания", "замечаний")}</span></div></div>
-              {analysis.methods.length ? <div className="method-list"><span className="list-label">МЕТОДЫ <i>·</i> НАЖМИТЕ, ЧТОБЫ ОТКРЫТЬ В КОДЕ</span>{analysis.methods.slice(0, 12).map((method) => <button className={`method-row${selectedSourceRange?.start === method.source_range.start ? " method-row--active" : ""}`} type="button" key={method.id} onClick={() => { setViewMode("source"); setSelectedSourceRange(method.source_range); }}><Code2 size={14} /><span className="method-row-copy"><span title={method.id}>{method.id}</span>{method.complexity ? <small className={`method-complexity${method.complexity.cyclomatic_complexity > 20 ? " method-complexity--high" : method.complexity.cyclomatic_complexity > 10 ? " method-complexity--medium" : ""}`} title="Цикломатическая · когнитивная · макс. вложенность">CC {method.complexity.cyclomatic_complexity} · Cog {method.complexity.cognitive_complexity} · D {method.complexity.max_nesting_depth}</small> : null}</span><small>стр. {method.source_range.line ?? "—"}</small><ArrowUpRight className="method-jump" size={13} /></button>)}{analysis.methods.length > 12 ? <small className="more-methods">Показаны первые 12 из {analysis.methods.length}</small> : null}</div> : null}
-              {analysis.diagnostics.length ? <div className="diagnostic-list"><span className="list-label">ДИАГНОСТИКИ <i>·</i> ПЕРЕЙТИ К СТРОКЕ</span>{analysis.diagnostics.map((item, index) => <button className={`diagnostic-item diagnostic-item--${item.severity}${selectedSourceRange?.start === item.source_range.start ? " diagnostic-item--active" : ""}`} type="button" key={`${item.code}-${index}`} onClick={() => { setViewMode("source"); setSelectedSourceRange(item.source_range); }}><span className={`diagnostic-dot diagnostic-dot--${item.severity}`} /><span className="diagnostic-copy"><strong>{item.code}</strong><span>{item.message}</span><small>Строка {item.source_range.line ?? "—"}</small></span><ArrowUpRight className="diagnostic-jump" size={14} /></button>)}</div> : <div className="empty-diagnostics"><Check size={15} /> Замечаний нет</div>}
+          {displayedAnalysis ? (
+            <div className={`analysis-result${analysisState === "loading" ? " analysis-result--streaming" : ""}`}>
+              <div className="result-banner"><span className="result-check">{analysisState === "loading" ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}</span><div><strong>{analysisState === "loading" ? "Промежуточные результаты" : displayedAnalysis.status === "completed" ? "Анализ завершён" : "Частичный результат"}</strong><small>{analysisState === "loading" ? `Ревизия ${displayedAnalysis.revision} · анализ продолжается` : `Ревизия ${displayedAnalysis.revision} · протокол ${displayedAnalysis.protocol_version}`}</small></div></div>
+              <div className="result-stats"><div><strong>{displayedAnalysis.methods.length}</strong><span>{analysisState === "loading" ? "найдено методов" : russianNoun(displayedAnalysis.methods.length, "метод", "метода", "методов")}</span></div><div><strong>{displayedAnalysis.diagnostics.length}</strong><span>{analysisState === "loading" ? "замечаний пока" : russianNoun(displayedAnalysis.diagnostics.length, "замечание", "замечания", "замечаний")}</span></div></div>
+              {displayedAnalysis.methods.length ? <div className="method-list"><span className="list-label">МЕТОДЫ <i>·</i> НАЖМИТЕ, ЧТОБЫ ОТКРЫТЬ В КОДЕ</span>{displayedAnalysis.methods.slice(0, 12).map((method) => <button className={`method-row${selectedSourceRange?.start === method.source_range.start ? " method-row--active" : ""}`} type="button" key={method.id} onClick={() => { setViewMode("source"); setSelectedSourceRange(method.source_range); }}><Code2 size={14} /><span className="method-row-copy"><span title={method.id}>{method.id}</span>{method.complexity ? <small className={`method-complexity${method.complexity.cyclomatic_complexity > 20 ? " method-complexity--high" : method.complexity.cyclomatic_complexity > 10 ? " method-complexity--medium" : ""}`} title="Цикломатическая · когнитивная · макс. вложенность">CC {method.complexity.cyclomatic_complexity} · Cog {method.complexity.cognitive_complexity} · D {method.complexity.max_nesting_depth}</small> : null}</span><small>стр. {method.source_range.line ?? "—"}</small><ArrowUpRight className="method-jump" size={13} /></button>)}{displayedAnalysis.methods.length > 12 ? <small className="more-methods">Показаны первые 12 из {displayedAnalysis.methods.length}</small> : null}</div> : null}
+              {displayedAnalysis.diagnostics.length ? <div className="diagnostic-list"><span className="list-label">ДИАГНОСТИКИ <i>·</i> ПЕРЕЙТИ К СТРОКЕ</span>{displayedAnalysis.diagnostics.map((item, index) => <button className={`diagnostic-item diagnostic-item--${item.severity}${selectedSourceRange?.start === item.source_range.start ? " diagnostic-item--active" : ""}`} type="button" key={`${item.code}-${index}`} onClick={() => { setViewMode("source"); setSelectedSourceRange(item.source_range); }}><span className={`diagnostic-dot diagnostic-dot--${item.severity}`} /><span className="diagnostic-copy"><strong>{item.code}</strong><span>{item.message}</span><small>Строка {item.source_range.line ?? "—"}</small></span><ArrowUpRight className="diagnostic-jump" size={14} /></button>)}</div> : analysisState === "loading" ? <div className="empty-diagnostics">Ожидаем диагностики по завершении разбора.</div> : <div className="empty-diagnostics"><Check size={15} /> Замечаний нет</div>}
             </div>
           ) : analysisState === "unavailable" ? (
             <div className="worker-state worker-state--unavailable"><span className="state-icon"><Clock3 /></span><strong>Анализатор недоступен</strong><p>{analysisError}</p><Button variant="outline" onClick={() => void runAnalysis()}><RefreshCw /> Повторить анализ</Button><div className="state-footnote"><span className="status-pip status-pip--amber" /> API доступен · анализатор не ответил</div></div>
           ) : analysisState === "error" ? (
             <div className="worker-state worker-state--error"><span className="state-icon"><AlertCircle /></span><strong>Анализ не выполнен</strong><p>{analysisError}</p><Button variant="outline" onClick={() => void runAnalysis()}><RefreshCw /> Попробовать снова</Button></div>
           ) : (
-            <div className="worker-state"><span className="state-icon"><ShieldCheck /></span><strong>{analysisState === "loading" ? "Разбираем исходник" : dirty ? "Отчёт устарел" : "Отчёт появится здесь"}</strong><p>{analysisState === "loading" ? (analysisError || "Ищем методы и диагностики.") : dirty ? `Результат относится к сохранённой ревизии ${analysis?.revision ?? revision}. После автосохранения он обновится.` : "Нажмите «Запустить анализ» — найдём методы и замечания."}</p>{analysisState === "loading" ? <div className="state-footnote"><span className="status-pip status-pip--pulse" />Редакция {revision}</div> : null}</div>
+            <div className="worker-state"><span className="state-icon"><ShieldCheck /></span><strong>{analysisState === "loading" ? "Разбираем исходник" : dirty ? "Отчёт устарел" : "Анализ запустится автоматически"}</strong><p>{analysisState === "loading" ? (analysisError || "Ищем методы и диагностики.") : dirty ? `Результат относится к сохранённой ревизии ${analysis?.revision ?? revision}. После автосохранения он обновится.` : "Результаты появятся здесь после завершения разбора."}</p>{analysisState === "loading" ? <div className="state-footnote"><span className="status-pip status-pip--pulse" />Редакция {revision}</div> : null}</div>
           )}
 
         </aside>
@@ -502,6 +546,11 @@ function saveErrorMessage(cause: unknown) {
     default:
       return `Не удалось сохранить (HTTP ${cause.status}).`;
   }
+}
+
+function diagnosticKey(diagnostic: Diagnostic) {
+  const range = diagnostic.source_range;
+  return `${diagnostic.code}:${range.start}:${range.length}:${diagnostic.message}`;
 }
 
 function analysisErrorMessage(cause: unknown) {

@@ -57,25 +57,29 @@ public class Main {
      * If binding resolution itself throws, falls back to a syntax-only parse.
      */
     static Map<String, Object> parse(String source, String unitName) {
-        return parse(source, unitName, System.err);
+        return parse(source, unitName, null);
     }
 
     private static Map<String, Object> parse(String source, String unitName, PrintStream progress) {
         try {
-            progress.println("progress: parsing_with_bindings");
+            emitProgress(progress, "progress: parsing_with_bindings");
             var ast = createAst(source, unitName, true);
-            progress.println("progress: ast_ready");
-            Map<String, Object> result = new AstJson(ast, source, true).convert();
-            progress.println("progress: model_ready");
+            emitProgress(progress, "progress: ast_ready");
+            Map<String, Object> result = new AstJson(ast, source, true, progress).convert();
+            emitProgress(progress, "progress: model_ready");
             return result;
         } catch (RuntimeException e) {
-            progress.println("progress: parsing_syntax_only");
+            emitProgress(progress, "progress: parsing_syntax_only");
             var ast = createAst(source, unitName, false);
-            progress.println("progress: ast_ready");
-            Map<String, Object> result = new AstJson(ast, source, false).convert();
-            progress.println("progress: model_ready");
+            emitProgress(progress, "progress: ast_ready");
+            Map<String, Object> result = new AstJson(ast, source, false, progress).convert();
+            emitProgress(progress, "progress: model_ready");
             return result;
         }
+    }
+
+    private static void emitProgress(PrintStream progress, String message) {
+        if (progress != null) progress.println(message);
     }
 
     private static CompilationUnit createAst(String source, String unitName, boolean bindings) {

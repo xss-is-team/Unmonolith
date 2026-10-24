@@ -453,11 +453,18 @@ async fn analyze_project_stream(
         tokio::pin!(analysis);
         let result = loop {
             tokio::select! {
-                result = &mut analysis => break result,
+                result = &mut analysis => {
+                    while let Ok(stage) = progress_rx.try_recv() {
+                        if let Some(event) = parser_event(revision, &stage) {
+                            if stream.send(Ok(event)).await.is_err() { return; }
+                        }
+                    }
+                    break result;
+                },
                 Some(stage) = progress_rx.recv() => {
-                    let data = serde_json::json!({"stage": stage, "revision": revision});
-                    let event = format!("event: progress\ndata: {data}\n\n");
-                    if stream.send(Ok(event)).await.is_err() { return; }
+                    if let Some(event) = parser_event(revision, &stage) {
+                        if stream.send(Ok(event)).await.is_err() { return; }
+                    }
                 }
             }
         };
@@ -480,6 +487,27 @@ async fn analyze_project_stream(
         .header(header::CONNECTION, "keep-alive")
         .body(Body::from_stream(ReceiverStream::new(rx)))
         .expect("SSE response headers are valid"))
+}
+
+fn parser_event(revision: u64, message: &str) -> Option<String> {
+    if let Some(json) = message.strip_prefix("partial: ") {
+        return match serde_json::from_str::<crate::analyzer::ParserPartial>(json) {
+            Ok(partial) => {
+                let data = serde_json::json!({
+                    "revision": revision,
+                    "method": partial.method,
+                    "diagnostics": partial.diagnostics,
+                });
+                Some(format!("event: partial\ndata: {data}\n\n"))
+            }
+            Err(error) => {
+                tracing::warn!(%error, "Java analyzer emitted an invalid partial result");
+                None
+            }
+        };
+    }
+    let data = serde_json::json!({"stage": message, "revision": revision});
+    Some(format!("event: progress\ndata: {data}\n\n"))
 }
 
 #[utoipa::path(
@@ -562,8 +590,23 @@ mod tests {
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    use super::{app, normalize_java_filename, AppState};
+    use super::{app, normalize_java_filename, parser_event, AppState};
     use crate::Config;
+
+    #[test]
+    fn parser_event_serializes_revision_scoped_partial_results() {
+        let event = parser_event(
+            9,
+            r#"partial: {"method":{"id":"Main.run()","name":"run","source_range":{"start":10,"length":8,"line":1},"complexity":{"cyclomatic_complexity":1,"cognitive_complexity":0,"max_nesting_depth":0,"hotspots":[]}},"diagnostics":[]}"#,
+        )
+        .unwrap();
+
+        assert!(event.starts_with("event: partial\n"));
+        let data = event.split_once("data: ").unwrap().1.trim();
+        let data: Value = serde_json::from_str(data).unwrap();
+        assert_eq!(data["revision"], 9);
+        assert_eq!(data["method"]["id"], "Main.run()");
+    }
 
     struct TestData(PathBuf);
 
