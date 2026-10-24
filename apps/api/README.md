@@ -40,11 +40,17 @@ opaque, revision-local, URL-safe value for:
 
 ```text
 GET /api/v1/projects/{project_id}/methods/{selector}/cfg
+GET /api/v1/projects/{project_id}/methods/{selector}/analysis
 ```
 
-That endpoint returns the nested CFG object unchanged, including parser node
-IDs, edge fields, labels, reachability, and UTF-16 source ranges. Both endpoints
-return `404 analysis_not_found` until the current source revision is analyzed.
+The CFG endpoint returns the nested CFG object unchanged, including parser node
+IDs, edge fields, labels, reachability, and UTF-16 source ranges. The analysis
+endpoint returns a revision envelope around the parser's exact nested
+`analysis` object: its complexity estimate, loop fragments and findings. Any
+fragment/finding `node_ids` refer to the same revision's CFG, and its source
+ranges remain UTF-16. These endpoints return `404 analysis_not_found` until the
+current source revision is analyzed; a method without analysis returns
+`404 method_analysis_not_found`.
 
 The transform endpoint accepts only this contract:
 
@@ -124,14 +130,20 @@ Example request:
 }
 ```
 
-The synchronous report contains both compilation results and one baseline and
-candidate observation per executed case. Observations compare stdout bytes,
+The synchronous report is atomically persisted under the owned project and can
+be retrieved with
+`GET /api/v1/projects/{project_id}/verify/{report_id}`. It contains its UUID,
+creation time, requested-case count, both compilation results and one baseline
+and candidate observation per executed case. Observations compare stdout bytes,
 stderr bytes, exit status, timeout state and output-overflow state. Streams have
 an optional exact UTF-8 value plus base64 bytes, so non-UTF-8 output remains
-unambiguous. `passed` means only that the supplied cases matched; it is not a
-claim of program equivalence. A timeout or output overflow makes that case fail
-even when both revisions hit the same limit, because complete behavior was not
-observed. Compilation or missing-main failures return a
+unambiguous. `behaviorally_verified` is true only when the runner returns a
+complete `passed` result for every supplied non-empty fixture; it remains false
+for mismatches and compilation failures. Missing fixtures and runner failures
+are request/infrastructure errors, never successful verification. A passing
+report applies only to its fixtures and is not a claim of program equivalence.
+A timeout or output overflow makes that case fail even when both revisions hit
+the same limit, because complete behavior was not observed. Compilation or missing-main failures return a
 structured `compilation_failed` report with zero executed cases. Missing Docker,
 image, or container lifecycle failures return an explicit `503` and never fall
 back to host Java execution.
@@ -158,8 +170,8 @@ OpenAPI document at <http://127.0.0.1:3000/api/v1/openapi.json>.
 
 Implemented: health, guest sessions, single `.java` projects, owned metadata and
 source access, revision-checked source updates, external analysis, CFG listing
-and retrieval, `replace_condition`, and isolated behavioral verification of two
-stored revisions. If no real worker JAR is configured, analysis and
+and retrieval, method complexity/findings retrieval, `replace_condition`, and
+persisted isolated behavioral verification of two stored revisions. If no real worker JAR is configured, analysis and
 transformation return `503 analyzer_unavailable`; if no runner image is
 configured, verification returns `503 runner_unavailable`.
 
