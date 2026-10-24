@@ -2,8 +2,10 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -33,6 +35,8 @@ import {
   type Project,
   updateProjectSource,
 } from "@/lib/api";
+
+gsap.registerPlugin(useGSAP);
 
 const JavaEditor = dynamic(
   () => import("@/components/java-editor").then((module) => module.JavaEditor),
@@ -118,12 +122,47 @@ function WorkspaceEditor({
   const [analysisError, setAnalysisError] = useState("");
   const [selectedSourceRange, setSelectedSourceRange] = useState<{ start: number; length: number } | null>(null);
   const [viewMode, setViewMode] = useState<"source" | "cfg">("source");
+  const previousViewMode = useRef(viewMode);
+  const workspaceRef = useRef<HTMLElement>(null);
   const [reloading, setReloading] = useState(false);
   const dirty = source !== savedSource;
   const lineCount = source.length ? source.split("\n").length : 0;
   const selectSourceRange = useCallback((range: { start: number; length: number } | null) => {
     setSelectedSourceRange(range);
   }, []);
+
+  useGSAP(() => {
+    const media = gsap.matchMedia();
+    media.add("(prefers-reduced-motion: no-preference)", () => {
+      const timeline = gsap.timeline({ defaults: { ease: "power2.out" } });
+      timeline
+        .fromTo(".workspace-top", { autoAlpha: 0, y: -7 }, { autoAlpha: 1, y: 0, duration: 0.28 })
+        .fromTo(".workspace-viewbar", { autoAlpha: 0, y: 7 }, { autoAlpha: 1, y: 0, duration: 0.28 }, "-=0.12")
+        .fromTo(".editor-card, .cfg-panel, .analysis-panel", { autoAlpha: 0, y: 9 }, { autoAlpha: 1, y: 0, duration: 0.34, stagger: 0.05 }, "-=0.1");
+    });
+    return () => media.revert();
+  }, { scope: workspaceRef });
+
+  useGSAP(() => {
+    if (previousViewMode.current === viewMode) return;
+    previousViewMode.current = viewMode;
+
+    const media = gsap.matchMedia();
+    media.add("(prefers-reduced-motion: no-preference)", () => {
+      gsap.fromTo(viewMode === "source" ? ".editor-card" : ".cfg-panel", { autoAlpha: 0, y: 7 }, { autoAlpha: 1, y: 0, duration: 0.24, ease: "power2.out" });
+    });
+    return () => media.revert();
+  }, { scope: workspaceRef, dependencies: [viewMode], revertOnUpdate: true });
+
+  useGSAP(() => {
+    if (analysisState !== "complete") return;
+
+    const media = gsap.matchMedia();
+    media.add("(prefers-reduced-motion: no-preference)", () => {
+      gsap.fromTo(".method-row, .diagnostic-item", { autoAlpha: 0, y: 5 }, { autoAlpha: 1, y: 0, duration: 0.2, stagger: 0.025, ease: "power2.out" });
+    });
+    return () => media.revert();
+  }, { scope: workspaceRef, dependencies: [analysisState], revertOnUpdate: true });
 
   async function saveSource() {
     if (!dirty || saveState === "saving") return;
@@ -198,7 +237,7 @@ function WorkspaceEditor({
   }
 
   return (
-    <main className="workspace-screen workspace-screen--ide">
+    <main ref={workspaceRef} className="workspace-screen workspace-screen--ide">
       <header className="workspace-top">
         <div className="ide-project-path"><Brand compact /><div className="workspace-breadcrumb"><span>ФАЙЛ</span><i>/</i><strong>{project.filename}</strong><small>РЕД. {revision}</small></div></div>
         <div className="workspace-actions ide-actions">
