@@ -92,6 +92,7 @@ impl AppState {
         list_methods,
         get_method_cfg,
         get_method_analysis,
+        get_project_graph,
         transform_project,
         verify_project,
         get_verification_report
@@ -118,6 +119,13 @@ impl AppState {
         CfgEdge,
         MethodAnalysisResponse,
         MethodAnalysis,
+        ProjectGraphResponse,
+        ProjectGraph,
+        ProjectGraphNode,
+        ProjectGraphSupertype,
+        ProjectGraphEdge,
+        ProjectGraphUnresolvedCall,
+        ProjectGraphStats,
         ComplexityEstimate,
         ComplexityFragment,
         AnalysisFinding,
@@ -198,6 +206,7 @@ pub fn app(state: AppState) -> Router {
             "/projects/{project_id}/methods/{method_selector}/analysis",
             get(get_method_analysis),
         )
+        .route("/projects/{project_id}/graph", get(get_project_graph))
         .route("/projects/{project_id}/transform", post(transform_project))
         .route("/projects/{project_id}/verify", post(verify_project))
         .route(
@@ -291,6 +300,78 @@ struct MethodAnalysis {
     complexity: ComplexityEstimate,
     fragments: Vec<ComplexityFragment>,
     findings: Vec<AnalysisFinding>,
+}
+
+// Documentation-only schema mirroring the Java parser's `project_graph` output
+// (see apps/parser ProjectGraph.build()); the endpoint returns that JSON verbatim.
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct ProjectGraphResponse {
+    #[schema(minimum = 1)]
+    revision: u64,
+    graph: Option<ProjectGraph>,
+}
+
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct ProjectGraph {
+    version: u32,
+    scope: String,
+    nodes: Vec<ProjectGraphNode>,
+    edges: Vec<ProjectGraphEdge>,
+    unresolved_calls: Vec<ProjectGraphUnresolvedCall>,
+    stats: ProjectGraphStats,
+}
+
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct ProjectGraphNode {
+    id: String,
+    kind: String,
+    name: String,
+    qualified_name: Option<String>,
+    method_id: Option<String>,
+    cfg_entry: Option<String>,
+    external_supertypes: Option<Vec<ProjectGraphSupertype>>,
+    source_range: SourceRange,
+}
+
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct ProjectGraphSupertype {
+    name: String,
+    relation: String,
+    resolved: bool,
+}
+
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct ProjectGraphEdge {
+    from: String,
+    to: String,
+    kind: String,
+    count: u64,
+    sites: Vec<SourceRange>,
+}
+
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct ProjectGraphUnresolvedCall {
+    id: String,
+    from: String,
+    kind: String,
+    name: String,
+    expression: String,
+    source_range: SourceRange,
+    reason: String,
+}
+
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct ProjectGraphStats {
+    resolved_internal_calls: u64,
+    external_calls: u64,
+    unresolved_calls: u64,
 }
 
 #[derive(utoipa::ToSchema)]
@@ -830,6 +911,43 @@ async fn get_method_analysis(
 }
 
 #[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/graph",
+    tag = "Analysis",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path)),
+    responses(
+        (
+            status = 200,
+            description = "Project graph persisted by the Java parser for the current published revision. `graph` is JSON null when the parser could not build the graph (see the `project_graph_failed` diagnostic)",
+            body = ProjectGraphResponse
+        ),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody),
+        (status = 409, body = ApiErrorBody),
+        (status = 500, body = ApiErrorBody)
+    )
+)]
+async fn get_project_graph(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    let artifact = load_analysis(&directory, project.revision).await?;
+    let graph = artifact.get("project_graph").ok_or_else(graph_invalid)?;
+    if !graph.is_null() && !graph.is_object() {
+        return Err(graph_invalid());
+    }
+    Ok(Json(serde_json::json!({
+        "revision": project.revision,
+        "graph": graph,
+    })))
+}
+
+#[utoipa::path(
     post,
     path = "/api/v1/projects/{project_id}/transform",
     tag = "Transformations",
@@ -1252,6 +1370,14 @@ fn method_analysis_not_found() -> ApiError {
         StatusCode::NOT_FOUND,
         "method_analysis_not_found",
         "method analysis is not available for the current revision",
+    )
+}
+
+fn graph_invalid() -> ApiError {
+    ApiError::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "graph_invalid",
+        "stored project graph is missing or has an unexpected shape",
     )
 }
 
@@ -1749,6 +1875,63 @@ esac
             .unwrap();
     }
 
+    /// Mirrors the Java parser's `project_graph` shape (apps/parser ProjectGraph.build()):
+    /// type and callable nodes, edges with sites, unresolved calls, stats.
+    fn project_graph_fixture() -> Value {
+        serde_json::json!({
+            "version": 1,
+            "scope": "compilation_unit",
+            "nodes": [
+                {
+                    "id": "t0",
+                    "kind": "class",
+                    "name": "Example",
+                    "qualified_name": "Example",
+                    "external_supertypes": [
+                        {"name": "java.io.Serializable", "relation": "implements", "resolved": true}
+                    ],
+                    "source_range": {"start": 0, "length": 15, "line": 1, "end_line": 1}
+                },
+                {
+                    "id": "c0",
+                    "kind": "method",
+                    "name": "process",
+                    "method_id": "Example.process(int)",
+                    "cfg_entry": "m1.n0",
+                    "source_range": {"start": 29, "length": 67, "line": 2, "end_line": 4}
+                }
+            ],
+            "edges": [
+                {
+                    "from": "t0",
+                    "to": "c0",
+                    "kind": "contains",
+                    "count": 1,
+                    "sites": [{"start": 29, "length": 67, "line": 2, "end_line": 4}]
+                },
+                {
+                    "from": "c0",
+                    "to": "t0",
+                    "kind": "depends_on",
+                    "count": 1,
+                    "sites": [{"start": 67, "length": 9, "line": 3, "end_line": 3}]
+                }
+            ],
+            "unresolved_calls": [
+                {
+                    "id": "u0",
+                    "from": "c0",
+                    "kind": "method_call",
+                    "name": "missing",
+                    "expression": "missing(1)",
+                    "source_range": {"start": 60, "length": 9, "line": 3, "end_line": 3},
+                    "reason": "unresolved_binding"
+                }
+            ],
+            "stats": {"resolved_internal_calls": 0, "external_calls": 1, "unresolved_calls": 1}
+        })
+    }
+
     fn transform_request(
         cookie: &str,
         project_id: &str,
@@ -2202,6 +2385,170 @@ esac
     }
 
     #[tokio::test]
+    async fn graph_returns_exact_persisted_project_graph_for_current_revision() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let project = response_json(upload(&app, &cookie, "Example.java").await).await;
+        let project_id = project["id"].as_str().unwrap();
+        let mut artifact = cfg_artifact(1);
+        artifact["project_graph"] = project_graph_fixture();
+        store_analysis(&data, &cookie, project_id, &artifact).await;
+
+        let response = app
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = response_json(response).await;
+        assert_eq!(response["revision"], 1);
+        // The parser-produced graph is returned verbatim, identifiers included.
+        assert_eq!(response["graph"], artifact["project_graph"]);
+        assert_eq!(response["graph"]["nodes"][0]["id"], "t0");
+        assert_eq!(
+            response["graph"]["nodes"][1]["method_id"],
+            "Example.process(int)"
+        );
+        assert_eq!(response["graph"]["nodes"][1]["cfg_entry"], "m1.n0");
+        assert_eq!(response["graph"]["edges"][0]["kind"], "contains");
+        assert_eq!(response["graph"]["unresolved_calls"][0]["id"], "u0");
+        assert_eq!(response["graph"]["stats"]["unresolved_calls"], 1);
+    }
+
+    #[tokio::test]
+    async fn graph_returns_null_when_parser_emitted_null_project_graph() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let project = response_json(upload(&app, &cookie, "Example.java").await).await;
+        let project_id = project["id"].as_str().unwrap();
+        let mut artifact = cfg_artifact(1);
+        artifact["project_graph"] = Value::Null;
+        store_analysis(&data, &cookie, project_id, &artifact).await;
+
+        let response = app
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = response_json(response).await;
+        assert_eq!(response["revision"], 1);
+        assert!(response["graph"].is_null());
+    }
+
+    #[tokio::test]
+    async fn graph_rejects_missing_analysis_cross_session_and_malformed_graph() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let owner = guest_cookie(&app).await;
+        let other = guest_cookie(&app).await;
+        let project = response_json(upload(&app, &owner, "Example.java").await).await;
+        let project_id = project["id"].as_str().unwrap();
+
+        // The current revision has no stored analysis yet.
+        let missing = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &owner)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(missing).await["code"], "analysis_not_found");
+
+        // Another session cannot read the project at all.
+        let foreign = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &other)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(foreign).await["code"], "project_not_found");
+
+        // An artifact without a project_graph key violates the parser contract.
+        store_analysis(&data, &owner, project_id, &cfg_artifact(1)).await;
+        let missing_key = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &owner)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_key.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response_json(missing_key).await["code"], "graph_invalid");
+
+        // A project_graph value that is neither an object nor null is malformed.
+        let mut artifact = cfg_artifact(1);
+        artifact["project_graph"] = serde_json::json!([1, 2, 3]);
+        store_analysis(&data, &owner, project_id, &artifact).await;
+        let malformed = app
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &owner)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(malformed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response_json(malformed).await["code"], "graph_invalid");
+    }
+
+    #[tokio::test]
+    async fn graph_rejects_analysis_from_a_different_revision() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let project = response_json(upload(&app, &cookie, "Example.java").await).await;
+        let project_id = project["id"].as_str().unwrap();
+        let mut artifact = cfg_artifact(1);
+        artifact["revision"] = 7.into();
+        artifact["project_graph"] = project_graph_fixture();
+        let path = project_directory(&data, &cookie, project_id)
+            .join("analysis")
+            .join("1.json");
+        fs::write(path, serde_json::to_vec(&artifact).unwrap())
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(response).await["code"],
+            "analysis_revision_mismatch"
+        );
+    }
+
+    #[tokio::test]
     async fn project_route_requires_a_session() {
         let data = TestData::new();
         let app = test_app(&data).await;
@@ -2246,6 +2593,7 @@ esac
         assert!(document["paths"]
             ["/api/v1/projects/{project_id}/methods/{method_selector}/analysis"]["get"]
             .is_object());
+        assert!(document["paths"]["/api/v1/projects/{project_id}/graph"]["get"].is_object());
         assert!(document["paths"]["/api/v1/projects/{project_id}/transform"]["post"].is_object());
         assert!(document["paths"]["/api/v1/projects/{project_id}/verify"]["post"].is_object());
         assert!(
@@ -2254,6 +2602,7 @@ esac
         );
         assert!(document["components"]["schemas"]["TransformRequest"].is_object());
         assert!(document["components"]["schemas"]["MethodAnalysisResponse"].is_object());
+        assert!(document["components"]["schemas"]["ProjectGraphResponse"].is_object());
         assert!(document["components"]["schemas"]["PersistedVerificationReport"].is_object());
         assert!(document["components"]["schemas"]["RevisionDetail"].is_object());
         assert!(
@@ -2359,6 +2708,34 @@ esac
                 .as_str()
                 .unwrap_or_default()
                 .contains("must be defined in its own file")));
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let graph_response = response_json(response).await;
+        assert_eq!(graph_response["revision"], 1);
+        assert_eq!(graph_response["graph"]["scope"], "compilation_unit");
+        assert!(graph_response["graph"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |node| node["method_id"].as_str() == Some("Example.main(String[])")
+                    && node["cfg_entry"].as_str() == Some("m0.n0")
+            ));
+        // The endpoint must return the parser's persisted graph verbatim.
+        let artifact: Value =
+            serde_json::from_slice(&fs::read(directory.join("analysis/1.json")).await.unwrap())
+                .unwrap();
+        assert_eq!(graph_response["graph"], artifact["project_graph"]);
 
         let response = app
             .clone()
