@@ -1,3 +1,4 @@
+use std::convert::Infallible;
 use std::{path::PathBuf, sync::Arc};
 
 use axum::{
@@ -12,7 +13,11 @@ use axum::{
     Json, Router,
 };
 use serde::Serialize;
-use tokio::{fs, sync::Mutex};
+use tokio::{
+    fs,
+    sync::{mpsc, Mutex},
+};
+use tokio_stream::wrappers::ReceiverStream;
 use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
@@ -23,7 +28,7 @@ use crate::{
         JavaAnalyzer, Method, SourceRange,
     },
     error::{ApiError, ApiErrorBody},
-    project::{self, Project, UpdateSourceRequest},
+    project::{self, Project, RevisionDetail, RevisionSummary, UpdateSourceRequest},
     session, Config,
 };
 
@@ -67,6 +72,9 @@ impl AppState {
         get_project_source,
         update_project_source,
         analyze_project,
+        analyze_project_stream,
+        list_project_revisions,
+        get_project_revision,
         get_method_cfg
     ),
     components(schemas(
@@ -84,7 +92,9 @@ impl AppState {
         SourceRange,
         Cfg,
         CfgNode,
-        CfgEdge
+        CfgEdge,
+        RevisionSummary,
+        RevisionDetail
     )),
     modifiers(&SecurityAddon),
     tags(
@@ -123,6 +133,18 @@ pub fn app(state: AppState) -> Router {
             get(get_project_source).put(update_project_source),
         )
         .route("/projects/{project_id}/analyze", post(analyze_project))
+        .route(
+            "/projects/{project_id}/analyze/stream",
+            post(analyze_project_stream),
+        )
+        .route(
+            "/projects/{project_id}/revisions",
+            get(list_project_revisions),
+        )
+        .route(
+            "/projects/{project_id}/revisions/{revision}",
+            get(get_project_revision),
+        )
         .route(
             "/projects/{project_id}/methods/{method_id}/cfg",
             get(get_method_cfg),
@@ -401,6 +423,102 @@ async fn analyze_project(
 }
 
 #[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/analyze/stream",
+    tag = "Analysis",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path)),
+    responses((status = 200, description = "Server-sent analysis events"), (status = 401, body = ApiErrorBody), (status = 404, body = ApiErrorBody))
+)]
+async fn analyze_project_stream(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    let revision = project.revision;
+    let filename = project.filename;
+    let analyzer = state.0.analyzer.clone();
+    let (stream, rx) = mpsc::channel::<Result<String, Infallible>>(4);
+    tokio::spawn(async move {
+        let _ = stream
+            .send(Ok(format!(
+                "event: started\ndata: {{\"revision\":{revision}}}\n\n"
+            )))
+            .await;
+        let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+        let analysis = analyzer.analyze_with_progress(directory, revision, &filename, progress_tx);
+        tokio::pin!(analysis);
+        let result = loop {
+            tokio::select! {
+                result = &mut analysis => break result,
+                Some(stage) = progress_rx.recv() => {
+                    let data = serde_json::json!({"stage": stage, "revision": revision});
+                    let event = format!("event: progress\ndata: {data}\n\n");
+                    if stream.send(Ok(event)).await.is_err() { return; }
+                }
+            }
+        };
+        let event = match result {
+            Ok(result) => format!(
+                "event: completed\ndata: {}\n\n",
+                serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_owned())
+            ),
+            Err(error) => format!(
+                "event: failed\ndata: {}\n\n",
+                serde_json::json!({"code": error.code, "message": error.message, "revision": revision})
+            ),
+        };
+        let _ = stream.send(Ok(event)).await;
+    });
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache, no-transform")
+        .header(header::CONNECTION, "keep-alive")
+        .body(Body::from_stream(ReceiverStream::new(rx)))
+        .expect("SSE response headers are valid"))
+}
+
+#[utoipa::path(
+    get, path = "/api/v1/projects/{project_id}/revisions", tag = "Projects",
+    security(("guestSession" = [])), params(("project_id" = Uuid, Path)),
+    responses((status = 200, body = [project::RevisionSummary]), (status = 401, body = ApiErrorBody), (status = 404, body = ApiErrorBody))
+)]
+async fn list_project_revisions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+) -> Result<Json<Vec<RevisionSummary>>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    Ok(Json(
+        project::list_revisions(&directory, project.revision).await?,
+    ))
+}
+
+#[utoipa::path(
+    get, path = "/api/v1/projects/{project_id}/revisions/{revision}", tag = "Projects",
+    security(("guestSession" = [])), params(("project_id" = Uuid, Path), ("revision" = u64, Path)),
+    responses((status = 200, body = project::RevisionDetail), (status = 401, body = ApiErrorBody), (status = 404, body = ApiErrorBody))
+)]
+async fn get_project_revision(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, revision)): Path<(String, u64)>,
+) -> Result<Json<RevisionDetail>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    Ok(Json(
+        project::read_revision(&directory, revision, project.revision, &project.filename).await?,
+    ))
+}
+
+#[utoipa::path(
     get,
     path = "/api/v1/projects/{project_id}/methods/{method_id}/cfg",
     tag = "Analysis",
@@ -618,6 +736,101 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn revision_history_returns_source_and_analysis_metadata_only_to_owner() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let project = response_json(upload(&app, &cookie, "Main.java").await).await;
+        let id = project["id"].as_str().unwrap();
+        let update = app
+            .clone()
+            .oneshot(
+                Request::put(format!("/api/v1/projects/{id}/source"))
+                    .header(header::COOKIE, &cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"source":"class Main { int value = 2; }","expected_revision":1}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(update.status(), StatusCode::OK);
+
+        let history = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{id}/revisions"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(history.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(history).await,
+            serde_json::json!([
+                {"revision": 2, "has_analysis": false},
+                {"revision": 1, "has_analysis": false}
+            ])
+        );
+
+        let old = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{id}/revisions/1"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(old.status(), StatusCode::OK);
+        assert_eq!(response_json(old).await["source"], "class Main {}\n");
+        let other = guest_cookie(&app).await;
+        let hidden = app
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{id}/revisions/1"))
+                    .header(header::COOKIE, other)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn streaming_analysis_reports_real_started_and_failure_events() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let project = response_json(upload(&app, &cookie, "Main.java").await).await;
+        let response = app
+            .oneshot(
+                Request::post(format!(
+                    "/api/v1/projects/{}/analyze/stream",
+                    project["id"].as_str().unwrap()
+                ))
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("event: started\ndata: {\"revision\":1}"));
+        assert!(body.contains("event: failed\ndata: {\"code\":\"analyzer_unavailable\""));
     }
 
     #[tokio::test]

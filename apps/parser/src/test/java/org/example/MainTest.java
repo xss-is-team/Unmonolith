@@ -62,7 +62,9 @@ class MainTest {
         JsonNode root = cli.json();
 
         assertEquals(0, cli.exit());
-        assertEquals("", cli.stderr());
+        assertTrue(cli.stderr().contains("progress: source_loaded"));
+        assertTrue(cli.stderr().contains("progress: ast_ready"));
+        assertTrue(cli.stderr().contains("progress: model_ready"));
         assertEquals(1, root.get("protocol_version").asInt());
         assertEquals("completed", root.get("status").asText());
         assertEquals(0, root.get("diagnostics").size());

@@ -3,8 +3,8 @@ info:
   title: Java Blueprints MVP API
   version: 0.1.0
   description: |
-    M1: guest sessions, single-Java-file projects, revisioned source, analyzer adapter.
-    Paths marked 'Planned M2+' are future contract only and MUST NOT be implemented as successful M1 endpoints.
+    Implemented: guest sessions, revisioned Java source, AST/CFG analysis, revision history and streaming analysis status.
+    Transform, behavior verification and export remain planned contracts.
 servers:
   - url: /api/v1
 tags:
@@ -141,6 +141,60 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/Unavailable'}
         '504': {$ref: '#/components/responses/Timeout'}
+  /projects/{project_id}/analyze/stream:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      operationId: analyzeProjectStream
+      tags: [Analysis]
+      description: Streams started, parser progress, and the final analysis result as server-sent events.
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Analysis event stream
+          content:
+            text/event-stream:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/revisions:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: listProjectRevisions
+      tags: [Projects]
+      description: Lists saved source revisions and whether each has an analysis artifact.
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Revisions newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/RevisionSummary'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/revisions/{revision}:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - name: revision
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+    get:
+      operationId: getProjectRevision
+      tags: [Projects]
+      description: Returns the immutable source and optional analysis summary for one saved revision.
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Revision source and analysis
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RevisionDetail'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /projects/{project_id}/methods/{method_id}/cfg:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -276,6 +330,22 @@ components:
         filename: {type: string, example: Main.java}
         revision: {type: integer, minimum: 1}
         created_at: {type: string, format: date-time}
+    RevisionSummary:
+      type: object
+      required: [revision, has_analysis]
+      properties:
+        revision: {type: integer, minimum: 1}
+        has_analysis: {type: boolean}
+    RevisionDetail:
+      type: object
+      required: [revision, source, analysis]
+      properties:
+        revision: {type: integer, minimum: 1}
+        source: {type: string}
+        analysis:
+          oneOf:
+            - {$ref: '#/components/schemas/AnalysisResult'}
+            - {type: 'null'}
     UpdateSourceRequest:
       type: object
       required: [source, expected_revision]

@@ -42,7 +42,8 @@ public class Main {
         }
 
         try {
-            out.println(Json.pretty(parse(source, Path.of(args[0]).getFileName().toString())));
+            err.println("progress: source_loaded");
+            out.println(Json.pretty(parse(source, Path.of(args[0]).getFileName().toString(), err)));
             return 0;
         } catch (RuntimeException | StackOverflowError e) {
             e.printStackTrace(err);
@@ -56,10 +57,24 @@ public class Main {
      * If binding resolution itself throws, falls back to a syntax-only parse.
      */
     static Map<String, Object> parse(String source, String unitName) {
+        return parse(source, unitName, System.err);
+    }
+
+    private static Map<String, Object> parse(String source, String unitName, PrintStream progress) {
         try {
-            return new AstJson(createAst(source, unitName, true), source, true).convert();
+            progress.println("progress: parsing_with_bindings");
+            var ast = createAst(source, unitName, true);
+            progress.println("progress: ast_ready");
+            Map<String, Object> result = new AstJson(ast, source, true).convert();
+            progress.println("progress: model_ready");
+            return result;
         } catch (RuntimeException e) {
-            return new AstJson(createAst(source, unitName, false), source, false).convert();
+            progress.println("progress: parsing_syntax_only");
+            var ast = createAst(source, unitName, false);
+            progress.println("progress: ast_ready");
+            Map<String, Object> result = new AstJson(ast, source, false).convert();
+            progress.println("progress: model_ready");
+            return result;
         }
     }
 

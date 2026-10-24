@@ -40,6 +40,9 @@ export type Cfg = {
   edges: { source: string; target: string; kind: string }[];
 };
 
+export type RevisionSummary = { revision: number; has_analysis: boolean };
+export type RevisionDetail = { revision: number; source: string; analysis: AnalysisResult | null };
+
 export const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 
 export class ApiError extends Error {
@@ -158,6 +161,56 @@ export function analyzeProject(projectId: string) {
   return request<AnalysisResult>(`/projects/${projectId}/analyze`, {
     method: "POST",
   });
+}
+
+export async function analyzeProjectStream(
+  projectId: string,
+  onProgress: (stage: string) => void,
+): Promise<AnalysisResult> {
+  const response = await fetch(`/api/v1/projects/${projectId}/analyze/stream`, {
+    method: "POST", credentials: "include", cache: "no-store",
+  });
+  if (!response.ok || !response.body) {
+    const body = await response.json().catch(() => null) as { code?: string; message?: string } | null;
+    throw new ApiError(body?.message ?? `Запрос завершился с кодом ${response.status}`, response.status, body?.code ?? "request_failed");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: AnalysisResult | undefined;
+  const consume = (chunk: string) => {
+    buffer += chunk;
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+    for (const event of events) {
+      const eventName = event.match(/^event: (.+)$/m)?.[1];
+      const data = event.match(/^data: (.+)$/m)?.[1];
+      if (!eventName || !data) continue;
+      if (eventName === "started") onProgress("started");
+      if (eventName === "progress") onProgress((JSON.parse(data) as { stage: string }).stage);
+      if (eventName === "completed") result = JSON.parse(data) as AnalysisResult;
+      if (eventName === "failed") {
+        const failure = JSON.parse(data) as { code?: string; message?: string };
+        throw new ApiError(failure.message ?? "Анализ не выполнен", 500, failure.code ?? "analysis_failed");
+      }
+    }
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    consume(decoder.decode(value, { stream: true }));
+  }
+  consume(decoder.decode());
+  if (!result) throw new ApiError("Поток анализа завершился без результата", 502, "invalid_response");
+  return result;
+}
+
+export function getProjectRevisions(projectId: string) {
+  return request<RevisionSummary[]>(`/projects/${projectId}/revisions`);
+}
+
+export function getProjectRevision(projectId: string, revision: number) {
+  return request<RevisionDetail>(`/projects/${projectId}/revisions/${revision}`);
 }
 
 export function getMethodCfg(projectId: string, methodId: string) {

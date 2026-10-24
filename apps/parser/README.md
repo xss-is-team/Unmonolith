@@ -21,7 +21,7 @@ java -jar apps/parser/target/ASTPARSER-1.0-SNAPSHOT.jar Example.java
 | Channel | Content |
 |---|---|
 | stdout | exactly one JSON document (pretty-printed UTF-8) |
-| stderr | human-readable errors and stack traces; empty on success |
+| stderr | progress lines (`progress: <stage>`) and human-readable errors |
 
 | Exit | Meaning | stdout |
 |---|---|---|

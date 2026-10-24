@@ -25,6 +25,84 @@ pub struct UpdateSourceRequest {
     pub expected_revision: u64,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RevisionSummary {
+    pub revision: u64,
+    pub has_analysis: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RevisionDetail {
+    pub revision: u64,
+    pub source: String,
+    pub analysis: Option<crate::analyzer::AnalysisResult>,
+}
+
+pub async fn list_revisions(
+    directory: &Path,
+    current: u64,
+) -> Result<Vec<RevisionSummary>, ApiError> {
+    let mut revisions_dir = fs::read_dir(directory.join("revisions")).await?;
+    let mut revisions = Vec::new();
+    while let Some(entry) = revisions_dir.next_entry().await? {
+        if !entry.file_type().await?.is_dir() {
+            continue;
+        }
+        let Ok(revision) = entry.file_name().to_string_lossy().parse::<u64>() else {
+            continue;
+        };
+        if revision == 0 || revision > current {
+            continue;
+        }
+        let has_analysis =
+            fs::metadata(directory.join("analysis").join(format!("{revision}.json")))
+                .await
+                .is_ok();
+        revisions.push(RevisionSummary {
+            revision,
+            has_analysis,
+        });
+    }
+    revisions.sort_unstable_by_key(|item| std::cmp::Reverse(item.revision));
+    Ok(revisions)
+}
+
+pub async fn read_revision(
+    directory: &Path,
+    revision: u64,
+    current: u64,
+    filename: &str,
+) -> Result<RevisionDetail, ApiError> {
+    if revision == 0 || revision > current {
+        return Err(ApiError::not_found());
+    }
+    let source = fs::read(source_path(directory, revision, filename))
+        .await
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                ApiError::not_found()
+            } else {
+                ApiError::io(error)
+            }
+        })?;
+    let source = String::from_utf8(source)
+        .map_err(|_| ApiError::bad_request("stored source is not UTF-8"))?;
+    let artifact = directory.join("analysis").join(format!("{revision}.json"));
+    let analysis = match fs::read(artifact).await {
+        Ok(bytes) => Some(
+            serde_json::from_slice(&bytes)
+                .map_err(|_| ApiError::bad_request("stored analysis is invalid"))?,
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(ApiError::io(error)),
+    };
+    Ok(RevisionDetail {
+        revision,
+        source,
+        analysis,
+    })
+}
+
 pub async fn create(
     session_dir: &Path,
     filename: &str,

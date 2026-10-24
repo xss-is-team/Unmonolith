@@ -6,6 +6,7 @@ use tokio::{
     fs,
     io::{AsyncRead, AsyncReadExt},
     process::Command,
+    sync::mpsc::UnboundedSender,
     time::timeout,
 };
 use utoipa::ToSchema;
@@ -129,6 +130,28 @@ impl JavaAnalyzer {
         revision: u64,
         filename: &str,
     ) -> Result<AnalysisResult, ApiError> {
+        self.analyze_internal(project_dir, revision, filename, None)
+            .await
+    }
+
+    pub async fn analyze_with_progress(
+        &self,
+        project_dir: PathBuf,
+        revision: u64,
+        filename: &str,
+        progress: UnboundedSender<String>,
+    ) -> Result<AnalysisResult, ApiError> {
+        self.analyze_internal(project_dir, revision, filename, Some(progress))
+            .await
+    }
+
+    async fn analyze_internal(
+        &self,
+        project_dir: PathBuf,
+        revision: u64,
+        filename: &str,
+        progress: Option<UnboundedSender<String>>,
+    ) -> Result<AnalysisResult, ApiError> {
         let configured_jar = self.jar.as_ref().ok_or_else(unavailable)?;
         let jar = fs::canonicalize(configured_jar)
             .await
@@ -163,8 +186,8 @@ impl JavaAnalyzer {
         let run = async {
             let (status, stdout, stderr) = tokio::join!(
                 child.wait(),
-                read_bounded(stdout, self.max_output_bytes),
-                read_bounded(stderr, STDERR_BYTES)
+                read_bounded(stdout, self.max_output_bytes, None),
+                read_bounded(stderr, STDERR_BYTES, progress)
             );
             Ok::<_, ApiError>((
                 status.map_err(ApiError::io)?,
@@ -287,10 +310,12 @@ fn validate_cfgs(methods: &[Method], cfgs: &[Cfg]) -> Result<(), ApiError> {
 async fn read_bounded(
     mut reader: impl AsyncRead + Unpin,
     limit: u64,
+    progress: Option<UnboundedSender<String>>,
 ) -> io::Result<CapturedOutput> {
     let mut bytes = Vec::new();
     let mut overflowed = false;
     let mut buffer = [0_u8; 8192];
+    let mut pending = Vec::new();
 
     loop {
         let read = reader.read(&mut buffer).await?;
@@ -301,6 +326,20 @@ async fn read_bounded(
         let keep = read.min(remaining.try_into().unwrap_or(usize::MAX));
         bytes.extend_from_slice(&buffer[..keep]);
         overflowed |= keep < read;
+        if let Some(progress) = &progress {
+            pending.extend_from_slice(&buffer[..read]);
+            if pending.len() > 1024 && !pending.contains(&b'\n') {
+                pending.clear();
+            }
+            while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<_> = pending.drain(..=newline).collect();
+                if let Ok(line) = std::str::from_utf8(&line) {
+                    if let Some(stage) = line.trim().strip_prefix("progress: ") {
+                        let _ = progress.send(stage.to_owned());
+                    }
+                }
+            }
+        }
     }
 
     Ok(CapturedOutput { bytes, overflowed })

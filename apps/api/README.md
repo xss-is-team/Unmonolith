@@ -1,9 +1,8 @@
 # Java Blueprints backend
 
 The Axum API provides guest-cookie sessions, local file-backed Java projects,
-optimistic source revisions, and an external Java/JDT analyzer adapter. M2 adds
-per-method CFG retrieval from the immutable analysis artifact for the current
-source revision.
+optimistic source revisions, and an external Java/JDT analyzer adapter. It
+serves per-method CFGs, saved revision history, and SSE analysis progress.
 
 ## Development
 
@@ -35,8 +34,11 @@ OpenAPI document at <http://127.0.0.1:3000/api/v1/openapi.json>.
 ## Scope
 
 Implemented: health, guest sessions, single `.java` upload, owned project and
-source routes, revision-checked source updates, analysis, and
-`GET /api/v1/projects/{project_id}/methods/{method_id}/cfg`. CFG reads are
+source routes, revision-checked updates, revision listing/details, synchronous
+analysis, `POST .../analyze/stream`, and per-method CFG retrieval. Revision
+details return the immutable source and optional saved analysis summary. The
+stream emits `started`, parser phase `progress`, then `completed` or `failed`;
+analysis results are still emitted as one final document. CFG reads are
 session-owned and revision-scoped; absent or unsupported graphs return
 `404 cfg_not_found`. Without a configured parser JAR, analysis returns
 `503 analyzer_unavailable`.

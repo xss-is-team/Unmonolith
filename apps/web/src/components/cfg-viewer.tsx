@@ -176,9 +176,11 @@ export function CfgViewer({
   }), [cfg, positions, selectedCondition?.id, activeEdges]);
 
   useGSAP(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
     const media = gsap.matchMedia();
     media.add("(prefers-reduced-motion: no-preference)", () => {
-      gsap.fromTo(canvasRef.current, { autoAlpha: 0, y: 8 }, {
+      gsap.fromTo(canvas, { autoAlpha: 0, y: 8 }, {
         autoAlpha: 1,
         y: 0,
         duration: 0.24,
@@ -186,7 +188,7 @@ export function CfgViewer({
       });
     });
     return () => media.revert();
-  }, { scope: canvasRef, dependencies: [cfg?.method_id, revision], revertOnUpdate: true });
+  }, { dependencies: [cfg?.method_id, revision], revertOnUpdate: true });
   useEffect(() => {
     let cancelled = false;
     if (!cfg || cfg.nodes.length === 0) return;

@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
+import { diffLines } from "diff";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import {
@@ -15,6 +16,7 @@ import {
   Clock3,
   Code2,
   GitBranch,
+  History,
   LoaderCircle,
   Play,
   RefreshCw,
@@ -27,8 +29,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Brand } from "@/components/brand";
 import {
-  analyzeProject,
+  analyzeProjectStream,
   ApiError,
+  getProjectRevision,
+  getProjectRevisions,
   getProjectWorkspace,
   MAX_SOURCE_BYTES,
   type AnalysisResult,
@@ -113,6 +117,17 @@ function WorkspaceEditor({
   reload: () => Promise<unknown>;
 }) {
   const [project, setProject] = useState(initialProject);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [selectedHistoryRevision, setSelectedHistoryRevision] = useState<number | null>(null);
+  const [showRevisionDiff, setShowRevisionDiff] = useState(false);
+  const { data: revisionHistory, error: revisionHistoryError } = useSWR(
+    historyOpen ? `revisions:${projectId}` : null,
+    () => getProjectRevisions(projectId),
+  );
+  const { data: historicalRevision, error: historicalRevisionError } = useSWR(
+    historyOpen && selectedHistoryRevision !== null ? `revision:${projectId}:${selectedHistoryRevision}` : null,
+    () => getProjectRevision(projectId, selectedHistoryRevision!),
+  );
   const editorRef = useRef<import("@/components/java-editor").JavaEditorHandle>(null);
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "conflict" | "error">("idle");
@@ -127,6 +142,7 @@ function WorkspaceEditor({
   const analysisTimerRef = useRef<number | undefined>(undefined);
   const runAnalysisRef = useRef<() => Promise<void>>(async () => {});
   const [sourceStats, setSourceStats] = useState(() => sourceMetrics(initialSource));
+  const [savedSource, setSavedSource] = useState(initialSource);
   const [revision, setRevision] = useState(initialRevision);
   const [saveError, setSaveError] = useState("");
   const [analysisState, setAnalysisState] = useState<"idle" | "loading" | "complete" | "unavailable" | "error">("idle");
@@ -223,6 +239,7 @@ function WorkspaceEditor({
     try {
       const updated = await updateProjectSource(projectId, source, revisionRef.current);
       setProject(updated);
+      setSavedSource(source);
       revisionRef.current = updated.revision;
       setRevision(updated.revision);
       editorRef.current?.markSaved(source);
@@ -279,7 +296,7 @@ function WorkspaceEditor({
     setAnalysisError("");
     setSelectedSourceRange(null);
     try {
-      const result = await analyzeProject(projectId);
+      const result = await analyzeProjectStream(projectId, (stage) => setAnalysisError(analysisProgressLabel(stage)));
       if (result.revision !== requestedRevision || revisionRef.current !== requestedRevision || dirtyRef.current) {
         setAnalysis(null);
         setAnalysisState("idle");
@@ -351,6 +368,9 @@ function WorkspaceEditor({
           <Button className="action-button action-button--quiet" onClick={() => void saveSource()} disabled={!dirty || saveState === "saving"}>
             {saveState === "saving" ? <LoaderCircle className="spin" /> : <Save />}{saveState === "saving" ? "Сохранение" : "Сохранить сейчас"}
           </Button>
+          <Button className="action-button action-button--quiet" onClick={() => { setHistoryOpen((open) => !open); setShowRevisionDiff(false); }} aria-expanded={historyOpen}>
+            <History /> История
+          </Button>
           <Button className="action-button action-button--primary" onClick={() => void runAnalysis()} disabled={dirty || analysisState === "loading"} title="Анализ сохранённой версии · Ctrl+Enter" aria-keyshortcuts="Control+Enter Meta+Enter">
             {analysisState === "loading" ? <LoaderCircle className="spin" /> : <Play />}{analysisState === "loading" ? "Анализируем" : "Запустить анализ"}
           </Button>
@@ -362,6 +382,26 @@ function WorkspaceEditor({
         <div className="inline-alert" role="alert"><AlertCircle size={17} /><span>Исходник уже изменился на сервере. Перезагрузите его, чтобы не затереть чужую ревизию.</span><Button variant="outline" onClick={() => void reloadSource()} disabled={reloading}><RefreshCw className={reloading ? "spin" : ""} /> Перезагрузить</Button></div>
       ) : saveState === "error" ? (
         <div className="inline-alert" role="alert"><AlertCircle size={17} /><span>{saveError || "Не удалось сохранить. Проверьте соединение с API."}</span></div>
+      ) : null}
+
+      {historyOpen ? (
+        <section className="revision-history" aria-label="История ревизий">
+          <div className="revision-history__heading"><div><strong>Сохранённые версии</strong><span>Текущая — ревизия {revision}</span></div><button type="button" onClick={() => setHistoryOpen(false)} aria-label="Закрыть историю">×</button></div>
+          {revisionHistoryError ? <p role="alert">Не удалось загрузить историю ревизий.</p> : !revisionHistory ? <p role="status">Загружаем историю…</p> : (
+            <div className="revision-history__body">
+              <label htmlFor="revision-select">Сравнить текущую с</label>
+              <select id="revision-select" value={selectedHistoryRevision ?? ""} onChange={(event) => { setSelectedHistoryRevision(event.target.value ? Number(event.target.value) : null); setShowRevisionDiff(false); }}>
+                <option value="">Выберите ревизию</option>
+                {revisionHistory.filter((item) => item.revision < revision).map((item) => <option key={item.revision} value={item.revision}>Ревизия {item.revision}{item.has_analysis ? " · есть анализ" : ""}</option>)}
+              </select>
+              {selectedHistoryRevision !== null ? <Button variant="outline" disabled={dirty || !historicalRevision || Boolean(historicalRevisionError)} onClick={() => setShowRevisionDiff((shown) => !shown)}>{showRevisionDiff ? "Скрыть diff" : "Показать diff"}</Button> : null}
+              {dirty ? <small>Сначала сохраните изменения, чтобы сравнить ревизии.</small> : null}
+              {historicalRevisionError ? <small role="alert">Не удалось загрузить выбранную ревизию.</small> : null}
+              {historicalRevision?.analysis ? <small>В выбранной версии {historicalRevision.analysis.methods.length} методов и {historicalRevision.analysis.diagnostics.length} диагностик.</small> : null}
+            </div>
+          )}
+          {showRevisionDiff && historicalRevision && !dirty ? <div className="revision-diff" aria-label="Различия исходников">{diffLines(historicalRevision.source, savedSource).map((part, index) => part.value.split("\n").filter((line, lineIndex, rows) => line || lineIndex < rows.length - 1).map((line, lineIndex) => <div className={`revision-diff__line revision-diff__line--${part.added ? "added" : part.removed ? "removed" : "same"}`} key={`${index}-${lineIndex}`}><span>{part.added ? "+" : part.removed ? "−" : " "}</span><code>{line || " "}</code></div>))}</div> : null}
+        </section>
       ) : null}
 
       <div className="workspace-grid">
@@ -440,7 +480,7 @@ function WorkspaceEditor({
           ) : analysisState === "error" ? (
             <div className="worker-state worker-state--error"><span className="state-icon"><AlertCircle /></span><strong>Анализ не выполнен</strong><p>{analysisError}</p><Button variant="outline" onClick={() => void runAnalysis()}><RefreshCw /> Попробовать снова</Button></div>
           ) : (
-            <div className="worker-state"><span className="state-icon"><ShieldCheck /></span><strong>{analysisState === "loading" ? "Разбираем исходник" : dirty ? "Отчёт устарел" : "Отчёт появится здесь"}</strong><p>{analysisState === "loading" ? "Ищем методы и диагностики." : dirty ? `Результат относится к сохранённой ревизии ${analysis?.revision ?? revision}. После автосохранения он обновится.` : "Нажмите «Запустить анализ» — найдём методы и замечания."}</p>{analysisState === "loading" ? <div className="state-footnote"><span className="status-pip status-pip--pulse" />Редакция {revision}</div> : null}</div>
+            <div className="worker-state"><span className="state-icon"><ShieldCheck /></span><strong>{analysisState === "loading" ? "Разбираем исходник" : dirty ? "Отчёт устарел" : "Отчёт появится здесь"}</strong><p>{analysisState === "loading" ? (analysisError || "Ищем методы и диагностики.") : dirty ? `Результат относится к сохранённой ревизии ${analysis?.revision ?? revision}. После автосохранения он обновится.` : "Нажмите «Запустить анализ» — найдём методы и замечания."}</p>{analysisState === "loading" ? <div className="state-footnote"><span className="status-pip status-pip--pulse" />Редакция {revision}</div> : null}</div>
           )}
 
         </aside>
@@ -484,6 +524,18 @@ function analysisErrorMessage(cause: unknown) {
       return "Проект больше не найден в этой гостевой сессии.";
     default:
       return `Анализ не выполнен (HTTP ${cause.status}).`;
+  }
+}
+
+function analysisProgressLabel(stage: string) {
+  switch (stage) {
+    case "started": return "Подготовили анализ сохранённой ревизии…";
+    case "source_loaded": return "Исходник загружен…";
+    case "parsing_with_bindings": return "Разбираем Java с разрешением типов…";
+    case "parsing_syntax_only": return "Продолжаем разбор без разрешения типов…";
+    case "ast_ready": return "Структура Java готова, строим CFG…";
+    case "model_ready": return "CFG и диагностики построены, формируем отчёт…";
+    default: return "Анализатор обрабатывает сохранённую ревизию…";
   }
 }
 
