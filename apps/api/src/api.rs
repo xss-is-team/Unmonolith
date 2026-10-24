@@ -11,8 +11,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::{fs, sync::Mutex};
 use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
@@ -83,8 +84,10 @@ impl AppState {
         analyze_project,
         list_methods,
         get_method_cfg,
+        get_method_analysis,
         transform_project,
-        verify_project
+        verify_project,
+        get_verification_report
     ),
     components(schemas(
         HealthResponse,
@@ -104,6 +107,11 @@ impl AppState {
         Cfg,
         CfgNode,
         CfgEdge,
+        MethodAnalysisResponse,
+        MethodAnalysis,
+        ComplexityEstimate,
+        ComplexityFragment,
+        AnalysisFinding,
         TransformRequest,
         TransformOperation,
         TransformResponse,
@@ -118,7 +126,8 @@ impl AppState {
         TestCaseResult,
         ExecutionObservation,
         BehaviorMismatch,
-        MismatchField
+        MismatchField,
+        PersistedVerificationReport
     )),
     modifiers(&SecurityAddon),
     tags(
@@ -164,8 +173,16 @@ pub fn app(state: AppState) -> Router {
             "/projects/{project_id}/methods/{method_selector}/cfg",
             get(get_method_cfg),
         )
+        .route(
+            "/projects/{project_id}/methods/{method_selector}/analysis",
+            get(get_method_analysis),
+        )
         .route("/projects/{project_id}/transform", post(transform_project))
         .route("/projects/{project_id}/verify", post(verify_project))
+        .route(
+            "/projects/{project_id}/verify/{report_id}",
+            get(get_verification_report),
+        )
         .layer(DefaultBodyLimit::max(body_limit));
 
     Router::new()
@@ -236,6 +253,69 @@ struct CfgEdge {
     kind: String,
     label: Option<String>,
     back: Option<bool>,
+}
+
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct MethodAnalysisResponse {
+    #[schema(minimum = 1)]
+    revision: u64,
+    method_id: String,
+    analysis: MethodAnalysis,
+}
+
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct MethodAnalysis {
+    complexity: ComplexityEstimate,
+    fragments: Vec<ComplexityFragment>,
+    findings: Vec<AnalysisFinding>,
+}
+
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct ComplexityEstimate {
+    time: String,
+    confidence: String,
+    reason: String,
+    assumptions: Vec<String>,
+}
+
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct ComplexityFragment {
+    kind: String,
+    statement_kind: String,
+    source_range: SourceRange,
+    node_ids: Vec<String>,
+    time: String,
+    confidence: String,
+    reason: String,
+    assumptions: Vec<String>,
+}
+
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+struct AnalysisFinding {
+    id: String,
+    severity: String,
+    message: String,
+    explanation: String,
+    recommendation: String,
+    source_range: SourceRange,
+    node_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, utoipa::ToSchema)]
+struct PersistedVerificationReport {
+    report_id: Uuid,
+    #[schema(value_type = String, format = DateTime)]
+    created_at: String,
+    #[schema(minimum = 1)]
+    requested_test_cases: usize,
+    behaviorally_verified: bool,
+    #[serde(flatten)]
+    report: VerificationReport,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -560,6 +640,54 @@ async fn get_method_cfg(
 }
 
 #[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/methods/{method_selector}/analysis",
+    tag = "Analysis",
+    security(("guestSession" = [])),
+    params(
+        ("project_id" = Uuid, Path),
+        ("method_selector" = String, Path, description = "Opaque revision-local selector returned by the methods endpoint")
+    ),
+    responses(
+        (status = 200, body = MethodAnalysisResponse),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody),
+        (status = 409, body = ApiErrorBody)
+    )
+)]
+async fn get_method_analysis(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, method_selector)): Path<(String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    let artifact = load_analysis(&directory, project.revision).await?;
+    let mut method = None;
+    visit_cfg_methods(&artifact, &mut |member, cfg| {
+        if method.is_none() && cfg_selector(cfg) == Some(method_selector.as_str()) {
+            method = Some(member);
+        }
+    });
+    let member = method.ok_or_else(method_not_found)?;
+    let analysis = member
+        .get("analysis")
+        .filter(|analysis| analysis.is_object())
+        .ok_or_else(method_analysis_not_found)?;
+    let method_id = member
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(method_not_found)?;
+
+    Ok(Json(serde_json::json!({
+        "revision": project.revision,
+        "method_id": method_id,
+        "analysis": analysis,
+    })))
+}
+
+#[utoipa::path(
     post,
     path = "/api/v1/projects/{project_id}/transform",
     tag = "Transformations",
@@ -638,7 +766,7 @@ async fn transform_project(
     params(("project_id" = Uuid, Path)),
     request_body = VerifyRequest,
     responses(
-        (status = 200, body = VerificationReport),
+        (status = 200, body = PersistedVerificationReport),
         (status = 400, body = ApiErrorBody),
         (status = 401, body = ApiErrorBody),
         (status = 404, body = ApiErrorBody),
@@ -650,7 +778,7 @@ async fn verify_project(
     headers: HeaderMap,
     Path(project_id): Path<String>,
     request: Result<Json<VerifyRequest>, JsonRejection>,
-) -> Result<Json<VerificationReport>, ApiError> {
+) -> Result<Json<PersistedVerificationReport>, ApiError> {
     let project_id = parse_project_id(&project_id)?;
     let Json(request) = request.map_err(|_| ApiError::bad_request("invalid verify request"))?;
     validate_verify_request(&request)?;
@@ -659,20 +787,135 @@ async fn verify_project(
     let baseline_source = revision_source(&directory, &project, request.baseline_revision).await?;
     let candidate_source =
         revision_source(&directory, &project, request.candidate_revision).await?;
-    Ok(Json(
-        state
-            .0
-            .runner
-            .verify(
-                &project.filename,
-                request.baseline_revision,
-                &baseline_source,
-                request.candidate_revision,
-                &candidate_source,
-                &request.test_cases,
-            )
-            .await?,
-    ))
+    let report = state
+        .0
+        .runner
+        .verify(
+            &project.filename,
+            request.baseline_revision,
+            &baseline_source,
+            request.candidate_revision,
+            &candidate_source,
+            &request.test_cases,
+        )
+        .await?;
+    let behaviorally_verified = behaviorally_verified(&report, request.test_cases.len())?;
+    let persisted = PersistedVerificationReport {
+        report_id: Uuid::new_v4(),
+        created_at: OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .expect("RFC 3339 supports all current UTC dates"),
+        requested_test_cases: request.test_cases.len(),
+        behaviorally_verified,
+        report,
+    };
+    let bytes = serde_json::to_vec_pretty(&persisted).map_err(|error| {
+        tracing::error!(%error, "verification report serialization failed");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "verification report serialization failed",
+        )
+    })?;
+    let _guard = state.0.writes.lock().await;
+    project::store_verification_report(&directory, persisted.report_id, &bytes).await?;
+    Ok(Json(persisted))
+}
+
+fn behaviorally_verified(
+    report: &VerificationReport,
+    expected_test_cases: usize,
+) -> Result<bool, ApiError> {
+    let complete_pass = is_complete_pass(report, expected_test_cases);
+    if report.status == VerificationStatus::Passed && !complete_pass {
+        tracing::error!(
+            expected_test_cases,
+            executed_test_cases = report.executed_test_cases,
+            returned_test_cases = report.test_cases.len(),
+            "runner returned an incomplete passing verification report"
+        );
+        return Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "runner_invalid_result",
+            "runner returned an incomplete passing verification report",
+        ));
+    }
+    Ok(report.status == VerificationStatus::Passed && complete_pass)
+}
+
+fn is_complete_pass(report: &VerificationReport, expected_test_cases: usize) -> bool {
+    expected_test_cases > 0
+        && report.baseline_compilation.status == CompilationStatus::Completed
+        && report.candidate_compilation.status == CompilationStatus::Completed
+        && report.executed_test_cases == expected_test_cases
+        && report.test_cases.len() == expected_test_cases
+        && report.test_cases.iter().all(|test_case| {
+            test_case.passed
+                && !test_case.baseline.timed_out
+                && !test_case.baseline.output_overflow
+                && !test_case.candidate.timed_out
+                && !test_case.candidate.output_overflow
+        })
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/verify/{report_id}",
+    tag = "Verification",
+    security(("guestSession" = [])),
+    params(
+        ("project_id" = Uuid, Path),
+        ("report_id" = Uuid, Path)
+    ),
+    responses(
+        (status = 200, body = PersistedVerificationReport),
+        (status = 400, body = ApiErrorBody),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody)
+    )
+)]
+async fn get_verification_report(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, report_id)): Path<(String, String)>,
+) -> Result<Json<PersistedVerificationReport>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let report_id = Uuid::parse_str(&report_id)
+        .map_err(|_| ApiError::bad_request("report_id must be a UUID"))?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (_, directory) = project::load(&session_dir, project_id).await?;
+    let path = project::verification_report_path(&directory, report_id);
+    let bytes = match fs::read(path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(verification_report_not_found());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let report: PersistedVerificationReport = serde_json::from_slice(&bytes).map_err(|error| {
+        tracing::error!(%error, %report_id, "stored verification report is invalid");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "stored verification report is invalid",
+        )
+    })?;
+    if report.report_id != report_id {
+        return Err(verification_report_not_found());
+    }
+    let verified = report.report.status == VerificationStatus::Passed
+        && is_complete_pass(&report.report, report.requested_test_cases);
+    if report.behaviorally_verified != verified
+        || (report.report.status == VerificationStatus::Passed && !verified)
+    {
+        tracing::error!(%report_id, "stored verification status is inconsistent");
+        return Err(ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "stored verification report is invalid",
+        ));
+    }
+    Ok(Json(report))
 }
 
 fn validate_verify_request(request: &VerifyRequest) -> Result<(), ApiError> {
@@ -859,6 +1102,22 @@ fn method_not_found() -> ApiError {
         StatusCode::NOT_FOUND,
         "method_not_found",
         "method with an available CFG does not exist",
+    )
+}
+
+fn method_analysis_not_found() -> ApiError {
+    ApiError::new(
+        StatusCode::NOT_FOUND,
+        "method_analysis_not_found",
+        "method analysis is not available for the current revision",
+    )
+}
+
+fn verification_report_not_found() -> ApiError {
+    ApiError::new(
+        StatusCode::NOT_FOUND,
+        "verification_report_not_found",
+        "verification report does not exist",
     )
 }
 
@@ -1287,6 +1546,33 @@ esac
                     "name": "process",
                     "source_range": {"start": 29, "length": 67, "line": 2, "end_line": 4},
                     "body": [{"kind": "if", "condition": "count > 0"}],
+                    "analysis": {
+                        "complexity": {
+                            "time": "O(n)",
+                            "confidence": "high",
+                            "reason": "Dominant term n: a loop over values; sequential loops are additive, the largest wins.",
+                            "assumptions": ["n = number of elements in values"]
+                        },
+                        "fragments": [{
+                            "kind": "loop",
+                            "statement_kind": "foreach",
+                            "source_range": {"start": 67, "length": 9, "line": 3, "end_line": 3},
+                            "node_ids": ["m1.n2"],
+                            "time": "O(n)",
+                            "confidence": "high",
+                            "reason": "Dominant term n: a loop over values; sequential loops are additive, the largest wins.",
+                            "assumptions": ["n = number of elements in values"]
+                        }],
+                        "findings": [{
+                            "id": "repeated_collection_scan",
+                            "severity": "warning",
+                            "message": "Repeated scan",
+                            "explanation": "Nested scan",
+                            "recommendation": "Build an index",
+                            "source_range": {"start": 67, "length": 9, "line": 3, "end_line": 3},
+                            "node_ids": ["m1.n2"]
+                        }]
+                    },
                     "cfg": {
                         "method_id": "Example.process(int)",
                         "entry": "m1.n0",
@@ -1365,6 +1651,17 @@ esac
                 })
                 .to_string(),
             ))
+            .unwrap()
+    }
+
+    fn verification_report_request(
+        cookie: &str,
+        project_id: &str,
+        report_id: &str,
+    ) -> Request<Body> {
+        Request::get(format!("/api/v1/projects/{project_id}/verify/{report_id}"))
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
             .unwrap()
     }
 
@@ -1481,6 +1778,103 @@ esac
     }
 
     #[tokio::test]
+    async fn returns_exact_method_analysis_with_cfg_ids_utf16_ranges_and_revision() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let owner = guest_cookie(&app).await;
+        let other = guest_cookie(&app).await;
+        let project = response_json(upload(&app, &owner, "Example.java").await).await;
+        let project_id = project["id"].as_str().unwrap();
+        let artifact = cfg_artifact(1);
+        store_analysis(&data, &owner, project_id, &artifact).await;
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/methods/m1/analysis"))
+                    .header(header::COOKIE, &owner)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = response_json(response).await;
+        assert_eq!(response["revision"], 1);
+        assert_eq!(response["method_id"], "Example.process(int)");
+        assert_eq!(
+            response["analysis"],
+            artifact["types"][0]["members"][1]["analysis"]
+        );
+        assert_eq!(response["analysis"]["fragments"][0]["node_ids"][0], "m1.n2");
+        assert_eq!(
+            response["analysis"]["findings"][0]["source_range"]["start"],
+            67
+        );
+        assert_eq!(
+            response["analysis"]["findings"][0]["source_range"]["length"],
+            9
+        );
+
+        let response = app
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/methods/m1/analysis"))
+                    .header(header::COOKIE, &other)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(response).await["code"], "project_not_found");
+    }
+
+    #[tokio::test]
+    async fn method_analysis_rejects_unknown_method_and_missing_analysis() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let project = response_json(upload(&app, &cookie, "Example.java").await).await;
+        let project_id = project["id"].as_str().unwrap();
+        let mut artifact = cfg_artifact(1);
+        artifact["types"][0]["members"][1]["analysis"] = Value::Null;
+        store_analysis(&data, &cookie, project_id, &artifact).await;
+
+        let missing_method = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/v1/projects/{project_id}/methods/m99/analysis"
+                ))
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_method.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(missing_method).await["code"],
+            "method_not_found"
+        );
+
+        let missing_analysis = app
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/methods/m1/analysis"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_analysis.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(missing_analysis).await["code"],
+            "method_analysis_not_found"
+        );
+    }
+
+    #[tokio::test]
     async fn methods_reject_missing_analysis_method_and_cross_session_access() {
         let data = TestData::new();
         let app = test_app(&data).await;
@@ -1492,7 +1886,7 @@ esac
         let response = app
             .clone()
             .oneshot(
-                Request::get(format!("/api/v1/projects/{project_id}/methods"))
+                Request::get(format!("/api/v1/projects/{project_id}/methods/m1/analysis"))
                     .header(header::COOKIE, &owner)
                     .body(Body::empty())
                     .unwrap(),
@@ -1547,7 +1941,7 @@ esac
 
         let response = app
             .oneshot(
-                Request::get(format!("/api/v1/projects/{project_id}/methods"))
+                Request::get(format!("/api/v1/projects/{project_id}/methods/m1/analysis"))
                     .header(header::COOKIE, &cookie)
                     .body(Body::empty())
                     .unwrap(),
@@ -1577,7 +1971,7 @@ esac
     }
 
     #[tokio::test]
-    async fn generated_openapi_documents_cfg_transform_and_verify_routes() {
+    async fn generated_openapi_documents_analysis_transform_and_verify_routes() {
         let data = TestData::new();
         let app = test_app(&data).await;
         let response = app
@@ -1595,10 +1989,22 @@ esac
             document["paths"]["/api/v1/projects/{project_id}/methods/{method_selector}/cfg"]["get"]
                 .is_object()
         );
+        assert!(document["paths"]
+            ["/api/v1/projects/{project_id}/methods/{method_selector}/analysis"]["get"]
+            .is_object());
         assert!(document["paths"]["/api/v1/projects/{project_id}/transform"]["post"].is_object());
         assert!(document["paths"]["/api/v1/projects/{project_id}/verify"]["post"].is_object());
+        assert!(
+            document["paths"]["/api/v1/projects/{project_id}/verify/{report_id}"]["get"]
+                .is_object()
+        );
         assert!(document["components"]["schemas"]["TransformRequest"].is_object());
-        assert!(document["components"]["schemas"]["VerificationReport"].is_object());
+        assert!(document["components"]["schemas"]["MethodAnalysisResponse"].is_object());
+        assert!(document["components"]["schemas"]["PersistedVerificationReport"].is_object());
+        assert!(
+            document["components"]["schemas"]["MethodAnalysisResponse"]["properties"]["analysis"]
+                .is_object()
+        );
     }
 
     #[tokio::test]
@@ -2172,6 +2578,7 @@ esac
         let data = TestData::new();
         let app = test_app_with_runner(&data, "", Duration::from_secs(1), 4096).await;
         let cookie = guest_cookie(&app).await;
+        let other = guest_cookie(&app).await;
         let source = "// ECHO_STDOUT REQUIRE_EXAMPLE_FILENAME\npublic class Example { public static void main(String[] args) {} }\n";
         let project_id = project_with_revisions(&app, &cookie, source, source).await;
         let cases = serde_json::json!([
@@ -2181,18 +2588,51 @@ esac
         ]);
 
         let response = app
+            .clone()
             .oneshot(verify_request(&cookie, &project_id, 1, 2, cases))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let report = response_json(response).await;
+        let report_id = report["report_id"].as_str().unwrap();
         assert_eq!(report["status"], "passed");
+        assert_eq!(report["behaviorally_verified"], true);
+        assert_eq!(report["requested_test_cases"], 3);
         assert_eq!(report["baseline_compilation"]["status"], "completed");
         assert_eq!(report["candidate_compilation"]["main_class"], "Example");
         assert_eq!(report["executed_test_cases"], 3);
         assert_eq!(
             report["test_cases"][2]["baseline"]["stdout"]["utf8"],
             "Привет, мир!\n"
+        );
+        let response = app
+            .clone()
+            .oneshot(verification_report_request(&cookie, &project_id, report_id))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_json(response).await, report);
+
+        let response = app
+            .clone()
+            .oneshot(verification_report_request(&other, &project_id, report_id))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(response).await["code"], "project_not_found");
+
+        let response = app
+            .oneshot(verification_report_request(
+                &cookie,
+                &project_id,
+                &uuid::Uuid::new_v4().to_string(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(response).await["code"],
+            "verification_report_not_found"
         );
         let state = data.0.join("fake-docker.state");
         assert_eq!(std::fs::read_dir(state).unwrap().count(), 0);
@@ -2231,6 +2671,7 @@ esac
             assert_eq!(response.status(), StatusCode::OK);
             let report = response_json(response).await;
             assert_eq!(report["status"], "compilation_failed");
+            assert_eq!(report["behaviorally_verified"], false);
             assert_eq!(report["candidate_compilation"]["status"], expected_status);
             assert_eq!(
                 report["candidate_compilation"]["diagnostics"][0]["code"],
@@ -2277,6 +2718,7 @@ esac
             assert_eq!(response.status(), StatusCode::OK);
             let report = response_json(response).await;
             assert_eq!(report["status"], "failed");
+            assert_eq!(report["behaviorally_verified"], false);
             assert_eq!(report["test_cases"][0]["passed"], false);
             assert_eq!(report["test_cases"][0]["mismatches"][0]["field"], field);
         }
@@ -2307,6 +2749,7 @@ esac
             assert_eq!(response.status(), StatusCode::OK);
             let report = response_json(response).await;
             assert_eq!(report["status"], "failed");
+            assert_eq!(report["behaviorally_verified"], false);
             assert_eq!(report["test_cases"][0]["baseline"][observation_field], true);
             assert_eq!(
                 std::fs::read_dir(data.0.join("fake-docker.state"))
@@ -2364,6 +2807,9 @@ esac
             .unwrap();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(response_json(response).await["code"], "runner_failed");
+        assert!(!project_directory(&data, &cookie, &project_id)
+            .join("verification")
+            .exists());
     }
 
     #[tokio::test]
@@ -2385,6 +2831,32 @@ esac
             .unwrap();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(response_json(response).await["code"], "runner_unavailable");
+        assert!(!project_directory(&data, &cookie, &project_id)
+            .join("verification")
+            .exists());
+    }
+
+    #[tokio::test]
+    async fn verify_rejects_missing_fixtures_without_persisting_a_success() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let source = "class Example {}\n";
+        let project_id = project_with_revisions(&app, &cookie, source, source).await;
+        let response = app
+            .oneshot(verify_request(
+                &cookie,
+                &project_id,
+                1,
+                2,
+                serde_json::json!([]),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(!project_directory(&data, &cookie, &project_id)
+            .join("verification")
+            .exists());
     }
 
     #[tokio::test]

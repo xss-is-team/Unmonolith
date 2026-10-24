@@ -43,7 +43,7 @@ pub struct VerifyTestCase {
     pub stdin: String,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct VerificationReport {
     pub status: VerificationStatus,
     #[schema(minimum = 1)]
@@ -57,7 +57,7 @@ pub struct VerificationReport {
     pub explanation: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VerificationStatus {
     Passed,
@@ -65,7 +65,7 @@ pub enum VerificationStatus {
     CompilationFailed,
 }
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct CompilationResult {
     pub status: CompilationStatus,
     pub exit_code: Option<i32>,
@@ -77,7 +77,7 @@ pub struct CompilationResult {
     pub diagnostics: Vec<RunnerDiagnostic>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CompilationStatus {
     Completed,
@@ -87,20 +87,20 @@ pub enum CompilationStatus {
     MissingMain,
 }
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct RunnerDiagnostic {
     pub code: String,
     pub message: String,
 }
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct CapturedStream {
     pub utf8: Option<String>,
     pub base64: String,
     pub truncated: bool,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct TestCaseResult {
     pub name: String,
     pub passed: bool,
@@ -109,13 +109,13 @@ pub struct TestCaseResult {
     pub candidate: ExecutionObservation,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct BehaviorMismatch {
     pub field: MismatchField,
     pub explanation: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MismatchField {
     Stdout,
@@ -125,7 +125,7 @@ pub enum MismatchField {
     OutputOverflow,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct ExecutionObservation {
     pub stdout: CapturedStream,
     pub stderr: CapturedStream,

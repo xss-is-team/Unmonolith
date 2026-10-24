@@ -139,6 +139,20 @@ pub fn source_path(directory: &Path, revision: u64, filename: &str) -> PathBuf {
         .join(filename)
 }
 
+pub fn verification_report_path(directory: &Path, report_id: Uuid) -> PathBuf {
+    directory
+        .join("verification")
+        .join(format!("{report_id}.json"))
+}
+
+pub async fn store_verification_report(
+    directory: &Path,
+    report_id: Uuid,
+    contents: &[u8],
+) -> Result<(), ApiError> {
+    atomic_write(&verification_report_path(directory, report_id), contents).await
+}
+
 pub async fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), ApiError> {
     let parent = path.parent().ok_or_else(|| {
         ApiError::new(

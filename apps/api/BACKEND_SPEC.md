@@ -56,6 +56,7 @@ data/
     revisions/1/<safe-upload-basename>
     revisions/2/<safe-upload-basename>
     analysis/<revision>.json
+    verification/<report-id>.json
 ```
 - Paths are constructed server-side using validated UUIDs and a validated upload basename, never a client-supplied filesystem path.
 - Session token is opaque and high entropy; cookie attributes `HttpOnly`, `SameSite=Lax`, `Secure` in HTTPS deployments. Implement Origin/CSRF checks for cookie-authenticated state changes in production deployment.
@@ -72,6 +73,7 @@ data/
 - Analysis returns `{revision, status, methods, diagnostics}`. Each method has a stable-in-revision identifier; diagnostics have severity, message, source range.
 - `GET /projects/{project_id}/methods` reads only `analysis/<current revision>.json`, traverses nested AST members, and returns methods/constructors with CFGs plus an opaque revision-local URL selector.
 - `GET /projects/{project_id}/methods/{selector}/cfg` returns the selected nested parser CFG unchanged. CFG node and source-range offsets are UTF-16 code units.
+- `GET /projects/{project_id}/methods/{selector}/analysis` returns the selected method's nested parser `analysis` in a trusted current-revision envelope. Complexity, fragments and findings are not recomputed in Rust; their CFG node IDs and UTF-16 source ranges remain unchanged.
 - Detailed AST remains internal; don't ship a whole-tree AST for large projects.
 
 ### Java worker protocol, M1 adapter / M2 implementation
@@ -92,11 +94,12 @@ data/
 
 ### Isolated Java runner protocol
 
-- `POST /projects/{project_id}/verify` accepts two existing owned revisions and 1-20 named UTF-8 stdin fixtures. It does not mutate either revision or change transform semantics.
+- `POST /projects/{project_id}/verify` accepts two existing owned revisions and 1-20 named UTF-8 stdin fixtures. It does not mutate either revision or change transform semantics. Completed comparison and compilation-failure reports are atomically persisted under `verification/<report-id>.json`; `GET /projects/{project_id}/verify/{report_id}` retrieves an owned report.
 - The runner image is optional configuration. If it or the Docker-compatible CLI/daemon is unavailable, the API returns `503`; it never runs the submitted program on the API host.
 - Each revision is compiled under its stored Java filename with fixed Java 21 settings. Compilation failure, timeout, output overflow and a missing conventional `main` are represented in the verification report and prevent case execution.
 - Containers use a non-root numeric user, no network, a read-only root filesystem, writable size-limited tmpfs work areas, CPU/memory/PID/fd limits, dropped capabilities and `no-new-privileges`. No host paths are mounted. Source is copied into tmpfs over a bounded stdin pipe.
 - Cases receive only predefined UTF-8 stdin and fixed JVM options. stdout bytes, stderr bytes, exit code, timeout and overflow states are compared exactly; a timeout or overflow fails the case because the complete behavior was not observed. A matching report applies only to the supplied fixtures and is not proof of equivalence.
+- `behaviorally_verified` is true only for a complete `passed` report covering every supplied non-empty fixture. Empty fixture sets are rejected, compilation/mismatch reports set it false, and runner/infrastructure errors return an error without persisting a successful report.
 - Docker is risk reduction, not a formal sandbox. Public untrusted use requires stronger VM/microVM isolation and operational controls.
 
 ## 4. Safety
