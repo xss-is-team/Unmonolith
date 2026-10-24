@@ -46,7 +46,7 @@ function CfgFlowNode({ data }: NodeProps<FlowNode>) {
   return (
     <div className={`cfg-node cfg-node--${safeKind(data.kind)}`}>
       <Handle type="target" position={Position.Top} />
-      <span>{data.kind}</span>
+      <span>{formatNodeKind(data.kind)}</span>
       <strong>{data.label}</strong>
       <Handle type="source" position={Position.Bottom} />
     </div>
@@ -96,7 +96,7 @@ export function CfgViewer({
             ? "error"
             : "ready";
   const errorMessage = state === "unsupported"
-    ? "Backend CFG endpoint ещё не подключён в текущей версии API."
+    ? "API пока не отдаёт граф для этого файла. Разбор и диагностики доступны в отчёте."
     : apiError instanceof ApiError
       ? apiError.message
       : "Не удалось загрузить CFG метода.";
@@ -118,7 +118,7 @@ export function CfgViewer({
   return (
     <section className="cfg-panel" aria-label="Граф потока управления">
       <header className="cfg-header">
-        <div className="cfg-title"><span className="cfg-icon"><GitBranch size={17} /></span><div><span className="panel-kicker">CONTROL FLOW GRAPH</span><h2>Граф метода</h2></div></div>
+        <div className="cfg-title"><span className="cfg-icon"><GitBranch size={17} /></span><div><span className="panel-kicker">ГРАФ ПОТОКА</span><h2>Граф метода</h2></div></div>
         <div className="cfg-controls">
           <label htmlFor="cfg-method">Метод</label>
           <select id="cfg-method" value={mode === "fixture" ? fixtureCfg.method_id : methodId} onChange={(event) => {
@@ -139,13 +139,13 @@ export function CfgViewer({
 
       <div className="cfg-content">
         {state === "loading" ? <div className="cfg-state" role="status"><LoaderCircle className="spin" /><strong>Загружаем CFG</strong><span>Получаем граф выбранного метода для ревизии {revision}.</span></div> : null}
-        {state === "unsupported" ? <div className="cfg-state" role="status"><AlertCircle /><strong>CFG endpoint недоступен</strong><span>{errorMessage}</span><Button variant="outline" size="sm" onClick={() => { setSelectedNodeId(""); onSourceRangeSelect(null); setMode("fixture"); }}><Beaker size={14} /> Открыть тестовый fixture</Button></div> : null}
+        {state === "unsupported" ? <div className="cfg-state" role="status"><AlertCircle /><strong>CFG недоступен</strong><span>{errorMessage}</span><Button variant="outline" size="sm" onClick={() => { setSelectedNodeId(""); onSourceRangeSelect(null); setMode("fixture"); }}><Beaker size={14} /> Открыть тестовый пример</Button></div> : null}
         {state === "error" ? <div className="cfg-state cfg-state--error" role="alert"><AlertCircle /><strong>Не удалось получить граф</strong><span>{errorMessage}</span><Button variant="outline" size="sm" onClick={() => void mutate()}><RefreshCw size={14} /> Повторить</Button></div> : null}
-        {state === "empty" ? <div className="cfg-state" role="status"><GitBranch /><strong>{analysis ? "Выберите метод с поддерживаемым CFG" : "Нет данных для графа"}</strong><span>{analysis ? "Граф запрашивается отдельно для каждого метода." : "Сначала запустите анализ сохранённой ревизии Java."}</span>{!analysis ? <Button variant="outline" size="sm" onClick={() => { onSourceRangeSelect(null); setMode("fixture"); }}><Beaker size={14} /> Открыть тестовый fixture</Button> : null}</div> : null}
+        {state === "empty" ? <div className="cfg-state" role="status"><GitBranch /><strong>{analysis ? "Выберите метод" : "Сначала разберите исходник"}</strong><span>{analysis ? "Для каждого метода строится отдельный граф." : "Запустите анализ, затем откройте граф метода."}</span>{!analysis ? <Button variant="outline" size="sm" onClick={() => { onSourceRangeSelect(null); setMode("fixture"); }}><Beaker size={14} /> Посмотреть пример</Button> : null}</div> : null}
         {state === "ready" && cfg?.nodes.length === 0 ? <div className="cfg-state"><GitBranch /><strong>Граф пуст</strong><span>Для этого метода backend не вернул узлов CFG.</span></div> : null}
         {state === "ready" && cfg?.nodes.length ? (
           <div className="cfg-canvas">
-            {mode === "fixture" ? <div className="cfg-demo-notice"><Beaker size={14} /> Демонстрационная схема. Узлы не связаны с текущим Java-исходником и не являются результатом анализа.</div> : null}
+            {mode === "fixture" ? <div className="cfg-demo-notice"><Beaker size={14} /> Пример для знакомства с графом. Он не построен из этого файла.</div> : null}
             <ReactFlow nodes={flow.nodes} edges={flow.edges} nodeTypes={nodeTypes} onNodeClick={onNodeClick} fitView fitViewOptions={{ padding: 0.2 }} minZoom={0.2} maxZoom={1.6} nodesDraggable={false} nodesConnectable={false} elementsSelectable>
               <Background color="#d7dbd3" gap={20} size={1} />
               <Controls showInteractive={false} />
@@ -204,10 +204,13 @@ function toFlow(cfg: Cfg): { nodes: FlowNode[]; edges: Edge[] } {
       source: edge.source,
       target: edge.target,
       type: "smoothstep",
-      label: edge.kind,
+      label: formatEdgeKind(edge.kind),
       markerEnd: { type: MarkerType.ArrowClosed, color: "#69786d" },
       style: { stroke: "#69786d", strokeWidth: 1.5 },
-      labelStyle: { fill: "#46544a", fontSize: 11, fontWeight: 600 },
+      labelStyle: { fill: "#d2deea", fontSize: 11, fontWeight: 600 },
+      labelBgStyle: { fill: "#1a2530", fillOpacity: 0.98 },
+      labelBgPadding: [4, 2],
+      labelBgBorderRadius: 2,
     })),
   };
 }
@@ -218,4 +221,27 @@ function safeKind(kind: string) {
 
 function isCondition(kind: string) {
   return ["condition", "if", "while", "for", "do_while", "do/while"].includes(kind.toLowerCase());
+}
+
+function formatNodeKind(kind: string) {
+  const translations: Record<string, string> = {
+    entry: "ВХОД",
+    exit: "ВЫХОД",
+    condition: "УСЛОВИЕ",
+    if: "УСЛОВИЕ",
+    while: "ЦИКЛ",
+    for: "ЦИКЛ",
+    do_while: "ЦИКЛ",
+    "do/while": "ЦИКЛ",
+    statement: "ОПЕРАЦИЯ",
+    operation: "ОПЕРАЦИЯ",
+    method: "МЕТОД",
+    return: "ВОЗВРАТ",
+  };
+  return translations[kind.toLowerCase()] ?? kind.toLocaleUpperCase("ru-RU");
+}
+
+function formatEdgeKind(kind: string) {
+  const translations: Record<string, string> = { true: "Да", false: "Нет", next: "Далее" };
+  return translations[kind.toLowerCase()] ?? kind;
 }

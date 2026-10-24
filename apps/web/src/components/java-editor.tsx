@@ -38,7 +38,7 @@ export function JavaEditor({
     <CodeMirror
       value={value}
       height="100%"
-      theme="light"
+      theme="dark"
       extensions={[java()]}
       onChange={onChange}
       onCreateEditor={(editorView) => { view.current = editorView; }}

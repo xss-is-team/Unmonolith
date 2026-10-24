@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUpRight, FileCode2, FileUp, LoaderCircle, LockKeyhole } from "lucide-react";
+import { ArrowUpRight, FileCode2, FileUp, LoaderCircle } from "lucide-react";
 import { ApiError, MAX_SOURCE_BYTES, uploadJavaFile } from "@/lib/api";
 
 export function UploadPanel() {
@@ -75,8 +75,7 @@ export function UploadPanel() {
       />
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <div className="upload-meta">
-        <span><FileCode2 size={15} /> Один файл · до 2 МБ</span>
-        <span><LockKeyhole size={14} /> Приватная гостевая сессия</span>
+        <span><FileCode2 size={15} /> .java · максимум 2 МиБ</span>
       </div>
     </div>
   );

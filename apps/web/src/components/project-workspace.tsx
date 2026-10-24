@@ -2,11 +2,12 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import {
   AlertCircle,
   ArrowLeft,
+  ArrowUpRight,
   Check,
   CircleDot,
   Clock3,
@@ -19,6 +20,7 @@ import {
   ShieldCheck,
   Sparkles,
   TerminalSquare,
+  Waypoints,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Brand } from "@/components/brand";
@@ -115,6 +117,7 @@ function WorkspaceEditor({
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analysisError, setAnalysisError] = useState("");
   const [selectedSourceRange, setSelectedSourceRange] = useState<{ start: number; length: number } | null>(null);
+  const [viewMode, setViewMode] = useState<"source" | "cfg">("source");
   const [reloading, setReloading] = useState(false);
   const dirty = source !== savedSource;
   const lineCount = source.length ? source.split("\n").length : 0;
@@ -150,7 +153,7 @@ function WorkspaceEditor({
     }
   }
 
-  async function runAnalysis() {
+  const runAnalysis = useCallback(async () => {
     if (dirty || analysisState === "loading") return;
     setAnalysisState("loading");
     setAnalysisError("");
@@ -167,7 +170,23 @@ function WorkspaceEditor({
         setAnalysisError(analysisErrorMessage(cause));
       }
     }
-  }
+  }, [analysisState, dirty, projectId]);
+
+  useEffect(() => {
+    function onShortcut(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        void runAnalysis();
+      }
+    }
+    window.addEventListener("keydown", onShortcut);
+    return () => window.removeEventListener("keydown", onShortcut);
+  }, [runAnalysis]);
+
+  useEffect(() => {
+    if (!selectedSourceRange || !window.matchMedia("(max-width: 820px)").matches) return;
+    document.querySelector(".editor-card")?.scrollIntoView({ block: "start" });
+  }, [selectedSourceRange]);
 
   async function reloadSource() {
     setReloading(true);
@@ -179,32 +198,23 @@ function WorkspaceEditor({
   }
 
   return (
-    <main className="workspace-screen">
+    <main className="workspace-screen workspace-screen--ide">
       <header className="workspace-top">
-        <Brand compact />
-        <div className="workspace-breadcrumb"><span>РАБОЧЕЕ ПРОСТРАНСТВО</span><i>/</i><strong>{project.filename}</strong></div>
-        <Link className="back-link" href="/"><ArrowLeft size={15} /> Новый файл</Link>
-      </header>
-
-      <section className="workspace-heading">
-        <div>
-          <div className="eyebrow"><span className="eyebrow-dot" /> JAVA SOURCE / REVISION {revision.toString().padStart(2, "0")}</div>
-          <h1>{project.filename}</h1>
-          <p>Исходник проекта и результаты разбора JDT для выбранной ревизии.</p>
-        </div>
-        <div className="workspace-actions">
+        <div className="ide-project-path"><Brand compact /><div className="workspace-breadcrumb"><span>ФАЙЛ</span><i>/</i><strong>{project.filename}</strong><small>РЕД. {revision}</small></div></div>
+        <div className="workspace-actions ide-actions">
           <span className={`save-indicator save-indicator--${dirty ? "dirty" : saveState}`}>
             {saveState === "saving" ? <LoaderCircle className="spin" size={14} /> : dirty ? <CircleDot size={14} /> : <Check size={14} />}
-            {saveState === "saving" ? "Сохраняем" : dirty ? "Есть изменения" : saveState === "saved" ? "Сохранено" : "Все изменения сохранены"}
+            {saveState === "saving" ? "Сохраняем" : dirty ? "Не сохранено" : saveState === "saved" ? "Сохранено" : "Сохранено"}
           </span>
           <Button className="action-button action-button--quiet" onClick={() => void saveSource()} disabled={!dirty || saveState === "saving"}>
             {saveState === "saving" ? <LoaderCircle className="spin" /> : <Save />}{saveState === "saving" ? "Сохранение" : "Сохранить"}
           </Button>
-          <Button className="action-button action-button--primary" onClick={() => void runAnalysis()} disabled={dirty || analysisState === "loading"}>
+          <Button className="action-button action-button--primary" onClick={() => void runAnalysis()} disabled={dirty || analysisState === "loading"} title="Анализ сохранённой версии · Ctrl+Enter" aria-keyshortcuts="Control+Enter Meta+Enter">
             {analysisState === "loading" ? <LoaderCircle className="spin" /> : <Play />}{analysisState === "loading" ? "Анализируем" : "Запустить анализ"}
           </Button>
         </div>
-      </section>
+        <Link className="back-link" href="/"><ArrowLeft size={15} /> Другой файл</Link>
+      </header>
 
       {saveState === "conflict" ? (
         <div className="inline-alert" role="alert"><AlertCircle size={17} /><span>Исходник уже изменился на сервере. Перезагрузите его, чтобы не затереть чужую ревизию.</span><Button variant="outline" onClick={() => void reloadSource()} disabled={reloading}><RefreshCw className={reloading ? "spin" : ""} /> Перезагрузить</Button></div>
@@ -213,48 +223,60 @@ function WorkspaceEditor({
       ) : null}
 
       <div className="workspace-grid">
-        <section className="editor-card" aria-label="Редактор Java">
-          <div className="editor-toolbar">
-            <div className="editor-file"><span className="java-file-icon">J</span><strong>{project.filename}</strong><span className="file-tag">JAVA</span></div>
-            <div className="editor-toolbar-meta"><span><Code2 size={14} /> UTF-8</span><span><GitBranch size={14} /> REV {revision}</span></div>
+        <section className="ide-center" aria-label="Исходник и граф">
+          <div className="workspace-viewbar">
+            <div className="workspace-tabs" role="tablist" aria-label="Представление исходника">
+              <button className={viewMode === "source" ? "workspace-tab workspace-tab--active" : "workspace-tab"} type="button" role="tab" aria-selected={viewMode === "source"} onClick={() => setViewMode("source")}>
+                <Code2 size={16} /> Исходник
+              </button>
+              <button className={viewMode === "cfg" ? "workspace-tab workspace-tab--active" : "workspace-tab"} type="button" role="tab" aria-selected={viewMode === "cfg"} onClick={() => setViewMode("cfg")}>
+                <Waypoints size={16} /> Поток выполнения <span className="tab-status">M2</span>
+              </button>
+            </div>
+            <span className="source-summary">{lineCount} строк <i /> {new TextEncoder().encode(source).length.toLocaleString("ru-RU")} байт</span>
           </div>
-          <div className="editor-body"><JavaEditor value={source} focusRange={selectedSourceRange} onChange={(next) => { setSource(next); setSelectedSourceRange(null); setSaveError(""); if (saveState === "error") setSaveState("idle"); }} /></div>
-          <footer className="editor-footer"><span><TerminalSquare size={14} /> Исходный код</span><span>{lineCount} {russianNoun(lineCount, "строка", "строки", "строк")} <i>·</i> {new TextEncoder().encode(source).length.toLocaleString("ru-RU")} байт</span></footer>
+
+          {viewMode === "source" ? (
+            <section className="editor-card" aria-label="Редактор Java">
+              <div className="editor-toolbar">
+                <div className="editor-file"><span className="java-file-icon">J</span><strong>{project.filename}</strong><span className="file-tag">JAVA</span></div>
+                <div className="editor-toolbar-meta"><span><Code2 size={14} /> UTF-8</span><span><GitBranch size={14} /> Ред. {revision}</span></div>
+              </div>
+              <div className="editor-body"><JavaEditor value={source} focusRange={selectedSourceRange} onChange={(next) => { setSource(next); setSelectedSourceRange(null); setSaveError(""); if (saveState === "error") setSaveState("idle"); }} /></div>
+              <footer className="editor-footer"><span><TerminalSquare size={14} /> Java</span><span>{dirty ? "Есть несохранённые изменения" : "Исходник не изменён анализом"}</span></footer>
+            </section>
+          ) : (
+            <CfgViewer
+              projectId={projectId}
+              revision={revision}
+              analysis={analysisState === "complete" && !dirty ? analysis : null}
+              onSourceRangeSelect={(range) => { selectSourceRange(range); if (range) setViewMode("source"); }}
+            />
+          )}
         </section>
 
         <aside className="analysis-panel">
-          <div className="panel-heading"><div><span className="panel-kicker">JAVA ANALYZER</span><h2>Состояние анализа</h2></div><span className={`worker-mark worker-mark--${analysisState}`}><Sparkles size={16} /></span></div>
+          <div className="panel-heading"><div><span className="panel-kicker">ОТЧЁТ</span><h2>Анализ кода</h2></div><span className={`worker-mark worker-mark--${analysisState}`}><Sparkles size={16} /></span></div>
 
           {analysisState === "complete" && analysis ? (
             <div className="analysis-result">
               <div className="result-banner"><span className="result-check"><Check size={15} /></span><div><strong>{analysis.status === "completed" ? "Анализ завершён" : "Частичный результат"}</strong><small>Ревизия {analysis.revision} · протокол {analysis.protocol_version}</small></div></div>
               <div className="result-stats"><div><strong>{analysis.methods.length}</strong><span>{russianNoun(analysis.methods.length, "метод", "метода", "методов")}</span></div><div><strong>{analysis.diagnostics.length}</strong><span>{russianNoun(analysis.diagnostics.length, "замечание", "замечания", "замечаний")}</span></div></div>
-              {analysis.methods.length ? <div className="method-list"><span className="list-label">МЕТОДЫ</span>{analysis.methods.slice(0, 8).map((method) => <div className="method-row" key={method.id}><Code2 size={13} /><span>{method.name}</span><small>стр. {method.source_range.line ?? "—"}</small></div>)}{analysis.methods.length > 8 ? <small className="more-methods">и ещё {analysis.methods.length - 8}</small> : null}</div> : null}
-              {analysis.diagnostics.length ? <div className="diagnostic-list">{analysis.diagnostics.map((item, index) => <div className="diagnostic-item" key={`${item.code}-${index}`}><span className={`diagnostic-dot diagnostic-dot--${item.severity}`} /><div><strong>{item.code}</strong><p>{item.message}</p><small>Строка {item.source_range.line ?? "—"}</small></div></div>)}</div> : <p className="empty-diagnostics">Диагностик нет.</p>}
+              {analysis.methods.length ? <div className="method-list"><span className="list-label">МЕТОДЫ <i>·</i> НАЖМИТЕ, ЧТОБЫ ОТКРЫТЬ В КОДЕ</span>{analysis.methods.slice(0, 12).map((method) => <button className={`method-row${selectedSourceRange?.start === method.source_range.start ? " method-row--active" : ""}`} type="button" key={method.id} onClick={() => { setViewMode("source"); setSelectedSourceRange(method.source_range); }} aria-label={`Перейти к методу ${method.name}, строка ${method.source_range.line ?? "неизвестна"}`}><Code2 size={14} /><span>{method.name}</span><small>стр. {method.source_range.line ?? "—"}</small><ArrowUpRight className="method-jump" size={13} /></button>)}{analysis.methods.length > 12 ? <small className="more-methods">Показаны первые 12 из {analysis.methods.length}</small> : null}</div> : null}
+              {analysis.diagnostics.length ? <div className="diagnostic-list"><span className="list-label">ДИАГНОСТИКИ <i>·</i> ПЕРЕЙТИ К СТРОКЕ</span>{analysis.diagnostics.map((item, index) => <button className={`diagnostic-item diagnostic-item--${item.severity}${selectedSourceRange?.start === item.source_range.start ? " diagnostic-item--active" : ""}`} type="button" key={`${item.code}-${index}`} onClick={() => { setViewMode("source"); setSelectedSourceRange(item.source_range); }} aria-label={`${item.severity}: ${item.code}, строка ${item.source_range.line ?? "неизвестна"}. ${item.message}`}><span className={`diagnostic-dot diagnostic-dot--${item.severity}`} /><span className="diagnostic-copy"><strong>{item.code}</strong><span>{item.message}</span><small>Строка {item.source_range.line ?? "—"}</small></span><ArrowUpRight className="diagnostic-jump" size={14} /></button>)}</div> : <div className="empty-diagnostics"><Check size={15} /> Замечаний нет</div>}
             </div>
           ) : analysisState === "unavailable" ? (
             <div className="worker-state worker-state--unavailable"><span className="state-icon"><Clock3 /></span><strong>Анализатор недоступен</strong><p>{analysisError}</p><Button variant="outline" onClick={() => void runAnalysis()}><RefreshCw /> Повторить анализ</Button><div className="state-footnote"><span className="status-pip status-pip--amber" /> API доступен · анализатор не ответил</div></div>
           ) : analysisState === "error" ? (
             <div className="worker-state worker-state--error"><span className="state-icon"><AlertCircle /></span><strong>Анализ не выполнен</strong><p>{analysisError}</p><Button variant="outline" onClick={() => void runAnalysis()}><RefreshCw /> Попробовать снова</Button></div>
           ) : (
-            <div className="worker-state"><span className="state-icon"><ShieldCheck /></span><strong>{analysisState === "loading" ? "JDT разбирает исходник" : "Готов к анализу"}</strong><p>{analysisState === "loading" ? "API обрабатывает сохранённую ревизию и собирает список методов и диагностики." : "Запустите анализ сохранённой ревизии. Результаты CFG выбранного метода отображаются ниже."}</p><div className="state-footnote"><span className={`status-pip ${analysisState === "loading" ? "status-pip--pulse" : "status-pip--neutral"}`} />{analysisState === "loading" ? "Обрабатываем ревизию" : "Ожидание команды"}</div></div>
+            <div className="worker-state"><span className="state-icon"><ShieldCheck /></span><strong>{analysisState === "loading" ? "Разбираем исходник" : "Отчёт появится здесь"}</strong><p>{analysisState === "loading" ? "Ищем методы и диагностики." : "Нажмите «Запустить анализ» — найдём методы и замечания."}</p>{analysisState === "loading" ? <div className="state-footnote"><span className="status-pip status-pip--pulse" />Редакция {revision}</div> : null}</div>
           )}
 
-          <div className="panel-divider" />
-          <div className="pipeline-note"><span className="pipeline-index">01</span><div><strong>Сохранённый исходник</strong><p>Ревизия {revision} · {lineCount} {russianNoun(lineCount, "строка", "строки", "строк")}</p></div><Check size={15} /></div>
-          <div className={`pipeline-note${analysisState === "complete" ? "" : " pipeline-note--pending"}`}><span className="pipeline-index">02</span><div><strong>Методы и диагностики</strong><p>{analysis ? `Ревизия ${analysis.revision} · ${analysis.methods.length} ${russianNoun(analysis.methods.length, "метод", "метода", "методов")} · ${analysis.diagnostics.length} ${russianNoun(analysis.diagnostics.length, "замечание", "замечания", "замечаний")}` : analysisState === "loading" ? "JDT обрабатывает исходник" : analysisState === "unavailable" || analysisState === "error" ? "Последний запуск не завершён" : "Запустите анализ сохранённой ревизии"}</p></div>{analysisState === "complete" ? <Check size={15} /> : <span className="pending-dash" />}</div>
-          <div className="panel-tip"><span>i</span><p>Результаты анализа относятся только к той ревизии исходника, которую обработал backend.</p></div>
         </aside>
       </div>
 
-      <CfgViewer
-        projectId={projectId}
-        revision={revision}
-        analysis={analysisState === "complete" && !dirty ? analysis : null}
-        onSourceRangeSelect={selectSourceRange}
-      />
-
-      <footer className="workspace-bottom"><span>JAVA BLUEPRINTS <i>·</i> M1 SOURCE WORKSPACE</span><span><ShieldCheck size={13} /> Код хранится в приватной гостевой сессии</span></footer>
+      <footer className="workspace-bottom"><span>Изменения сохраняются только по кнопке «Сохранить»</span><span><ShieldCheck size={13} /> Приватная сессия</span></footer>
     </main>
   );
 }
