@@ -39,6 +39,10 @@ It installs frontend packages, builds the parser and API, then starts both servi
 
 `./dev parser-build` creates an executable JAR. `./dev api` points the API at that JAR automatically; `BLUEPRINTS_ANALYZER_JAR` can override it. The API invokes the parser for each analysis request and stores its JSON result with the project revision. If the JAR has not been built, analysis returns `analyzer_unavailable`. The parser provides an AST, semantic diagnostics, and statement-level CFG. Complexity analysis, transformations, Java generation, compilation, and behavior verification are not implemented yet.
 
+## Whole-project support
+
+The next project-level requirements and acceptance checks are in [`PROJECT_REQUIREMENTS.md`](PROJECT_REQUIREMENTS.md). `legacy/commons-math-3.6.1/` is retained as a real, large Maven project for validating project import, dependency-aware analysis, graph-guided changes, rebuilds, and tests; it is not application source.
+
 ## Data flow
 
 ```text
@@ -64,7 +68,3 @@ Keep one canonical editable model. The editor changes that model; the generator 
 Load Java → build graph → edit → generate Java → compile → run tests → compare behavior. Report unsupported syntax and validation failures; do not silently drop constructs.
 
 Implement the brief's mandatory Java scope first: core language/`java.lang`, console I/O, `java.util` collections, and exceptions. The brief permits parsers, graph/UI libraries, frameworks, and AI. It does not prescribe a parser, storage design, or a specific AST-to-CFG strategy.
-
-## Legacy test corpus
-
-`legacy/commons-math-3.6.1/` is the pinned Apache Commons Math 3.6.1 codebase used as a large Java parser and analysis test corpus. Keep the fixture unchanged; see `legacy/commons-math-3.6.1/README-test-fixture.md` for provenance and use.

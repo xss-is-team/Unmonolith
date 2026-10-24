@@ -1,7 +1,7 @@
 # Stack and architecture
 
-- Runtime layout: `apps/api/` is the Rust/Axum API, `apps/parser/` is a Maven/Eclipse JDT CLI that emits AST JSON, and `apps/web/` is the Next.js App Router UI. Root `flake.nix` is optional; host setup is documented in `README.md`.
-- API invokes the parser JAR with a source path, validates its JSON AST result, attaches revision metadata, and stores the full artifact. The UI currently displays method summaries and diagnostics; CFG and complexity analysis are not implemented.
-- Intended flow: Java parser → AST/source map → CFG + canonical editable model → analysis/refactoring → Java generator → reparse, compile, tests, behavior comparison.
-- Required initial language coverage per brief: core Java/`java.lang`, console I/O, `java.util` collections, and exceptions. Graph visualization/model design remains undecided.
-- Keep source locations linked through model nodes, diagnostics, and generated edits. Do not silently discard unsupported syntax; retain original source for rollback.
+- `apps/parser/`: Maven CLI built on Eclipse JDT; emits AST, semantic diagnostics, and statement-level CFG.
+- `apps/api/`: Rust/Axum guest-session API; invokes the Java parser process, validates/stores revision-scoped results, streams analysis progress, serves method CFG, OpenAPI, and Swagger UI. Persistence is local filesystem.
+- `apps/web/`: Next.js App Router, CodeMirror Java editor, React Flow CFG viewer with ELK layout and Dagre fallback. Next proxies API and Swagger routes on the same origin.
+- Product CFG uses parser/API output only. Unit tests retain isolated process doubles to test malformed, failed, oversized, and timed-out worker responses. No external SaaS integrations.
+- Implemented: AST/CFG analysis, diagnostics, revisions, CFG/source navigation, autosave, SSE progress, and revision diffs. Not implemented: whole-project import/classpath resolution, complexity analysis, graph transformations, Java generation, project rebuild, or behavior-equivalence runner. See `README.md`, `ROADMAP.md`, and `PROJECT_REQUIREMENTS.md`.

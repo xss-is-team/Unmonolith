@@ -20,9 +20,8 @@ both services. Press Ctrl+C to stop them.
 The current UI supports one `.java` file per project, source viewing and
 revision-checked saving. With the parser built, analysis shows returned methods
 and diagnostics. The CFG viewer loads the documented per-method route and maps
-selected real nodes to source ranges. If the backend route is unavailable, the
-viewer reports that state; a separate, explicitly labeled fixture is available
-for UI development and is never presented as analysis output. Condition edits
-remain disabled until the transform endpoint is implemented.
+returned nodes to source ranges. It displays empty, unsupported, and error states
+instead of substituting sample graphs. Condition edits remain disabled until the
+transform endpoint is implemented.
 
 Run frontend lint and production build with `./dev web-check`.

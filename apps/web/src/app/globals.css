@@ -204,7 +204,6 @@ a { color: inherit; text-decoration: none; }
 .cfg-controls { display: flex; align-items: center; gap: 9px; }
 .cfg-controls label { color: var(--soft-ink); font-size: 10px; }
 .cfg-controls select { width: min(360px, 44vw); height: 34px; padding: 0 30px 0 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--surface); font-size: 11px; }
-.cfg-fixture-badge { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border-radius: 5px; color: #74542c; background: #f6ebd8; font-family: var(--font-code), monospace; font-size: 8px; white-space: nowrap; }
 .cfg-content { position: relative; display: grid; min-height: 460px; flex: 1; place-items: stretch; }
 .cfg-canvas { position: absolute; inset: 0; min-height: 460px; background-color: #f8f8f3; }
 .cfg-canvas .react-flow__background pattern circle { fill: #c9d0c6; }
@@ -222,7 +221,6 @@ a { color: inherit; text-decoration: none; }
 .cfg-node--condition, .cfg-node--if, .cfg-node--while, .cfg-node--for, .cfg-node--do-while { border-color: #d6c38f; background: #fff9e9; }
 .cfg-node--entry, .cfg-node--exit { width: 168px; min-height: 56px; align-items: center; border-radius: 28px; border-color: #b4cbb5; background: #f0f6ec; }
 .cfg-node .react-flow__handle { width: 7px; height: 7px; border: 1px solid #fbfaf6; background: #70877a; }
-.cfg-demo-notice { position: absolute; z-index: 5; top: 12px; left: 50%; display: flex; align-items: center; gap: 7px; max-width: calc(100% - 24px); padding: 8px 11px; transform: translateX(-50%); border: 1px solid #e8d6b7; border-radius: 6px; color: #74542c; background: #fbf1df; font-size: 10px; line-height: 1.4; }
 .cfg-transform { display: grid; grid-template-columns: minmax(170px, 1fr) minmax(240px, 1.3fr) auto; align-items: center; gap: 12px; padding: 13px 17px; border-top: 1px solid #e7e7df; background: #fbfaf6; }
 .cfg-transform > div { display: flex; flex-direction: column; gap: 4px; }
 .cfg-transform strong { font-size: 10px; }
@@ -468,7 +466,6 @@ a { color: inherit; text-decoration: none; }
 .workspace-screen--ide .cfg-controls label { color: #5f6d64; font-size: 10px; }
 .workspace-screen--ide .cfg-controls select { border-color: #d4d9cf; color: #2e3e36; background: #fffefa; font-size: 11px; }
 .workspace-screen--ide .cfg-controls button { border-color: #d4d9cf; color: #53665a; background: #fbfaf5; }
-.workspace-screen--ide .cfg-fixture-badge { color: #805c31; background: #f2ead9; font-size: 9px; }
 .workspace-screen--ide .cfg-content, .workspace-screen--ide .cfg-canvas { min-height: 0; flex: 1; }
 .workspace-screen--ide .cfg-canvas { background: #f7f6ef; }
 .workspace-screen--ide .cfg-canvas .react-flow { --xy-background-color: #f7f6ef; --xy-background-pattern-color: #d9ddd1; --xy-edge-stroke-default: #607b6a; }
@@ -485,7 +482,6 @@ a { color: inherit; text-decoration: none; }
 .workspace-screen--ide .cfg-node > span { color: #6e8273; font-size: 9px; }
 .workspace-screen--ide .cfg-node > strong { color: #263d33; font-size: 11px; }
 .workspace-screen--ide .cfg-node--condition, .workspace-screen--ide .cfg-node--if, .workspace-screen--ide .cfg-node--while, .workspace-screen--ide .cfg-node--for, .workspace-screen--ide .cfg-node--do-while { border-color: #d8bc77; background: #fff8e6; }
-.workspace-screen--ide .cfg-demo-notice { top: 12px; left: 12px; max-width: min(420px, 42%); padding: 8px 10px; transform: none; border-color: #e7d2a9; color: #785a2b; background: #fff7e5; font-size: 10px; }
 .workspace-screen--ide .cfg-transform { border-color: #e4e4da; background: #fbfaf5; }
 .workspace-screen--ide .cfg-transform strong { color: #34493d; font-size: 10px; }
 .workspace-screen--ide .cfg-transform span { color: #778379; font-size: 9px; }
@@ -625,8 +621,6 @@ a { color: inherit; text-decoration: none; }
   .workspace-screen--ide .cfg-header { align-items: flex-start; flex-direction: column; }
   .workspace-screen--ide .cfg-controls { width: 100%; flex-wrap: wrap; }
   .workspace-screen--ide .cfg-controls select { min-width: 0; width: 100%; flex: 1 1 100%; }
-  .workspace-screen--ide .cfg-fixture-badge { white-space: normal; }
-  .workspace-screen--ide .cfg-demo-notice { max-width: calc(100% - 16px); left: 8px; font-size: 9px; }
   .workspace-screen--ide .analysis-panel { padding: 15px 13px; }
   .workspace-screen--ide .workspace-bottom { flex-direction: column; font-size: 8px; }
 }
