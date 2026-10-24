@@ -89,6 +89,7 @@ impl AppState {
         analyze_project_stream,
         list_project_revisions,
         get_project_revision,
+        get_project_graph,
         list_methods,
         get_method_cfg,
         get_method_analysis,
@@ -112,6 +113,7 @@ impl AppState {
         RevisionSummary,
         RevisionDetail,
         MethodsResponse,
+        ProjectGraphResponse,
         CfgMethod,
         Cfg,
         CfgNode,
@@ -189,6 +191,7 @@ pub fn app(state: AppState) -> Router {
             "/projects/{project_id}/revisions/{revision}",
             get(get_project_revision),
         )
+        .route("/projects/{project_id}/graph", get(get_project_graph))
         .route("/projects/{project_id}/methods", get(list_methods))
         .route(
             "/projects/{project_id}/methods/{method_selector}/cfg",
@@ -234,6 +237,13 @@ struct MethodsResponse {
     #[schema(minimum = 1)]
     revision: u64,
     methods: Vec<CfgMethod>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct ProjectGraphResponse {
+    #[schema(minimum = 1)]
+    revision: u64,
+    graph: Value,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -745,6 +755,46 @@ async fn list_methods(
     Ok(Json(MethodsResponse {
         revision: project.revision,
         methods,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/graph",
+    tag = "Analysis",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = ProjectGraphResponse),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody),
+        (status = 409, body = ApiErrorBody),
+        (status = 422, body = ApiErrorBody)
+    )
+)]
+async fn get_project_graph(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+) -> Result<Json<ProjectGraphResponse>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    let artifact = load_analysis(&directory, project.revision).await?;
+    let graph = artifact
+        .get("project_graph")
+        .filter(|graph| graph.is_object())
+        .cloned()
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "project_graph_unavailable",
+                "the parser did not produce a project graph for the current revision",
+            )
+        })?;
+    Ok(Json(ProjectGraphResponse {
+        revision: project.revision,
+        graph,
     }))
 }
 
@@ -2024,6 +2074,122 @@ esac
     }
 
     #[tokio::test]
+    async fn returns_exact_project_graph_with_current_revision_and_ownership() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let owner = guest_cookie(&app).await;
+        let other = guest_cookie(&app).await;
+        let project = response_json(upload(&app, &owner, "Example.java").await).await;
+        let project_id = project["id"].as_str().unwrap();
+        let expected_graph = serde_json::json!({
+            "version": 1,
+            "scope": "compilation_unit",
+            "nodes": [
+                {
+                    "id": "t0",
+                    "kind": "class",
+                    "name": "Example",
+                    "qualified_name": "Example",
+                    "source_range": {"start": 0, "length": 80, "line": 1, "end_line": 5},
+                    "external_supertypes": []
+                },
+                {
+                    "id": "c0",
+                    "kind": "method",
+                    "name": "process",
+                    "method_id": "Example.process()",
+                    "cfg_entry": "m0.n0",
+                    "source_range": {"start": 20, "length": 40, "line": 2, "end_line": 4}
+                }
+            ],
+            "edges": [{"from": "t0", "to": "c0", "kind": "contains", "count": 1, "sites": []}],
+            "unresolved_calls": [],
+            "stats": {"resolved_internal_calls": 0, "external_calls": 0, "unresolved_calls": 0}
+        });
+        let mut artifact = cfg_artifact(1);
+        artifact["project_graph"] = expected_graph.clone();
+        store_analysis(&data, &owner, project_id, &artifact).await;
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &owner)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = response_json(response).await;
+        assert_eq!(response["revision"], 1);
+        assert_eq!(response["graph"], expected_graph);
+
+        let response = app
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &other)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(response).await["code"], "project_not_found");
+    }
+
+    #[tokio::test]
+    async fn project_graph_reports_missing_and_stale_analysis_explicitly() {
+        let data = TestData::new();
+        let app = test_app(&data).await;
+        let cookie = guest_cookie(&app).await;
+        let project = response_json(upload(&app, &cookie, "Example.java").await).await;
+        let project_id = project["id"].as_str().unwrap();
+        store_analysis(&data, &cookie, project_id, &cfg_artifact(1)).await;
+
+        let missing = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            response_json(missing).await["code"],
+            "project_graph_unavailable"
+        );
+
+        let stale_artifact = cfg_artifact(2);
+        let current_analysis_path = project_directory(&data, &cookie, project_id)
+            .join("analysis")
+            .join("1.json");
+        fs::write(
+            &current_analysis_path,
+            serde_json::to_vec(&stale_artifact).unwrap(),
+        )
+        .await
+        .unwrap();
+        let stale = app
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(stale).await["code"],
+            "analysis_revision_mismatch"
+        );
+    }
+
+    #[tokio::test]
     async fn returns_exact_method_analysis_with_cfg_ids_utf16_ranges_and_revision() {
         let data = TestData::new();
         let app = test_app(&data).await;
@@ -2239,6 +2405,7 @@ esac
                 .is_object()
         );
         assert!(document["paths"]["/api/v1/projects/{project_id}/methods"]["get"].is_object());
+        assert!(document["paths"]["/api/v1/projects/{project_id}/graph"]["get"].is_object());
         assert!(
             document["paths"]["/api/v1/projects/{project_id}/methods/{method_selector}/cfg"]["get"]
                 .is_object()
@@ -2254,6 +2421,7 @@ esac
         );
         assert!(document["components"]["schemas"]["TransformRequest"].is_object());
         assert!(document["components"]["schemas"]["MethodAnalysisResponse"].is_object());
+        assert!(document["components"]["schemas"]["ProjectGraphResponse"].is_object());
         assert!(document["components"]["schemas"]["PersistedVerificationReport"].is_object());
         assert!(document["components"]["schemas"]["RevisionDetail"].is_object());
         assert!(
@@ -2359,6 +2527,27 @@ esac
                 .as_str()
                 .unwrap_or_default()
                 .contains("must be defined in its own file")));
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/projects/{project_id}/graph"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let project_graph = response_json(response).await;
+        assert_eq!(project_graph["revision"], 1);
+        assert_eq!(project_graph["graph"]["version"], 1);
+        assert_eq!(project_graph["graph"]["scope"], "compilation_unit");
+        assert!(project_graph["graph"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node["name"] == "Example"));
 
         let response = app
             .clone()

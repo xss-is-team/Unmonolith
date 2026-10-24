@@ -67,10 +67,10 @@ These tasks validate the product interaction. They do not deliver real project i
 
 ### M1 — Connect the parser graph
 
-- [ ] Rust exposes the parser's current-revision `project_graph` through a revisioned API response.
-- [ ] Frontend consumes that response through the typed API adapter and opens the real type graph; API errors never switch to fixture data.
-- [ ] Selecting a type or method opens the matching source range; method navigation resolves to the existing CFG and complexity endpoints.
-- [ ] Partial analysis, unsupported constructs, unresolved calls, and stale graph revisions are visible in the UI.
+- [x] Rust exposes the parser's current-revision `project_graph` through `GET /projects/{id}/graph` in a revisioned API response.
+- [x] Frontend consumes that response through the typed API adapter and opens the real type graph; API errors never switch to fixture data.
+- [x] Selecting a type or method opens the matching source range; method navigation resolves to the existing CFG and complexity endpoints.
+- [x] Partial analysis, unsupported constructs, unresolved calls, and stale graph revisions are visible in the UI.
 
 ### M2 — Import and understand a whole repository
 
@@ -96,6 +96,6 @@ These tasks validate the product interaction. They do not deliver real project i
 ## Current baseline
 
 - The API accepts one `.java` file per project; whole-repository import and project-wide classpath analysis are not implemented.
-- The parser emits per-method CFGs and a compilation-unit architectural/dependency graph; it does not produce the hierarchical business-flow diagrams in this roadmap. Rust has not yet exposed the parser graph as an API endpoint. See `apps/parser/README.md` for graph identity and source-range constraints.
+- The parser emits per-method CFGs and a compilation-unit architectural/dependency graph, now exposed by the revision-bound `/graph` API; it does not produce the hierarchical business-flow diagrams in this roadmap. See `apps/parser/README.md` for graph identity and source-range constraints.
 - The current Project Overview requests the planned API graph; `/demo` supplies a type-graph fixture plus clearly labeled synthetic flowchart and modernization catalogs. Demo data is not analysis of an uploaded source. Real project-flow and project-wide transformation APIs are still required.
 - Existing transformations are limited. The BPMN-like plan and Java-version migration are frontend prototypes only; there is no backend operation to apply either one.

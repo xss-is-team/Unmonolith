@@ -74,6 +74,7 @@ data/
 - Analysis returns `{revision, status, methods, diagnostics}`. Each method has a stable-in-revision identifier; diagnostics have severity, message, source range.
 - `POST /projects/{project_id}/analyze/stream` runs the same analyzer as the synchronous endpoint and emits truthful lifecycle events. The current JDT CLI returns its parser result atomically, so this wrapper does not invent per-method partial results.
 - `GET /projects/{project_id}/methods` reads only `analysis/<current revision>.json`, traverses nested AST members, and returns methods/constructors with CFGs plus an opaque revision-local URL selector.
+- `GET /projects/{project_id}/graph` returns the top-level parser `project_graph` unchanged in a `{revision, graph}` response from the owned current-revision artifact. M1 graph scope is the uploaded compilation unit; `project_graph: null` returns `422 project_graph_unavailable`.
 - `GET /projects/{project_id}/methods/{selector}/cfg` returns the selected nested parser CFG unchanged. CFG node and source-range offsets are UTF-16 code units.
 - `GET /projects/{project_id}/methods/{selector}/analysis` returns the selected method's nested parser `analysis` in a trusted current-revision envelope. Complexity, fragments and findings are not recomputed in Rust; their CFG node IDs and UTF-16 source ranges remain unchanged.
 - Detailed AST remains internal; don't ship a whole-tree AST for large projects.

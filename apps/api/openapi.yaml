@@ -3,7 +3,7 @@ info:
   title: Java Blueprints MVP API
   version: 0.5.0
   description: |
-    Guest sessions, revisioned single-file Java projects, JDT analysis, nested per-method CFG access,
+    Guest sessions, revisioned single-file Java projects, JDT analysis, compilation-unit project graph and nested per-method CFG access,
     revision history, SSE analysis lifecycle, restricted replace_condition transformations,
     and isolated Java 21 behavioral verification.
 servers:
@@ -213,6 +213,28 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /projects/{project_id}/graph:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: getProjectGraph
+      tags: [Analysis]
+      description: Returns the unchanged parser project_graph from the current revision's analysis artifact. Scope is the uploaded compilation unit.
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Revision-bound parser project graph
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectGraphResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422':
+          description: Parser did not produce a graph for the current revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
   /projects/{project_id}/methods/{method_selector}/cfg:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -481,6 +503,77 @@ components:
         methods:
           type: array
           items: {$ref: '#/components/schemas/CfgMethod'}
+    ProjectGraphResponse:
+      type: object
+      required: [revision, graph]
+      properties:
+        revision: {type: integer, minimum: 1}
+        graph: {$ref: '#/components/schemas/ProjectGraph'}
+    ProjectGraph:
+      type: object
+      required: [version, scope, nodes, edges, unresolved_calls, stats]
+      properties:
+        version: {type: integer, enum: [1]}
+        scope: {type: string, enum: [compilation_unit, project]}
+        nodes:
+          type: array
+          items: {$ref: '#/components/schemas/ProjectGraphNode'}
+        edges:
+          type: array
+          items: {$ref: '#/components/schemas/ProjectGraphEdge'}
+        unresolved_calls:
+          type: array
+          items: {$ref: '#/components/schemas/UnresolvedProjectCall'}
+        stats: {$ref: '#/components/schemas/ProjectGraphStats'}
+    ProjectGraphNode:
+      type: object
+      required: [id, kind, name, source_range]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [class, interface, enum, record, annotation_type, method, constructor]}
+        name: {type: string}
+        qualified_name: {type: string, nullable: true}
+        method_id: {type: string, nullable: true}
+        cfg_entry: {type: string, nullable: true}
+        source_range: {$ref: '#/components/schemas/SourceRange'}
+        external_supertypes:
+          type: array
+          items:
+            type: object
+            required: [name, relation, resolved]
+            properties:
+              name: {type: string}
+              relation: {type: string, enum: [extends, implements]}
+              resolved: {type: boolean}
+    ProjectGraphEdge:
+      type: object
+      required: [from, to, kind, count, sites]
+      properties:
+        from: {type: string}
+        to: {type: string}
+        kind: {type: string, enum: [contains, extends, implements, calls, constructs, depends_on]}
+        count: {type: integer, minimum: 0}
+        sites:
+          type: array
+          items: {$ref: '#/components/schemas/SourceRange'}
+    UnresolvedProjectCall:
+      type: object
+      required: [id, from, kind, name, expression, source_range, reason]
+      properties:
+        id: {type: string}
+        from: {type: string}
+        kind: {type: string, enum: [method_call, constructor_call]}
+        name: {type: string}
+        expression: {type: string}
+        source_range: {$ref: '#/components/schemas/SourceRange'}
+        reason: {type: string}
+    ProjectGraphStats:
+      type: object
+      required: [resolved_internal_calls, external_calls, unresolved_calls]
+      properties:
+        resolved_internal_calls: {type: integer, minimum: 0}
+        external_calls: {type: integer, minimum: 0}
+        unresolved_calls: {type: integer, minimum: 0}
     CfgMethod:
       type: object
       required: [selector, id, name, kind, source_range]
