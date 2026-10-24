@@ -100,6 +100,7 @@ export function ProjectGraphViewer({
   onSourceRangeSelect,
   graphOverride,
   sourceLabel,
+  fixtureFiles,
 }: {
   projectId: string;
   revision: number;
@@ -108,6 +109,7 @@ export function ProjectGraphViewer({
   onSourceRangeSelect: (range: SourceRange) => void;
   graphOverride?: ProjectGraph;
   sourceLabel?: string;
+  fixtureFiles?: Record<string, string>;
 }) {
   const graphRequest = useSWR<ProjectGraphResponse, unknown>(
     graphOverride ? null : `project-graph:${projectId}:${revision}`,
@@ -122,6 +124,7 @@ export function ProjectGraphViewer({
   );
   const [query, setQuery] = useState("");
   const [edgeKind, setEdgeKind] = useState("all");
+  const [activeSourceRange, setActiveSourceRange] = useState<SourceRange | null>(null);
   const navigationKey = `${projectId}:${revision}`;
   const [navigation, setNavigation] = useState({ key: navigationKey, packagePath: [] as string[], selectedTypeId: null as string | null });
   const activeNavigation = navigation.key === navigationKey
@@ -198,6 +201,25 @@ export function ProjectGraphViewer({
   );
   const selectedType = filteredTypes.find((node) => node.id === selectedTypeId) ?? filteredTypes[0] ?? null;
   const selectedMethods = selectedType?.methods ?? [];
+  const sourcePreview = useMemo(() => {
+    const file = activeSourceRange?.file;
+    const contents = file ? fixtureFiles?.[file] : undefined;
+    if (!activeSourceRange || !file || contents === undefined) return null;
+    const lines = contents.split("\n");
+    const first = Math.max(1, (activeSourceRange.line ?? 1) - 2);
+    const last = Math.min(lines.length, (activeSourceRange.end_line ?? activeSourceRange.line ?? first) + 2);
+    return {
+      file,
+      first,
+      range: activeSourceRange,
+      lines: lines.slice(first - 1, last).map((text, index) => ({
+        number: first + index,
+        text,
+        selected: first + index >= (activeSourceRange.line ?? first)
+          && first + index <= (activeSourceRange.end_line ?? activeSourceRange.line ?? first),
+      })),
+    };
+  }, [activeSourceRange, fixtureFiles]);
 
   useEffect(() => {
     let cancelled = false;
@@ -288,7 +310,16 @@ export function ProjectGraphViewer({
   const unresolved = overview.unresolvedCalls;
   const externals = overview.types.flatMap((type) => type.externalSupertypes.map((external) => ({ owner: type, ...external })));
   const canNavigateToSource = !isLocalFixture && overview.scope === "compilation_unit";
+  const canOpenSource = canNavigateToSource || (isLocalFixture && Boolean(fixtureFiles));
   const truncated = matchingTypes.length > filteredTypes.length;
+
+  function openSourceRange(range: SourceRange) {
+    if (isLocalFixture) {
+      if (range.file && fixtureFiles?.[range.file] !== undefined) setActiveSourceRange(range);
+      return;
+    }
+    onSourceRangeSelect(range);
+  }
 
   return (
     <section className="project-graph-panel" aria-label="Обзор структуры проекта">
@@ -362,7 +393,7 @@ export function ProjectGraphViewer({
           >
             <Background color="#d0d6cd" gap={24} size={1} />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable nodeColor={(node) => node.id === selectedType?.id ? "#d7ee72" : "#71917a"} />
+            <MiniMap style={{ width: 128, height: 74 }} pannable zoomable nodeColor={(node) => node.id === selectedType?.id ? "#d7ee72" : "#71917a"} />
           </ReactFlow>
         ) : !packageChildren.length ? <div className="project-graph-empty"><Search size={19} /><strong>Типы не найдены</strong><span>Измените запрос или снимите фильтр.</span></div>
           : null}
@@ -375,7 +406,7 @@ export function ProjectGraphViewer({
         <div className="project-graph-inspector">
           <div className="project-graph-inspector__head">
             <div><small>{selectedType.kind.replace("_", " ")} · {selectedType.sourceRange.line ? `строка ${selectedType.sourceRange.line}` : "без диапазона"}</small><h3>{selectedType.qualifiedName}</h3></div>
-            {canNavigateToSource && selectedType.sourceRange ? <Button variant="outline" onClick={() => onSourceRangeSelect(selectedType.sourceRange)}><FileCode2 size={14} /> Исходник</Button> : null}
+            {canOpenSource && selectedType.sourceRange ? <Button variant="outline" onClick={() => openSourceRange(selectedType.sourceRange)}><FileCode2 size={14} /> {isLocalFixture ? "Показать файл" : "Исходник"}</Button> : null}
           </div>
           <div className="project-graph-methods" aria-label={`Методы ${selectedType.name}`}>
             {selectedMethods.length ? selectedMethods.map((method) => {
@@ -387,16 +418,32 @@ export function ProjectGraphViewer({
                 <div className="project-graph-method" key={method.id}>
                   <span><Braces size={13} /><strong>{method.name}</strong><small>{method.kind === "constructor" ? "конструктор" : method.sourceRange.line ? `стр. ${method.sourceRange.line}` : "метод"}</small></span>
                   <div>
-                    {canNavigateToSource && method.sourceRange ? <button type="button" title="Открыть место в исходнике" onClick={() => onSourceRangeSelect(method.sourceRange)}><FileCode2 size={14} /></button> : null}
+                    {canOpenSource && method.sourceRange ? <button type="button" title={isLocalFixture ? "Показать файл и строки метода" : "Открыть место в исходнике"} onClick={() => openSourceRange(method.sourceRange)}><FileCode2 size={14} /></button> : null}
                     {!isLocalFixture && target ? <button type="button" title="Открыть CFG и Big O" onClick={() => onOpenMethod(target.selector)}><ArrowUpRight size={14} /></button> : null}
                     {!isLocalFixture && !target ? <small className="project-graph-no-cfg">CFG недоступен</small> : null}
                   </div>
                 </div>
               );
             }) : <p className="project-graph-no-methods">Методы не найдены.</p>}
-            {isLocalFixture ? <p className="project-graph-fixture-footnote">Переходы к исходнику и CFG отключены для локального примера.</p> : null}
+            {isLocalFixture ? <p className="project-graph-fixture-footnote">Файлы — синтетические. Переходы к CFG и реальному исходнику не выполняются.</p> : null}
           </div>
         </div>
+      ) : null}
+
+      {sourcePreview ? (
+        <aside className="project-graph-source-preview" aria-label="Фрагмент файла демо-проекта">
+          <header>
+            <span><FileCode2 size={13} /><strong title={sourcePreview.file}>{sourcePreview.file}</strong><small>ДЕМО-ФАЙЛ · СТРОКИ {sourcePreview.range.line ?? 1}–{sourcePreview.range.end_line ?? sourcePreview.range.line ?? 1}</small></span>
+            <button type="button" aria-label="Закрыть просмотр файла" onClick={() => setActiveSourceRange(null)}>Закрыть</button>
+          </header>
+          <pre tabIndex={0} aria-label={`Исходник ${sourcePreview.file}`}>
+            {sourcePreview.lines.map((line) => (
+              <span className={line.selected ? "project-graph-source-line project-graph-source-line--selected" : "project-graph-source-line"} key={line.number}>
+                <i aria-hidden="true">{line.number}</i><code>{line.text || " "}</code>
+              </span>
+            ))}
+          </pre>
+        </aside>
       ) : null}
 
       <div className="project-graph-details">

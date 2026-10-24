@@ -58,6 +58,7 @@ These tasks validate the product interaction. They do not deliver real project i
 
 - [x] Define the hierarchy and distinguish read-only project flowcharts, the type-dependency view, method CFG, and the editable BPMN-style transformation plan.
 - [x] Build nested project-to-operation flowcharts with breadcrumbs and hierarchy search on explicitly labeled demo data; selecting source-linked nodes opens the matching excerpt from a synthetic Java file using parser-shaped source ranges. Keep the parser's type graph as a separate view.
+- [x] Demonstrate package → type → method → file navigation on a synthetic multi-file graph fixture, highlighting the selected source lines and labeling every source as demo data.
 - [x] Feed the flowchart renderer through a typed normalized catalog; the standalone demo supplies its local fixture explicitly.
 - [x] Feed modernization recommendations through a typed catalog supplied explicitly by the demo fixture; keep the React view independent of fixture contents.
 - [x] Demonstrate Java 2 → Java 16, monolith decomposition, and optimization recommendations with a sample diff and visible pending states for build, tests, behavior, and metrics.
@@ -97,5 +98,5 @@ These tasks validate the product interaction. They do not deliver real project i
 
 - The API accepts one `.java` file per project; whole-repository import and project-wide classpath analysis are not implemented.
 - The parser emits per-method CFGs and a compilation-unit architectural/dependency graph, now exposed by the revision-bound `/graph` API; it does not produce the hierarchical business-flow diagrams in this roadmap. See `apps/parser/README.md` for graph identity and source-range constraints.
-- The current Project Overview requests the API graph; `/demo` supplies a multi-file project graph fixture with package drill-down plus clearly labeled synthetic flowcharts and modernization catalogs. Demo data is not analysis of an uploaded source. Project-scope file opening, real project-flow data, and project-wide transformation APIs are still required.
+- The current Project Overview requests the API graph; `/demo` supplies a multi-file project graph fixture with package drill-down and source preview plus clearly labeled synthetic flowcharts and modernization catalogs. Demo data is not analysis of an uploaded source. Production project-scope file opening, real project-flow data, and project-wide transformation APIs are still required.
 - Existing transformations are limited. The BPMN-like plan and Java-version migration are frontend prototypes only; there is no backend operation to apply either one.

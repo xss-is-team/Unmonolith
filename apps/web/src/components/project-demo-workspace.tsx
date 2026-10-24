@@ -8,6 +8,7 @@ import { Brand } from "@/components/brand";
 import { ModernizationDemo } from "@/components/modernization-demo";
 import { ProjectFlowchartDemo } from "@/components/project-flowchart-demo";
 import graphFixtureData from "@/fixtures/project-graph-project.json";
+import { demoProjectSourceFiles } from "@/fixtures/project-source-files";
 import { demoModernizationCatalog } from "@/fixtures/modernization-catalog";
 import { demoProjectFlowCatalog } from "@/fixtures/project-flows";
 import { parseProjectGraph } from "@/lib/api";
@@ -59,6 +60,7 @@ export function ProjectDemoWorkspace() {
               onSourceRangeSelect={() => undefined}
               graphOverride={demo.graph}
               sourceLabel="ДЕМО · МНОГОФАЙЛОВЫЙ ГРАФ"
+              fixtureFiles={demoProjectSourceFiles}
             />
           </div>
         )}

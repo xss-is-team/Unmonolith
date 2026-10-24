@@ -2,16 +2,16 @@
   "version": 1,
   "scope": "project",
   "nodes": [
-    { "id": "t0", "kind": "class", "name": "OrderController", "qualified_name": "com.acme.api.OrderController", "source_range": { "file": "src/main/java/com/acme/api/OrderController.java", "start": 0, "length": 620, "line": 1, "end_line": 28 } },
-    { "id": "m0", "kind": "method", "name": "createOrder", "method_id": "com.acme.api.OrderController.createOrder(OrderRequest)", "source_range": { "file": "src/main/java/com/acme/api/OrderController.java", "start": 110, "length": 220, "line": 8, "end_line": 17 } },
-    { "id": "m1", "kind": "method", "name": "getOrder", "method_id": "com.acme.api.OrderController.getOrder(String)", "source_range": { "file": "src/main/java/com/acme/api/OrderController.java", "start": 340, "length": 160, "line": 19, "end_line": 25 } },
-    { "id": "t1", "kind": "class", "name": "OrderService", "qualified_name": "com.acme.billing.OrderService", "source_range": { "file": "src/main/java/com/acme/billing/OrderService.java", "start": 0, "length": 940, "line": 1, "end_line": 42 } },
-    { "id": "m2", "kind": "method", "name": "place", "method_id": "com.acme.billing.OrderService.place(OrderRequest)", "source_range": { "file": "src/main/java/com/acme/billing/OrderService.java", "start": 190, "length": 330, "line": 10, "end_line": 25 } },
-    { "id": "m3", "kind": "method", "name": "find", "method_id": "com.acme.billing.OrderService.find(String)", "source_range": { "file": "src/main/java/com/acme/billing/OrderService.java", "start": 560, "length": 130, "line": 28, "end_line": 34 } },
-    { "id": "t2", "kind": "interface", "name": "PaymentGateway", "qualified_name": "com.acme.billing.PaymentGateway", "source_range": { "file": "src/main/java/com/acme/billing/PaymentGateway.java", "start": 0, "length": 250, "line": 1, "end_line": 12 } },
-    { "id": "m4", "kind": "method", "name": "charge", "method_id": "com.acme.billing.PaymentGateway.charge(Money)", "source_range": { "file": "src/main/java/com/acme/billing/PaymentGateway.java", "start": 90, "length": 100, "line": 5, "end_line": 8 } },
-    { "id": "t3", "kind": "class", "name": "JdbcPaymentGateway", "qualified_name": "com.acme.persistence.JdbcPaymentGateway", "source_range": { "file": "src/main/java/com/acme/persistence/JdbcPaymentGateway.java", "start": 0, "length": 810, "line": 1, "end_line": 37 }, "external_supertypes": [{ "name": "java.lang.AutoCloseable", "relation": "implements", "resolved": true }] },
-    { "id": "m5", "kind": "method", "name": "charge", "method_id": "com.acme.persistence.JdbcPaymentGateway.charge(Money)", "source_range": { "file": "src/main/java/com/acme/persistence/JdbcPaymentGateway.java", "start": 140, "length": 260, "line": 8, "end_line": 20 } }
+    { "id": "t0", "kind": "class", "name": "OrderController", "qualified_name": "com.acme.api.OrderController", "source_range": { "file": "src/main/java/com/acme/api/OrderController.java", "start": 0, "length": 380, "line": 1, "end_line": 19 } },
+    { "id": "m0", "kind": "method", "name": "createOrder", "method_id": "com.acme.api.OrderController.createOrder(String)", "source_range": { "file": "src/main/java/com/acme/api/OrderController.java", "start": 180, "length": 75, "line": 12, "end_line": 14 } },
+    { "id": "m1", "kind": "method", "name": "getOrder", "method_id": "com.acme.api.OrderController.getOrder(String)", "source_range": { "file": "src/main/java/com/acme/api/OrderController.java", "start": 270, "length": 70, "line": 16, "end_line": 18 } },
+    { "id": "t1", "kind": "class", "name": "OrderService", "qualified_name": "com.acme.billing.OrderService", "source_range": { "file": "src/main/java/com/acme/billing/OrderService.java", "start": 0, "length": 310, "line": 1, "end_line": 15 } },
+    { "id": "m2", "kind": "method", "name": "place", "method_id": "com.acme.billing.OrderService.place(String)", "source_range": { "file": "src/main/java/com/acme/billing/OrderService.java", "start": 90, "length": 100, "line": 6, "end_line": 9 } },
+    { "id": "m3", "kind": "method", "name": "find", "method_id": "com.acme.billing.OrderService.find(String)", "source_range": { "file": "src/main/java/com/acme/billing/OrderService.java", "start": 200, "length": 90, "line": 11, "end_line": 14 } },
+    { "id": "t2", "kind": "interface", "name": "PaymentGateway", "qualified_name": "com.acme.billing.PaymentGateway", "source_range": { "file": "src/main/java/com/acme/billing/PaymentGateway.java", "start": 0, "length": 110, "line": 1, "end_line": 5 } },
+    { "id": "m4", "kind": "method", "name": "charge", "method_id": "com.acme.billing.PaymentGateway.charge(String)", "source_range": { "file": "src/main/java/com/acme/billing/PaymentGateway.java", "start": 72, "length": 35, "line": 4, "end_line": 4 } },
+    { "id": "t3", "kind": "class", "name": "JdbcPaymentGateway", "qualified_name": "com.acme.persistence.JdbcPaymentGateway", "source_range": { "file": "src/main/java/com/acme/persistence/JdbcPaymentGateway.java", "start": 0, "length": 230, "line": 1, "end_line": 10 }, "external_supertypes": [{ "name": "java.lang.AutoCloseable", "relation": "implements", "resolved": true }] },
+    { "id": "m5", "kind": "method", "name": "charge", "method_id": "com.acme.persistence.JdbcPaymentGateway.charge(String)", "source_range": { "file": "src/main/java/com/acme/persistence/JdbcPaymentGateway.java", "start": 165, "length": 98, "line": 7, "end_line": 9 } }
   ],
   "edges": [
     { "from": "t0", "to": "m0", "kind": "contains", "count": 1, "sites": [] },
@@ -20,13 +20,13 @@
     { "from": "t1", "to": "m3", "kind": "contains", "count": 1, "sites": [] },
     { "from": "t2", "to": "m4", "kind": "contains", "count": 1, "sites": [] },
     { "from": "t3", "to": "m5", "kind": "contains", "count": 1, "sites": [] },
-    { "from": "m0", "to": "m2", "kind": "calls", "count": 1, "sites": [{ "file": "src/main/java/com/acme/api/OrderController.java", "start": 220, "length": 22, "line": 13, "end_line": 13 }] },
-    { "from": "m2", "to": "m5", "kind": "calls", "count": 1, "sites": [{ "file": "src/main/java/com/acme/billing/OrderService.java", "start": 410, "length": 17, "line": 20, "end_line": 20 }] },
-    { "from": "t3", "to": "t2", "kind": "implements", "count": 1, "sites": [{ "file": "src/main/java/com/acme/persistence/JdbcPaymentGateway.java", "start": 75, "length": 15, "line": 4, "end_line": 4 }] },
-    { "from": "t1", "to": "t2", "kind": "depends_on", "count": 1, "sites": [{ "file": "src/main/java/com/acme/billing/OrderService.java", "start": 105, "length": 14, "line": 6, "end_line": 6 }] }
+    { "from": "m0", "to": "m2", "kind": "calls", "count": 1, "sites": [{ "file": "src/main/java/com/acme/api/OrderController.java", "start": 210, "length": 17, "line": 13, "end_line": 13 }] },
+    { "from": "m2", "to": "m5", "kind": "calls", "count": 1, "sites": [{ "file": "src/main/java/com/acme/billing/OrderService.java", "start": 150, "length": 15, "line": 7, "end_line": 7 }] },
+    { "from": "t3", "to": "t2", "kind": "implements", "count": 1, "sites": [{ "file": "src/main/java/com/acme/persistence/JdbcPaymentGateway.java", "start": 95, "length": 15, "line": 5, "end_line": 5 }] },
+    { "from": "t1", "to": "t2", "kind": "depends_on", "count": 1, "sites": [{ "file": "src/main/java/com/acme/billing/OrderService.java", "start": 85, "length": 14, "line": 5, "end_line": 5 }] }
   ],
   "unresolved_calls": [
-    { "id": "u0", "from": "m3", "kind": "method_call", "name": "publish", "expression": "events.publish(order)", "source_range": { "file": "src/main/java/com/acme/billing/OrderService.java", "start": 650, "length": 21, "line": 33, "end_line": 33 }, "reason": "unresolved_binding" }
+    { "id": "u0", "from": "m3", "kind": "method_call", "name": "publish", "expression": "events.publish(id)", "source_range": { "file": "src/main/java/com/acme/billing/OrderService.java", "start": 250, "length": 18, "line": 12, "end_line": 12 }, "reason": "unresolved_binding" }
   ],
   "stats": { "resolved_internal_calls": 2, "external_calls": 8, "unresolved_calls": 1 }
 }
