@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="sqlite-jdbc-3.53.4.0-without-natives">
+    <CLASSES>
+      <root url="jar://$USER_HOME$/Downloads/sqlite-jdbc-3.53.4.0-without-natives.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
