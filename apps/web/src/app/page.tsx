@@ -6,6 +6,7 @@ import {
   ScanSearch,
   ShieldCheck,
 } from "lucide-react";
+import Link from "next/link";
 import { Brand } from "@/components/brand";
 import { UploadPanel } from "@/components/upload-panel";
 
@@ -46,6 +47,9 @@ export default function Home() {
             Загрузите Java-файл: анализ начнётся автоматически. Изучайте код и CFG, меняйте условия через ASTRewrite и сравнивайте поведение ревизий.
           </p>
           <UploadPanel />
+          <Link className="landing-demo-link" href="/demo">
+            Посмотреть интерактивное демо <ArrowRight size={15} />
+          </Link>
           <div className="privacy-line"><ShieldCheck size={15} /><span>Исходник доступен только в вашей гостевой сессии</span></div>
         </div>
 
@@ -61,7 +65,7 @@ export default function Home() {
               <span className="outcome-copy"><strong>{title}</strong><small>{description}</small></span>
             </div>
           ))}
-          <p className="outcomes-note"><FileCode2 size={15} /> Никаких демонстрационных графов: интерфейс показывает только ответы parser/API.</p>
+          <p className="outcomes-note"><FileCode2 size={15} /> Рабочий экран показывает ответы parser/API; тестовый граф в dev помечен отдельно.</p>
         </aside>
       </section>
 

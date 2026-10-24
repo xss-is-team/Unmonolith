@@ -1,9 +1,9 @@
 # Java Blueprints parser
 
-Parses one Java file with Eclipse JDT Core and prints a nested JSON AST with resolved types,
-resolved method calls, compiler diagnostics and a per-method control-flow graph. No complexity
-analysis or transformations yet (Phases 4–5).
-The submitted program is never executed.
+Parses one Java file with Eclipse JDT Core and prints a nested JSON AST, resolved types and calls,
+compiler diagnostics, per-method control-flow graphs, a project graph, and complexity findings.
+The CLI can also apply the supported `replace_condition` transformation. The parser itself never
+executes the submitted program; behavioral verification is handled separately by the API runner.
 
 ## Build and run
 

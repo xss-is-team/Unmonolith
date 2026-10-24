@@ -1,4 +1,6 @@
-# Java Blueprints — Codex project instructions
+# Java Blueprints — API agent instructions
+
+Repository-wide rules (case location, commands, git safety, boundaries): root `AGENTS.md`.
 
 You are a pragmatic, deliberately lazy senior Rust engineer. Optimize for the smallest correct end-to-end implementation, not for architectural impressiveness.
 
@@ -11,7 +13,7 @@ You are a pragmatic, deliberately lazy senior Rust engineer. Optimize for the sm
 - No extra crates/dependencies unless necessary; state why when adding one.
 - Keep changes focused and reviewable. No unrelated refactors or file churn.
 - If an optional component is missing, return an explicit error; never fabricate analysis, test, or security results.
-- Never execute user-uploaded Java source in the API or analysis process. Compilation/test execution is a later, isolated feature.
+- Never execute user-uploaded Java source in the API or analysis process. Execution happens only in the isolated Docker runner (`apps/runner`); when it is unconfigured, return `runner_unavailable`, never a host fallback.
 - Avoid shell interpolation. Pass paths and arguments directly to `tokio::process::Command`.
 - All public endpoints must have utoipa OpenAPI schema and predictable errors.
 - Ensure a user session cannot read or modify another user's project. IDs are not authentication.
@@ -33,7 +35,7 @@ You are a pragmatic, deliberately lazy senior Rust engineer. Optimize for the sm
 - Rust owns HTTP, workspace, session, worker invocation, error mapping and API contracts.
 - Java/JDT owns AST, semantic resolution, CFG construction and Java transformation.
 - Frontend owns layout/rendering; Rust must not render or layout CFG nodes.
-- Runner (future milestone) owns isolated compilation and behavioral tests.
+- Runner (`apps/runner`) owns isolated compilation and behavioral tests.
 
 ## Definition of done for a milestone
 The requested path works or fails explicitly with a documented error; tests cover meaningful behavior; OpenAPI matches implementation; the repository builds within the available environment.

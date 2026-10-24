@@ -68,6 +68,8 @@ export function UploadPanel() {
         className="sr-only"
         type="file"
         accept=".java,text/x-java-source"
+        aria-label="Выбрать файл Java"
+        tabIndex={-1}
         onChange={(event) => {
           void openFile(event.currentTarget.files?.[0]);
           event.currentTarget.value = "";

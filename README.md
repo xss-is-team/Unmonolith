@@ -2,7 +2,7 @@
 
 ## Current application
 
-The web client lives in `apps/web/` and uses Next.js App Router. It provides source-linked diagnostics, per-method CFG and Big O views, revision diff, `replace_condition`, and behavioral verification. The Rust/Axum service in `apps/api/` remains the API and owns guest sessions, project storage, revisions, analysis and runner reports. Next proxies `/api/v1/*` to Axum so browser requests and the session cookie stay same-origin.
+The web client lives in `apps/web/` and uses Next.js App Router. It provides source-linked diagnostics, per-method CFG and Big O views, a Project Overview UI, revision diff, `replace_condition`, and behavioral verification. Project Overview reads the revisioned graph endpoint for the current single-file project; its explicitly labeled multi-file fixture is only for `/demo`. The Rust/Axum service in `apps/api/` remains the API and owns guest sessions, project storage, revisions, analysis and runner reports. Next proxies `/api/v1/*` to Axum so browser requests and the session cookie stay same-origin.
 
 The three application folders share one Git repository: `apps/api/` (Rust), `apps/parser/` (Java/Maven), and `apps/web/` (Next.js). Install the tools with your OS package manager, or use the optional root `flake.nix` with `nix develop`.
 
@@ -43,6 +43,8 @@ BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21 ./dev api
 ```
 
 Open <http://localhost:3001>. The API listens on port 3000; the web app proxies its requests to it. Set `BLUEPRINTS_API_ORIGIN` if Axum listens elsewhere. Set `BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21` when starting the API to enable verification. `./dev` lists the parser and runner commands. Frontend details are in `apps/web/README.md`.
+
+For a quick frontend check during UI work, run `./dev web-fast-check` (TypeScript and lint). Run `./dev web-check` before handing work off; it also makes a production build.
 ## Run after cloning
 
 After installing the host tools listed above, run one command from the repository root:
@@ -59,31 +61,29 @@ It installs frontend packages, builds the parser and API, then starts both servi
 
 `./dev runner-build` creates the Java 21 image used by the separate `/verify` operation. The runner is opt-in and never falls back to host execution; see `apps/api/README.md` for configuration and security limitations.
 
-## Data flow
+## Product direction
 
-```text
-.java → Java parser → AST / source map → CFG + editable model
-      → diagnostics / refactoring → Java generator → compile + tests
-                                                   → behavior comparison
-```
+See [ROADMAP.md](ROADMAP.md) for global goals, frontend work that can start now, and backend-dependent milestones.
 
-Keep one canonical editable model. The editor changes that model; the generator emits Java from it. Preserve source locations so graph nodes, diagnostics, and generated changes can be traced to code. Reparse generated Java before validation to catch generator/model mismatches.
+The target is to open a whole Java project and immediately show its main behavior flows using familiar flowchart symbols. The engineer drills down from project to flow, module/package, type, and method. These flowcharts are for navigation and understanding; architecture/dependency maps are a separate view, not a substitute for behavior flows.
 
-## Components and terms
+Changes happen through a separate editable BPMN-style process diagram. Its supported elements map to explicit Java transformations; changing a diagram proposes a code change, it does not silently rewrite source. The product applies a chosen action, such as migrating a legacy monolith from the Java 2 era to a target like Java 16, decomposing part of it into services, or optimizing a detected hot spot. The actual source level must come from project configuration or be confirmed when it is unknown. It should show the source diff, compile and run the project's checks, compare behavior, and report before/after metrics such as runtime. Users edit source manually only when the product cannot safely handle a case; then it should take them to the specific code and explain what needs attention. Test results support the tested scenarios; they cannot prove identical behavior for every possible input.
 
-- **Parser** — converts supported Java source into an **AST** (abstract syntax tree: nested program structure). Use an existing Java parser; the hackathon permits libraries.
-- **CFG** — control-flow graph: basic blocks connected by possible execution paths; branches represent conditions, back edges represent loops. It is a view/analysis structure, not a replacement for the full AST.
-- **Model + source map** — editable representation and links between model nodes and source ranges. Defines round-trip synchronization between code and graph.
-- **Analyzer** — attaches diagnostics to nodes and source locations; reports complexity with rationale (brief example: nested scan, `O(n²)`, repeated matching by `id`).
-- **Refactoring** — explicit model transformation with a preview/diff; keep original source available for rollback.
-- **Generator** — serializes the changed model to Java within the supported language scope.
-- **Quality gate** — compile, run automated tests, and compare observable behavior for the supplied scenarios. Passing tests is evidence for those scenarios, not proof for every possible input.
+## Current scope
 
-## End-to-end acceptance
+- The API currently accepts one `.java` file per project; Maven/Gradle import, whole-project classpath analysis, and project-wide transformations are not implemented.
+- The parser produces AST data, per-method CFGs and complexity findings, plus a compilation-unit `project_graph`. The Rust API exposes it through the revisioned `GET /api/v1/projects/{id}/graph` endpoint.
+- The web app supports source editing, method CFG/Big O, a limited condition transformation, revision diff, and optional isolated behavioral verification.
+- Project Overview currently has a type-and-relationship graph for one source file and clearly labeled frontend demos for nested flowcharts, modernization actions, and an editable BPMN plan. The demos do not analyze or change the uploaded source.
+- Open `/demo` to explore those frontend prototypes without uploading a source file or calling the project-graph API. Flowchart nodes can reveal excerpts from a synthetic `LegacyOrderApp.java` using source ranges; this code is demo data, not a parsed project.
+- Project Overview requests the real graph endpoint for an analyzed single Java file. Multi-file project navigation and the nested-flow, modernization, and BPMN examples remain explicitly labeled demo fixtures; API failures never fall back to them.
 
-Load Java → build graph → edit → generate Java → compile → run tests → compare behavior. Report unsupported syntax and validation failures; do not silently drop constructs.
+## Core concepts
 
-Implement the brief's mandatory Java scope first: core language/`java.lang`, console I/O, `java.util` collections, and exceptions. The brief permits parsers, graph/UI libraries, frameworks, and AI. It does not prescribe a parser, storage design, or a specific AST-to-CFG strategy.
+- **AST** — nested structure of declarations and statements, with source ranges.
+- **CFG** — possible execution paths inside one method; conditions branch and loops return to earlier blocks.
+- **Project graph** — types and relationships across the analyzed scope. It complements the CFG; it is not a flowchart of every statement.
+- **Quality gate** — compile and run automated checks, then compare observable behavior for tested scenarios. Passing tests is evidence for those scenarios, not proof for every possible input.
 
 ## Legacy test corpus
 
