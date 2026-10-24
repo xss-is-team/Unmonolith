@@ -48,8 +48,8 @@ export default function Home() {
           <div className="pipeline-link pipeline-link--muted"><span /><ArrowDownRight size={17} /><span /></div>
           <div className="visual-stage visual-stage--later">
             <span className="stage-icon"><GitBranch size={19} /></span>
-            <div className="stage-copy"><small>СЛЕДУЮЩИЙ ЭТАП</small><strong>CFG и визуальный граф</strong><span>Пока не реализованы</span></div>
-            <span className="stage-status stage-status--later">ПОЗЖЕ</span>
+            <div className="stage-copy"><small>СЛЕДУЮЩИЙ ЭТАП</small><strong>CFG и визуальный граф</strong><span>Viewer готов · API endpoint подключается</span></div>
+            <span className="stage-status stage-status--later">M2</span>
           </div>
           <div className="visual-footnote"><ScanLine size={15} /><span>Текущий экран работает с настоящим API M1</span><Sparkles size={14} /></div>
           <span className="visual-crosshair visual-crosshair--one" />

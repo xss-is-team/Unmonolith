@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import useSWR from "swr";
 import {
   AlertCircle,
@@ -35,6 +35,11 @@ import {
 const JavaEditor = dynamic(
   () => import("@/components/java-editor").then((module) => module.JavaEditor),
   { ssr: false, loading: () => <div className="editor-loading">Открываем редактор…</div> },
+);
+
+const CfgViewer = dynamic(
+  () => import("@/components/cfg-viewer").then((module) => module.CfgViewer),
+  { ssr: false, loading: () => <section className="cfg-panel cfg-panel--loading">Загружаем просмотрщик CFG…</section> },
 );
 
 function projectLoadMessage(error: unknown) {
@@ -109,9 +114,13 @@ function WorkspaceEditor({
   const [analysisState, setAnalysisState] = useState<"idle" | "loading" | "complete" | "unavailable" | "error">("idle");
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analysisError, setAnalysisError] = useState("");
+  const [selectedSourceRange, setSelectedSourceRange] = useState<{ start: number; length: number } | null>(null);
   const [reloading, setReloading] = useState(false);
   const dirty = source !== savedSource;
   const lineCount = source.length ? source.split("\n").length : 0;
+  const selectSourceRange = useCallback((range: { start: number; length: number } | null) => {
+    setSelectedSourceRange(range);
+  }, []);
 
   async function saveSource() {
     if (!dirty || saveState === "saving") return;
@@ -145,6 +154,7 @@ function WorkspaceEditor({
     if (dirty || analysisState === "loading") return;
     setAnalysisState("loading");
     setAnalysisError("");
+    setSelectedSourceRange(null);
     try {
       setAnalysis(await analyzeProject(projectId));
       setAnalysisState("complete");
@@ -208,7 +218,7 @@ function WorkspaceEditor({
             <div className="editor-file"><span className="java-file-icon">J</span><strong>{project.filename}</strong><span className="file-tag">JAVA</span></div>
             <div className="editor-toolbar-meta"><span><Code2 size={14} /> UTF-8</span><span><GitBranch size={14} /> REV {revision}</span></div>
           </div>
-          <div className="editor-body"><JavaEditor value={source} onChange={(next) => { setSource(next); setSaveError(""); if (saveState === "error") setSaveState("idle"); }} /></div>
+          <div className="editor-body"><JavaEditor value={source} focusRange={selectedSourceRange} onChange={(next) => { setSource(next); setSelectedSourceRange(null); setSaveError(""); if (saveState === "error") setSaveState("idle"); }} /></div>
           <footer className="editor-footer"><span><TerminalSquare size={14} /> Исходный код</span><span>{lineCount} {russianNoun(lineCount, "строка", "строки", "строк")} <i>·</i> {new TextEncoder().encode(source).length.toLocaleString("ru-RU")} байт</span></footer>
         </section>
 
@@ -227,7 +237,7 @@ function WorkspaceEditor({
           ) : analysisState === "error" ? (
             <div className="worker-state worker-state--error"><span className="state-icon"><AlertCircle /></span><strong>Анализ не выполнен</strong><p>{analysisError}</p><Button variant="outline" onClick={() => void runAnalysis()}><RefreshCw /> Попробовать снова</Button></div>
           ) : (
-            <div className="worker-state"><span className="state-icon"><ShieldCheck /></span><strong>{analysisState === "loading" ? "JDT разбирает исходник" : "Готов к анализу"}</strong><p>{analysisState === "loading" ? "API обрабатывает сохранённую ревизию и собирает список методов и диагностики." : "Запустите анализ сохранённой ревизии. Сейчас доступны список методов и диагностики; визуальный граф пока не реализован."}</p><div className="state-footnote"><span className={`status-pip ${analysisState === "loading" ? "status-pip--pulse" : "status-pip--neutral"}`} />{analysisState === "loading" ? "Обрабатываем ревизию" : "Ожидание команды"}</div></div>
+            <div className="worker-state"><span className="state-icon"><ShieldCheck /></span><strong>{analysisState === "loading" ? "JDT разбирает исходник" : "Готов к анализу"}</strong><p>{analysisState === "loading" ? "API обрабатывает сохранённую ревизию и собирает список методов и диагностики." : "Запустите анализ сохранённой ревизии. Результаты CFG выбранного метода отображаются ниже."}</p><div className="state-footnote"><span className={`status-pip ${analysisState === "loading" ? "status-pip--pulse" : "status-pip--neutral"}`} />{analysisState === "loading" ? "Обрабатываем ревизию" : "Ожидание команды"}</div></div>
           )}
 
           <div className="panel-divider" />
@@ -236,6 +246,13 @@ function WorkspaceEditor({
           <div className="panel-tip"><span>i</span><p>Результаты анализа относятся только к той ревизии исходника, которую обработал backend.</p></div>
         </aside>
       </div>
+
+      <CfgViewer
+        projectId={projectId}
+        revision={revision}
+        analysis={analysisState === "complete" && !dirty ? analysis : null}
+        onSourceRangeSelect={selectSourceRange}
+      />
 
       <footer className="workspace-bottom"><span>JAVA BLUEPRINTS <i>·</i> M1 SOURCE WORKSPACE</span><span><ShieldCheck size={13} /> Код хранится в приватной гостевой сессии</span></footer>
     </main>

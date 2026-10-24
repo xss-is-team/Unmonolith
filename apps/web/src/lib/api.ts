@@ -27,6 +27,19 @@ export type AnalysisResult = {
   diagnostics: Diagnostic[];
 };
 
+export type CfgNode = {
+  id: string;
+  kind: string;
+  label: string;
+  source_range: SourceRange;
+};
+
+export type Cfg = {
+  method_id: string;
+  nodes: CfgNode[];
+  edges: { source: string; target: string; kind: string }[];
+};
+
 export const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 
 export class ApiError extends Error {
@@ -145,4 +158,8 @@ export function analyzeProject(projectId: string) {
   return request<AnalysisResult>(`/projects/${projectId}/analyze`, {
     method: "POST",
   });
+}
+
+export function getMethodCfg(projectId: string, methodId: string) {
+  return request<Cfg>(`/projects/${encodeURIComponent(projectId)}/methods/${encodeURIComponent(methodId)}/cfg`);
 }

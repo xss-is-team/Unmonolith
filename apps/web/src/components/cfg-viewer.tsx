@@ -1,0 +1,221 @@
+"use client";
+
+import { useCallback, useMemo, useState } from "react";
+import type { MouseEvent } from "react";
+import useSWR from "swr";
+import dagre from "@dagrejs/dagre";
+import {
+  Background,
+  Controls,
+  Handle,
+  MarkerType,
+  Position,
+  ReactFlow,
+  type Edge,
+  type Node,
+  type NodeProps,
+} from "@xyflow/react";
+import { AlertCircle, Beaker, GitBranch, LoaderCircle, RefreshCw } from "lucide-react";
+import { ApiError, getMethodCfg, type AnalysisResult, type Cfg, type CfgNode } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+
+const NODE_WIDTH = 220;
+const NODE_HEIGHT = 82;
+
+const fixtureCfg: Cfg = {
+  method_id: "fixture:calculateTotal",
+  nodes: [
+    { id: "start", kind: "entry", label: "Вход в метод", source_range: { start: 0, length: 1 } },
+    { id: "check", kind: "condition", label: "item != null", source_range: { start: 0, length: 1 } },
+    { id: "add", kind: "statement", label: "total += item.price", source_range: { start: 0, length: 1 } },
+    { id: "skip", kind: "statement", label: "Пропустить элемент", source_range: { start: 0, length: 1 } },
+    { id: "end", kind: "exit", label: "Выход из метода", source_range: { start: 0, length: 1 } },
+  ],
+  edges: [
+    { source: "start", target: "check", kind: "next" },
+    { source: "check", target: "add", kind: "true" },
+    { source: "check", target: "skip", kind: "false" },
+    { source: "add", target: "end", kind: "next" },
+    { source: "skip", target: "end", kind: "next" },
+  ],
+};
+
+type FlowNode = Node<CfgNode, "cfg">;
+
+function CfgFlowNode({ data }: NodeProps<FlowNode>) {
+  return (
+    <div className={`cfg-node cfg-node--${safeKind(data.kind)}`}>
+      <Handle type="target" position={Position.Top} />
+      <span>{data.kind}</span>
+      <strong>{data.label}</strong>
+      <Handle type="source" position={Position.Bottom} />
+    </div>
+  );
+}
+
+const nodeTypes = { cfg: CfgFlowNode };
+
+export function CfgViewer({
+  projectId,
+  revision,
+  analysis,
+  onSourceRangeSelect,
+}: {
+  projectId: string;
+  revision: number;
+  analysis: AnalysisResult | null;
+  onSourceRangeSelect: (range: { start: number; length: number } | null) => void;
+}) {
+  const methods = useMemo(() => analysis?.methods ?? [], [analysis]);
+  const [requestedMethodId, setRequestedMethodId] = useState("");
+  const [mode, setMode] = useState<"api" | "fixture">("api");
+  const [conditionValue, setConditionValue] = useState("");
+  const [selectedNodeId, setSelectedNodeId] = useState("");
+  const methodId = methods.some((method) => method.id === requestedMethodId)
+    ? requestedMethodId
+    : methods[0]?.id ?? "";
+  const canRequest = Boolean(mode === "api" && methodId && analysis && analysis.revision === revision);
+  const { data: apiCfg, error: apiError, isLoading, mutate } = useSWR(
+    canRequest ? `cfg:${projectId}:${revision}:${methodId}` : null,
+    () => getMethodCfg(projectId, methodId).then((result) => {
+      validateCfg(result, methodId);
+      return result;
+    }),
+    { shouldRetryOnError: false, revalidateOnFocus: false },
+  );
+  const cfg = mode === "fixture" ? fixtureCfg : apiCfg ?? null;
+  const state: "empty" | "loading" | "ready" | "error" | "unsupported" = mode === "fixture"
+    ? "ready"
+    : !canRequest
+      ? "empty"
+      : isLoading || (!apiCfg && !apiError)
+        ? "loading"
+        : apiError instanceof ApiError && apiError.status === 404 && apiError.code === "request_failed"
+          ? "unsupported"
+          : apiError
+            ? "error"
+            : "ready";
+  const errorMessage = state === "unsupported"
+    ? "Backend CFG endpoint ещё не подключён в текущей версии API."
+    : apiError instanceof ApiError
+      ? apiError.message
+      : "Не удалось загрузить CFG метода.";
+
+  const onNodeClick = useCallback((_event: MouseEvent, node: FlowNode) => {
+    if (mode === "fixture") {
+      setSelectedNodeId(node.id);
+      onSourceRangeSelect(null);
+      return;
+    }
+    setSelectedNodeId(node.id);
+    setConditionValue(node.data.label);
+    onSourceRangeSelect(node.data.source_range);
+  }, [mode, onSourceRangeSelect]);
+
+  const selectedCondition = cfg?.nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const flow = useMemo(() => cfg ? toFlow(cfg) : { nodes: [], edges: [] }, [cfg]);
+
+  return (
+    <section className="cfg-panel" aria-label="Граф потока управления">
+      <header className="cfg-header">
+        <div className="cfg-title"><span className="cfg-icon"><GitBranch size={17} /></span><div><span className="panel-kicker">CONTROL FLOW GRAPH</span><h2>Граф метода</h2></div></div>
+        <div className="cfg-controls">
+          <label htmlFor="cfg-method">Метод</label>
+          <select id="cfg-method" value={mode === "fixture" ? fixtureCfg.method_id : methodId} onChange={(event) => {
+            setSelectedNodeId("");
+            setConditionValue("");
+            onSourceRangeSelect(null);
+            if (event.target.value === fixtureCfg.method_id) setMode("fixture");
+            else { setMode("api"); setRequestedMethodId(event.target.value); }
+          }}>
+            <option value="" disabled>{methods.length ? "Выберите метод" : "Сначала запустите анализ"}</option>
+            {methods.map((method) => <option key={method.id} value={method.id}>{method.name}</option>)}
+            <option value={fixtureCfg.method_id}>Тестовый пример (fixture)</option>
+          </select>
+          {mode === "fixture" ? <span className="cfg-fixture-badge"><Beaker size={13} /> ТЕСТОВЫЕ ДАННЫЕ</span> : null}
+          {mode === "api" && methodId ? <Button variant="outline" size="sm" onClick={() => void mutate()} aria-label="Обновить CFG"><RefreshCw size={14} /></Button> : null}
+        </div>
+      </header>
+
+      <div className="cfg-content">
+        {state === "loading" ? <div className="cfg-state" role="status"><LoaderCircle className="spin" /><strong>Загружаем CFG</strong><span>Получаем граф выбранного метода для ревизии {revision}.</span></div> : null}
+        {state === "unsupported" ? <div className="cfg-state" role="status"><AlertCircle /><strong>CFG endpoint недоступен</strong><span>{errorMessage}</span><Button variant="outline" size="sm" onClick={() => { setSelectedNodeId(""); onSourceRangeSelect(null); setMode("fixture"); }}><Beaker size={14} /> Открыть тестовый fixture</Button></div> : null}
+        {state === "error" ? <div className="cfg-state cfg-state--error" role="alert"><AlertCircle /><strong>Не удалось получить граф</strong><span>{errorMessage}</span><Button variant="outline" size="sm" onClick={() => void mutate()}><RefreshCw size={14} /> Повторить</Button></div> : null}
+        {state === "empty" ? <div className="cfg-state" role="status"><GitBranch /><strong>{analysis ? "Выберите метод с поддерживаемым CFG" : "Нет данных для графа"}</strong><span>{analysis ? "Граф запрашивается отдельно для каждого метода." : "Сначала запустите анализ сохранённой ревизии Java."}</span>{!analysis ? <Button variant="outline" size="sm" onClick={() => { onSourceRangeSelect(null); setMode("fixture"); }}><Beaker size={14} /> Открыть тестовый fixture</Button> : null}</div> : null}
+        {state === "ready" && cfg?.nodes.length === 0 ? <div className="cfg-state"><GitBranch /><strong>Граф пуст</strong><span>Для этого метода backend не вернул узлов CFG.</span></div> : null}
+        {state === "ready" && cfg?.nodes.length ? (
+          <div className="cfg-canvas">
+            {mode === "fixture" ? <div className="cfg-demo-notice"><Beaker size={14} /> Демонстрационная схема. Узлы не связаны с текущим Java-исходником и не являются результатом анализа.</div> : null}
+            <ReactFlow nodes={flow.nodes} edges={flow.edges} nodeTypes={nodeTypes} onNodeClick={onNodeClick} fitView fitViewOptions={{ padding: 0.2 }} minZoom={0.2} maxZoom={1.6} nodesDraggable={false} nodesConnectable={false} elementsSelectable>
+              <Background color="#d7dbd3" gap={20} size={1} />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          </div>
+        ) : null}
+      </div>
+
+      {state === "ready" && mode === "api" && selectedCondition && isCondition(selectedCondition.kind) ? (
+        <div className="cfg-transform" aria-label="Редактирование условия">
+          <div><strong>Условие узла</strong><span>Изменения будут доступны после подключения transform endpoint.</span></div>
+          <input aria-label="Новое условие" value={conditionValue} onChange={(event) => setConditionValue(event.target.value)} />
+          <Button disabled>Применить</Button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function validateCfg(cfg: Cfg, methodId: string) {
+  if (!cfg || cfg.method_id !== methodId || !Array.isArray(cfg.nodes) || !Array.isArray(cfg.edges)) {
+    throw new ApiError("API вернул CFG в неизвестном формате.", 502, "invalid_response");
+  }
+  const ids = new Set<string>();
+  for (const node of cfg.nodes) {
+    if (!node || typeof node.id !== "string" || ids.has(node.id) || typeof node.kind !== "string" || typeof node.label !== "string" || !Number.isSafeInteger(node.source_range?.start) || !Number.isSafeInteger(node.source_range?.length) || node.source_range.start < 0 || node.source_range.length < 0) {
+      throw new ApiError("CFG содержит узел с некорректными данными.", 502, "invalid_response");
+    }
+    ids.add(node.id);
+  }
+  if (cfg.edges.some((edge) => !edge || typeof edge.source !== "string" || typeof edge.target !== "string" || !ids.has(edge.source) || !ids.has(edge.target) || typeof edge.kind !== "string")) {
+    throw new ApiError("CFG содержит связь с отсутствующим узлом.", 502, "invalid_response");
+  }
+}
+
+function toFlow(cfg: Cfg): { nodes: FlowNode[]; edges: Edge[] } {
+  const graph = new dagre.graphlib.Graph();
+  graph.setGraph({ rankdir: "TB", nodesep: 38, ranksep: 64, marginx: 32, marginy: 32 });
+  graph.setDefaultEdgeLabel(() => ({}));
+  cfg.nodes.forEach((node) => graph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
+  cfg.edges.forEach((edge) => graph.setEdge(edge.source, edge.target));
+  dagre.layout(graph);
+
+  return {
+    nodes: cfg.nodes.map((node) => {
+      const position = graph.node(node.id);
+      return {
+        id: node.id,
+        type: "cfg",
+        position: { x: position.x - NODE_WIDTH / 2, y: position.y - NODE_HEIGHT / 2 },
+        data: node,
+      };
+    }),
+    edges: cfg.edges.map((edge, index) => ({
+      id: `${edge.source}-${edge.target}-${index}`,
+      source: edge.source,
+      target: edge.target,
+      type: "smoothstep",
+      label: edge.kind,
+      markerEnd: { type: MarkerType.ArrowClosed, color: "#69786d" },
+      style: { stroke: "#69786d", strokeWidth: 1.5 },
+      labelStyle: { fill: "#46544a", fontSize: 11, fontWeight: 600 },
+    })),
+  };
+}
+
+function safeKind(kind: string) {
+  return kind.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+}
+
+function isCondition(kind: string) {
+  return ["condition", "if", "while", "for", "do_while", "do/while"].includes(kind.toLowerCase());
+}
