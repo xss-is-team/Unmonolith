@@ -189,11 +189,12 @@ Implemented (routes and schemas in `openapi.yaml`): health, guest sessions, sing
 (multi-file) projects with file tree and per-file edits, revision-checked updates and history, rollback,
 revision diff, external analysis (+ SSE lifecycle), method list/CFG/analysis, project graph, project-wide
 complexity and findings, `replace_condition`, optimization discovery/preview/apply (lookup loop -> Map),
+decomposition discovery/preview/apply (static member types -> files of their own; a single-file project becomes an archive project),
 CFG `move_statement` preview/apply, runtime benchmark with honest verdicts, export, and persisted isolated
 behavioral verification of two stored revisions. If no real worker JAR is configured, analysis and
 transformation return `503 analyzer_unavailable`; if no runner image is configured, verification and
 benchmark return `503 runner_unavailable`.
 
-Not implemented: drag/add/remove of arbitrary blocks, method extraction, monolith decomposition into files,
+Not implemented: drag/add/remove of arbitrary blocks, method extraction, semantic recognition of responsibilities (decomposition is a mechanical split by member type),
 formal behavioral equivalence, external Java dependencies (unresolved calls are reported, never guessed),
 Maven/Gradle import. Static analysis and fixture-based verification do not establish behavioral equivalence.

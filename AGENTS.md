@@ -96,10 +96,15 @@ script already sets it); bare `cargo`/`java`/`mvn` are not on PATH outside the N
 
 ## Known limitations (detail in docs/CASE_COMPLIANCE.md)
 
-- Edit operations: `replace_condition`, `move_statement`, lookup-loop → Map optimization, rollback. No block
-  add/remove/drag, no method extraction. The web UI exposes only `replace_condition` and free text editing.
-- Responsibility decomposition (case slide 6, optional) is not implemented.
+- Edit operations: `replace_condition`, `move_statement`, lookup-loop → Map optimization, decomposition of static
+  member types into files, rollback. No block add/remove/drag, no method extraction. The web UI exposes only
+  `replace_condition` and free text editing.
+- Responsibility decomposition (case slide 6, optional) is implemented in the API only: `GET/POST
+  /projects/{id}/decomposition[/preview|/apply]` moves static member types of a top-level class into files of their
+  own and turns a single-file project into an archive project. It is a mechanical split by type, not a semantic
+  recognition of «Parser/Analyzer/Optimizer»; types that use private members or members of the enclosing class by
+  simple name are refused.
 - Runtime before/after measurement exists in the API (`POST /benchmark`), not in the UI.
-- Multi-file (ZIP) projects are supported by the API; `/source` and `/transform` are single-file only
+- Multi-file (ZIP) projects are supported by the API (a decomposed single-file project becomes one); `/source` and `/transform` are single-file only
   (`409 multi_file_project` for archives); `/verify` accepts archives (`main_class`, `source_level`). The UI uploads only `.java`.
 - Big O is a static estimate; methods calling unmodelled code are `unknown`.

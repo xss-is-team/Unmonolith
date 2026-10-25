@@ -26,8 +26,8 @@ use uuid::Uuid;
 
 use crate::{
     analyzer::{
-        AnalysisResult, AnalysisStatus, Diagnostic, DiagnosticSeverity, JavaAnalyzer, Method,
-        OptimizeRequest, SourceRange, TransformOperation, TransformRequest,
+        AnalysisResult, AnalysisStatus, DecomposeRequest, Diagnostic, DiagnosticSeverity,
+        JavaAnalyzer, Method, OptimizeRequest, SourceRange, TransformOperation, TransformRequest,
     },
     archive, benchmark,
     diff::{self, DiffStatus, FileDiff},
@@ -114,6 +114,9 @@ impl AppState {
         list_optimizations,
         preview_optimization,
         apply_optimization,
+        list_decomposition,
+        preview_decomposition,
+        apply_decomposition,
         rollback_project,
         run_benchmark,
         get_benchmark_report,
@@ -168,6 +171,11 @@ impl AppState {
         OptimizationPreview,
         OptimizationApplyRequest,
         OptimizationApplyResponse,
+        DecompositionList,
+        DecompositionRequest,
+        DecompositionPreview,
+        DecompositionApplyRequest,
+        DecompositionApplyResponse,
         RollbackRequest,
         BenchmarkRequest,
         BenchmarkWorkloadInput,
@@ -306,6 +314,18 @@ pub fn app(state: AppState) -> Router {
             post(apply_optimization),
         )
         .route(
+            "/projects/{project_id}/decomposition",
+            get(list_decomposition),
+        )
+        .route(
+            "/projects/{project_id}/decomposition/preview",
+            post(preview_decomposition),
+        )
+        .route(
+            "/projects/{project_id}/decomposition/apply",
+            post(apply_decomposition),
+        )
+        .route(
             "/projects/{project_id}/cfg-edits/preview",
             post(preview_cfg_edit),
         )
@@ -364,6 +384,74 @@ struct OptimizationList {
     /// `assumptions`, `complexity`, `method_id`, `file`, `affected_files`, source ranges and a summary.
     #[schema(value_type = Vec<Object>)]
     proposals: Vec<Value>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct DecompositionList {
+    #[schema(minimum = 1)]
+    revision: u64,
+    rule: String,
+    /// One entry per static member type of a top-level class: `id`, `name`, `kind`, `host`, `file`, `new_file`,
+    /// `lines`, `extractable`, `depends_on` (ids that must move with it), `preconditions` and
+    /// `not_extractable_reasons`.
+    #[schema(value_type = Vec<Object>)]
+    candidates: Vec<Value>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+struct DecompositionRequest {
+    #[schema(minimum = 1)]
+    base_revision: u64,
+    /// Java language level (8, 11, 17 or 21); default 21.
+    source_level: Option<String>,
+    /// Candidate ids to move; empty or omitted selects every extractable type. A type that uses a sibling must be
+    /// selected together with it.
+    #[serde(default)]
+    classes: Vec<String>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct DecompositionPreview {
+    #[schema(minimum = 1)]
+    base_revision: u64,
+    #[schema(value_type = Vec<Object>)]
+    extracted: Vec<Value>,
+    /// Rewritten files and the new files, as exact diffs.
+    diff: Vec<FileDiff>,
+    preview_sha256: String,
+    added_files: Vec<String>,
+    changed_files: Vec<String>,
+    /// Lines of each rewritten file before and after.
+    #[schema(value_type = Object)]
+    host_lines: Value,
+    validation: String,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+struct DecompositionApplyRequest {
+    #[schema(minimum = 1)]
+    base_revision: u64,
+    source_level: Option<String>,
+    #[serde(default)]
+    classes: Vec<String>,
+    preview_sha256: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct DecompositionApplyResponse {
+    #[schema(minimum = 2)]
+    revision: u64,
+    base_revision: u64,
+    #[schema(value_type = Vec<Object>)]
+    extracted: Vec<Value>,
+    diff: Vec<FileDiff>,
+    /// Status of the re-analysis of the new revision.
+    analysis_status: AnalysisStatus,
+    /// `archive` from now on: a single-file project becomes a multi-file project (earlier revisions stay readable).
+    #[schema(value_type = String)]
+    project_kind: project::ProjectKind,
+    #[schema(minimum = 1)]
+    file_count: u32,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -2102,6 +2190,283 @@ async fn apply_optimization(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/decomposition",
+    tag = "Decomposition",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path), AnalyzeQuery),
+    responses(
+        (status = 200, description = "Static member types of the current revision that can move into files of their own, each with its preconditions", body = DecompositionList),
+        (status = 400, body = ApiErrorBody),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody),
+        (status = 503, body = ApiErrorBody),
+        (status = 504, body = ApiErrorBody)
+    )
+)]
+async fn list_decomposition(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Query(query): Query<AnalyzeQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    let files = java_files(&directory, &project).await?;
+    let run = state
+        .0
+        .analyzer
+        .decompose(
+            &directory,
+            project.revision,
+            &files,
+            level_or_default(&query.source_level),
+            DecomposeRequest::Discover,
+        )
+        .await?;
+    Ok(Json(serde_json::json!({
+        "revision": project.revision,
+        "rule": run.result.get("rule").cloned().unwrap_or(Value::Null),
+        "candidates": run.result.get("candidates").cloned().unwrap_or(Value::Array(Vec::new())),
+    })))
+}
+
+/// A split project built by the decomposer, compared with the base revision.
+struct Split {
+    run: crate::analyzer::OptimizationRun,
+    changes: Vec<(String, Vec<u8>)>,
+    additions: Vec<(String, Vec<u8>)>,
+    diff: Vec<FileDiff>,
+    files: Vec<String>,
+}
+
+fn safe_new_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && path.ends_with(".java")
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+async fn build_split(
+    state: &AppState,
+    directory: &std::path::Path,
+    project: &Project,
+    classes: &[String],
+    source_level: &str,
+) -> Result<Split, ApiError> {
+    let invalid = || {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "decomposer_invalid_output",
+            "Java decomposer returned an invalid response",
+        )
+    };
+    let files = java_files(directory, project).await?;
+    let run = state
+        .0
+        .analyzer
+        .decompose(
+            directory,
+            project.revision,
+            &files,
+            source_level,
+            DecomposeRequest::Apply { classes },
+        )
+        .await?;
+    let listed = |key: &str| -> Result<Vec<String>, ApiError> {
+        Ok(run
+            .result
+            .get(key)
+            .and_then(Value::as_array)
+            .ok_or_else(invalid)?
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect())
+    };
+    let (changed, added) = (listed("changed_files")?, listed("added_files")?);
+    let mut changes = Vec::new();
+    let mut additions = Vec::new();
+    let mut diff = Vec::new();
+    for path in changed {
+        if !files.contains(&path) {
+            return Err(invalid());
+        }
+        let after = fs::read(run.tree.join(&path))
+            .await
+            .map_err(|_| invalid())?;
+        if after.len() > state.0.max_project_bytes {
+            return Err(invalid());
+        }
+        let before = project::read_file(directory, project, project.revision, &path).await?;
+        let after_text = String::from_utf8(after.clone()).map_err(|_| invalid())?;
+        if let Some(file_diff) = diff::diff_file(
+            &path,
+            Some(&String::from_utf8_lossy(&before)),
+            Some(&after_text),
+        ) {
+            diff.push(file_diff);
+            changes.push((path, after));
+        }
+    }
+    for path in added {
+        if files.contains(&path) || !safe_new_path(&path) {
+            return Err(invalid());
+        }
+        let after = fs::read(run.tree.join(&path))
+            .await
+            .map_err(|_| invalid())?;
+        if after.len() > state.0.max_project_bytes {
+            return Err(invalid());
+        }
+        let after_text = String::from_utf8(after.clone()).map_err(|_| invalid())?;
+        if let Some(file_diff) = diff::diff_file(&path, None, Some(&after_text)) {
+            diff.push(file_diff);
+            additions.push((path, after));
+        }
+    }
+    if additions.is_empty() {
+        return Err(invalid());
+    }
+    let mut all_files = files;
+    all_files.extend(additions.iter().map(|(path, _)| path.clone()));
+    Ok(Split {
+        run,
+        changes,
+        additions,
+        diff,
+        files: all_files,
+    })
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/decomposition/preview",
+    tag = "Decomposition",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path)),
+    request_body = DecompositionRequest,
+    responses(
+        (status = 200, description = "Exact diffs of the split (rewritten host file and new files), re-analysed and validated. Nothing is stored.", body = DecompositionPreview),
+        (status = 400, body = ApiErrorBody),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, description = "project or class not found", body = ApiErrorBody),
+        (status = 409, body = ApiErrorBody),
+        (status = 422, description = "not_extractable, dependency_not_selected, nothing_to_extract or transformation_invalid", body = ApiErrorBody),
+        (status = 503, body = ApiErrorBody),
+        (status = 504, body = ApiErrorBody)
+    )
+)]
+async fn preview_decomposition(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    request: Result<Json<DecompositionRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let Json(request) =
+        request.map_err(|_| ApiError::bad_request("invalid decomposition request"))?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    if request.base_revision != project.revision {
+        return Err(revision_conflict_error(
+            request.base_revision,
+            project.revision,
+        ));
+    }
+    let level = level_or_default(&request.source_level);
+    let split = build_split(&state, &directory, &project, &request.classes, level).await?;
+    Ok(Json(serde_json::json!({
+        "base_revision": project.revision,
+        "extracted": json_field(&split.run, "extracted"),
+        "diff": split.diff,
+        "preview_sha256": diff::fingerprint(&split.diff),
+        "added_files": json_field(&split.run, "added_files"),
+        "changed_files": json_field(&split.run, "changed_files"),
+        "host_lines": json_field(&split.run, "host_lines"),
+        "validation": "valid",
+    })))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/decomposition/apply",
+    tag = "Decomposition",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path)),
+    request_body = DecompositionApplyRequest,
+    responses(
+        (status = 200, description = "A new revision holding the split project (re-analysed). A single-file project becomes an archive project; roll back with POST /rollback.", body = DecompositionApplyResponse),
+        (status = 400, body = ApiErrorBody),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody),
+        (status = 409, description = "revision_conflict or preview_mismatch", body = ApiErrorBody),
+        (status = 422, body = ApiErrorBody),
+        (status = 503, body = ApiErrorBody),
+        (status = 504, body = ApiErrorBody)
+    )
+)]
+async fn apply_decomposition(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    request: Result<Json<DecompositionApplyRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let Json(request) =
+        request.map_err(|_| ApiError::bad_request("invalid decomposition request"))?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let _guard = state.0.writes.lock().await;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    if request.base_revision != project.revision {
+        return Err(revision_conflict_error(
+            request.base_revision,
+            project.revision,
+        ));
+    }
+    let level = level_or_default(&request.source_level);
+    let split = build_split(&state, &directory, &project, &request.classes, level).await?;
+    if diff::fingerprint(&split.diff) != request.preview_sha256 {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "preview_mismatch",
+            "the split no longer matches the previewed diff; preview it again",
+        ));
+    }
+    let (analysis, artifact) = state
+        .0
+        .analyzer
+        .analyze_tree(
+            &split.run.tree,
+            &split.run.stage,
+            project.revision + 1,
+            &split.files,
+            level,
+        )
+        .await?;
+    let new_project = project::commit_decomposition(
+        &directory,
+        project,
+        request.base_revision,
+        &split.changes,
+        &split.additions,
+        Some(&artifact),
+    )
+    .await?;
+    Ok(Json(serde_json::json!({
+        "revision": new_project.revision,
+        "base_revision": request.base_revision,
+        "extracted": json_field(&split.run, "extracted"),
+        "diff": split.diff,
+        "analysis_status": analysis.status,
+        "project_kind": new_project.kind,
+        "file_count": new_project.file_count,
+    })))
+}
+
 async fn build_edit_candidate(
     state: &AppState,
     directory: &std::path::Path,
@@ -3728,7 +4093,8 @@ esac
     }
 
     async fn response_json(response: axum::response::Response) -> Value {
-        let bytes = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        // the served OpenAPI document alone is well above 64 KiB
+        let bytes = to_bytes(response.into_body(), 512 * 1024).await.unwrap();
         serde_json::from_slice(&bytes).unwrap()
     }
 

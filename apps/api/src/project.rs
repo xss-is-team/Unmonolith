@@ -442,7 +442,40 @@ pub async fn commit_changes(
         return Err(revision_conflict(base_revision, project.revision));
     }
     let from = project.revision;
-    publish_snapshot(directory, project, from, changes, analysis).await
+    publish_snapshot(directory, project, from, changes, &[], analysis).await
+}
+
+/// Publishes a new revision that rewrites existing files (`changes`) and creates new ones (`additions`), as the
+/// decomposition of a monolith does. A single-file project becomes an archive project here: every earlier revision
+/// gets a manifest listing its one file, so all revisions stay readable, comparable and verifiable. Project metadata
+/// is written last, so a failure leaves the current revision (and the project kind) untouched.
+pub async fn commit_decomposition(
+    directory: &Path,
+    mut project: Project,
+    base_revision: u64,
+    changes: &[(String, Vec<u8>)],
+    additions: &[(String, Vec<u8>)],
+    analysis: Option<&[u8]>,
+) -> Result<Project, ApiError> {
+    if base_revision != project.revision {
+        return Err(revision_conflict(base_revision, project.revision));
+    }
+    if !is_archive(&project) {
+        for revision in 1..=project.revision {
+            let bytes = fs::read(source_path(directory, revision, &project.filename))
+                .await
+                .map_err(|_| revision_not_found())?;
+            let manifest = Manifest {
+                revision,
+                files: vec![file_entry(&project.filename, FileKind::Java, &bytes)],
+                skipped: Vec::new(),
+            };
+            write_manifest(directory, &manifest).await?;
+        }
+        project.kind = ProjectKind::Archive;
+    }
+    let from = project.revision;
+    publish_snapshot(directory, project, from, changes, additions, analysis).await
 }
 
 /// Publishes a new revision whose files are exactly those of `to_revision` (rollback). History is kept:
@@ -483,7 +516,15 @@ pub async fn restore_revision(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error.into()),
     };
-    publish_snapshot(directory, project, to_revision, &[], analysis.as_deref()).await
+    publish_snapshot(
+        directory,
+        project,
+        to_revision,
+        &[],
+        &[],
+        analysis.as_deref(),
+    )
+    .await
 }
 
 async fn publish_snapshot(
@@ -491,6 +532,7 @@ async fn publish_snapshot(
     mut project: Project,
     from_revision: u64,
     changes: &[(String, Vec<u8>)],
+    additions: &[(String, Vec<u8>)],
     analysis: Option<&[u8]>,
 ) -> Result<Project, ApiError> {
     let base = load_manifest(directory, &project, from_revision).await?;
@@ -499,12 +541,25 @@ async fn publish_snapshot(
             return Err(file_not_found());
         }
     }
+    for (path, _) in additions {
+        if base.files.iter().any(|file| &file.path == path) {
+            return Err(ApiError::new(
+                axum::http::StatusCode::CONFLICT,
+                "file_exists",
+                format!("{path} already exists in this project revision"),
+            ));
+        }
+    }
     let revision = project
         .revision
         .checked_add(1)
         .ok_or_else(|| ApiError::bad_request("source revision limit reached"))?;
 
     if !is_archive(&project) {
+        debug_assert!(
+            additions.is_empty(),
+            "single-file projects hold exactly one file"
+        );
         let source = match changes.first() {
             Some((_, bytes)) => bytes.clone(),
             None => fs::read(source_path(directory, from_revision, &project.filename)).await?,
@@ -545,6 +600,14 @@ async fn publish_snapshot(
                 files.push(entry.clone());
             }
         }
+        for (path, bytes) in additions {
+            let target = staging.join(path);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+            fs::write(&target, bytes).await?;
+            files.push(file_entry(path, FileKind::Java, bytes));
+        }
         fs::rename(&staging, revision_dir(directory, revision)).await?;
         Ok::<_, ApiError>(Manifest {
             revision,
@@ -569,6 +632,7 @@ async fn publish_snapshot(
         .await?;
     }
     project.revision = revision;
+    project.file_count = u32::try_from(manifest.files.len()).unwrap_or(u32::MAX);
     let metadata = serde_json::to_vec_pretty(&project).map_err(internal_json_error)?;
     atomic_write(&directory.join("project.json"), &metadata).await?;
     Ok(project)

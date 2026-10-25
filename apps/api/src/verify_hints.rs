@@ -2,7 +2,7 @@
 //!
 //! A passing verification only covers the scenarios that were run. These checks flag the cases where a green
 //! result says little: no scenario provides input, the two revisions have identical method bodies, or a changed
-//! method cannot be reached from `main` in the static call graph. They only read the JSON artifacts the Java
+//! (or newly appearing) method cannot be reached from `main` in the static call graph. They only read the JSON artifacts the Java
 //! parser already stored per revision (method bodies and `project_graph`); the API never parses Java.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
@@ -56,9 +56,16 @@ pub fn change_warnings(baseline: Option<&Value>, candidate: Option<&Value>) -> V
     };
     let before = method_fingerprints(baseline);
     let after = method_fingerprints(candidate);
+    // a method counts as changed when its declaration differs, and as affected when it is new in the candidate and
+    // matches no baseline declaration (code that moved to another type or file gets a new id after a decomposition)
+    let moved: Vec<Value> = before.values().map(without_id).collect();
     let changed: Vec<&String> = after
         .iter()
-        .filter(|(id, body)| before.get(*id).is_some_and(|old| old != *body))
+        .filter(|(id, body)| match before.get(*id) {
+            Some(old) => old != *body,
+            // new id: unchanged code that merely moved (another type or file) is not a change
+            None => !moved.contains(&without_id(body)),
+        })
         .map(|(id, _)| id)
         .collect();
     if changed.is_empty() {
@@ -139,11 +146,35 @@ fn collect_methods(value: &Value, found: &mut BTreeMap<String, Value>) {
     }
 }
 
+fn without_id(declaration: &Value) -> Value {
+    let mut copy = declaration.clone();
+    if let Some(map) = copy.as_object_mut() {
+        map.remove("id");
+    }
+    copy
+}
+
+/// Positions, graphs and everything the parser resolves from bindings: type names there change when code moves to
+/// another type or file (`Main.Item` -> `Item`) although the source does not.
+fn is_derived(key: &str) -> bool {
+    key.starts_with("resolved")
+        || matches!(
+            key,
+            "source_range"
+                | "cfg"
+                | "analysis"
+                | "calls"
+                | "receiver_type"
+                | "declaring_class"
+                | "signature"
+        )
+}
+
 fn strip_volatile(value: &Value) -> Value {
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
-                .filter(|(key, _)| !matches!(key.as_str(), "source_range" | "cfg" | "analysis"))
+                .filter(|(key, _)| !is_derived(key))
                 .map(|(key, child)| (key.clone(), strip_volatile(child)))
                 .collect(),
         ),
@@ -276,6 +307,42 @@ mod tests {
         let before = artifact("x", "y", 0);
         let after = artifact("x2", "y", 0);
         assert!(change_warnings(Some(&before), Some(&after)).is_empty());
+    }
+
+    #[test]
+    fn resolved_type_names_do_not_make_moved_code_look_changed() {
+        let mut before = artifact("x", "y", 0);
+        let mut after = artifact("x", "y", 0);
+        before["types"][0]["members"][1]["body"][0]["resolved_type"] = json!({"name": "Main.Item"});
+        after["types"][0]["members"][1]["body"][0]["resolved_type"] = json!({"name": "Item"});
+        assert_eq!(
+            change_warnings(Some(&before), Some(&after))[0].code,
+            "no_method_changes"
+        );
+    }
+
+    #[test]
+    fn code_that_only_moved_to_a_new_id_is_not_a_change() {
+        let before = artifact("x", "y", 0);
+        let mut after = artifact("x", "y", 0);
+        after["types"][0]["members"][2]["id"] = json!("B.lonely()");
+        after["project_graph"]["nodes"][2]["method_id"] = json!("B.lonely()");
+        // nothing differs but an id, even though nothing calls the moved method
+        assert_eq!(
+            change_warnings(Some(&before), Some(&after))[0].code,
+            "no_method_changes"
+        );
+    }
+
+    #[test]
+    fn new_code_under_a_new_id_counts_as_affected() {
+        let before = artifact("x", "y", 0);
+        let mut after = artifact("x", "y2", 0);
+        after["types"][0]["members"][2]["id"] = json!("B.lonely()");
+        after["project_graph"]["nodes"][2]["method_id"] = json!("B.lonely()");
+        let warnings = change_warnings(Some(&before), Some(&after));
+        assert_eq!(warnings[0].code, "change_not_reached", "{warnings:?}");
+        assert!(warnings[0].message.contains("B.lonely()"), "{warnings:?}");
     }
 
     #[test]

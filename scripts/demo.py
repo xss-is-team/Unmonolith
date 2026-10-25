@@ -217,6 +217,17 @@ def main():
         overall = bench["runtime"].get("overall", {})
         print(f"demo: benchmark {bench['status']}; verdict {overall.get('verdict')}: {overall.get('summary')}")
 
+        # split the (optimized) monolith into one file per member type and check it against the original
+        split_preview = api.call("POST", p + "/decomposition/preview", {"base_revision": candidate})
+        split = api.call("POST", p + "/decomposition/apply", {
+            "base_revision": candidate, "preview_sha256": split_preview["preview_sha256"]})
+        split_verify = api.call("POST", p + "/verify", {
+            "baseline_revision": 1, "candidate_revision": split["revision"], "main_class": "Main",
+            "test_cases": [{"name": n, "stdin": s} for n, s in CASES]})
+        print(f"demo: decomposition -> revision {split['revision']} ({split['file_count']} files, Main.java "
+              f"{split_preview['host_lines']['Main.java']['before']} -> {split_preview['host_lines']['Main.java']['after']} lines); "
+              f"verify vs original: {split_verify['status']}, warnings: {[w['code'] for w in split_verify['warnings']] or 'none'}")
+
         diff = api.call("GET", p + f"/revisions/1/diff/{candidate}")
         meta = {
             "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -241,7 +252,12 @@ def main():
         save(staging, "06-revision-diff.json", diff)
         save(staging, "07-verify-report.json", verify)
         save(staging, "08-benchmark-report.json", bench)
-        (staging / "SUMMARY.md").write_text(summary(meta, before, after, proposal, applied, verify, bench), encoding="utf-8")
+        save(staging, "09-decomposition-preview.json", split_preview)
+        save(staging, "10-decomposition-apply.json", {k: v for k, v in split.items() if k != "diff"}
+             | {"diff_files": [{"path": d["path"], "status": d["status"], "additions": d["additions"], "deletions": d["deletions"]} for d in split["diff"]]})
+        save(staging, "11-decomposition-verify.json", split_verify)
+        (staging / "SUMMARY.md").write_text(
+            summary(meta, before, after, proposal, applied, verify, bench, split_preview, split, split_verify), encoding="utf-8")
     finally:
         process.terminate()
         try:
@@ -261,7 +277,7 @@ def main():
     print(f"demo: evidence written to {out}")
 
 
-def summary(meta, before, after, proposal, applied, verify, bench):
+def summary(meta, before, after, proposal, applied, verify, bench, split_preview, split, split_verify):
     runtime = bench["runtime"]
     lines = [
         "# Demo run — evidence",
@@ -316,7 +332,17 @@ def summary(meta, before, after, proposal, applied, verify, bench):
         "Limitations reported by the API:",
         *[f"- {text}" for text in bench.get("limitations", [])],
         "",
-        "Raw responses: `01`–`08` JSON files in this directory; `run.json` has the environment.",
+        "## 4. Decomposition (`POST /decomposition/apply`)",
+        f"- The optimized monolith (revision {applied['revision']}) was split into **{split['file_count']} files** as revision {split['revision']}: "
+        f"`Main.java` {split_preview['host_lines']['Main.java']['before']} → {split_preview['host_lines']['Main.java']['after']} lines, "
+        f"{len(split_preview['added_files'])} member types moved into files of their own ("
+        + ", ".join(f"`{e['new_file']}`" for e in split["extracted"][:6]) + ", …).",
+        f"- Verify of the **original** (revision 1) against the split project: **{split_verify['status']}**, "
+        f"{sum(1 for c in split_verify['test_cases'] if c['passed'])}/{len(split_verify['test_cases'])} scenarios identical; "
+        "warnings: " + (", ".join(f"`{w['code']}`" for w in split_verify["warnings"]) if split_verify["warnings"] else "none") + ".",
+        "- The project is now a multi-file (`archive`) project; revision 1 stays readable and comparable.",
+        "",
+        "Raw responses: `01`–`11` JSON files in this directory; `run.json` has the environment.",
         "",
     ]
     return "\n".join(lines)

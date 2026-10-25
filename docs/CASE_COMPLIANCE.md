@@ -10,10 +10,10 @@ Status: ✅ done · 🟡 partial · ❌ missing · ❓ not verified. Evidence ki
 
 | Run | Result |
 |---|---|
-| `cargo test` (apps/api), fresh JAR built by `mvn package` | lib 73 passed (7 ignored); `e2e_analysis` 6/6, `e2e_edit` 13/13, `e2e_import` 6/6. The e2e files refuse to run when the JAR is older than `apps/parser/src` (`apps/api/tests/common/mod.rs:49`): rebuild with `./dev parser-build` after any pull. |
-| `cargo test --test docker_e2e -- --ignored` (real Docker, runner image) | 11/11 passed. Run with `BLUEPRINTS_REAL_RUNNER_IMAGE=<image id>`: resolving the image by tag failed inside the test process on the audit machine although the same `docker image inspect` worked in a shell. |
+| `cargo test` (apps/api), fresh JAR built by `mvn package` | lib 76 passed (7 ignored); `e2e_analysis` 6/6, `e2e_decompose` 4/4, `e2e_edit` 13/13, `e2e_import` 6/6. The e2e files refuse to run when the JAR is older than `apps/parser/src` (`apps/api/tests/common/mod.rs:49`): rebuild with `./dev parser-build` after any pull. |
+| `cargo test --test docker_e2e -- --ignored` (real Docker, runner image) | 12/12 passed. Run with `BLUEPRINTS_REAL_RUNNER_IMAGE=<image id>`: resolving the image by tag failed inside the test process on the audit machine although the same `docker image inspect` worked in a shell. |
 | `cargo test --lib -- --ignored` (7 `real_*` tests, real JAR + JDK + Docker) | 7/7 passed |
-| Parser `mvn test` (Maven 3.9.9, JDK 26 with `release 21`) | 201 tests, 0 failures (Acceptance 13, Analysis 27, Cfg 24, ComplexityBenchmark 11, JavaScopeChecklist 27, LegacyJava 28, Main 7, Optimizer 14, ProjectAnalyzer 8, ProjectGraph 2, Semantic 12, StatementMove 9, Transform 19) |
+| Parser `mvn test` (Maven 3.9.9, JDK 26 with `release 21`) | 207 tests, 0 failures (Acceptance 13, Analysis 27, Cfg 24, ComplexityBenchmark 11, Decomposer 6, JavaScopeChecklist 27, LegacyJava 28, Main 7, Optimizer 14, ProjectAnalyzer 8, ProjectGraph 2, Semantic 12, StatementMove 9, Transform 19) |
 | Web `tsc` / `eslint` / `next build` | **not run** (no `pnpm`, no `node_modules`). Every frontend status below is from reading code. |
 | Parser CLI on `acceptance/Organizer.java` and `acceptance/Main.java` | run directly (see R13/R16) |
 
@@ -40,7 +40,7 @@ Mandatory = case slides 2, 3, 5, 6 (gate), 7, 10, 11. Optional = slide 6 decompo
 | R15 | 5 | Code line and graph node | ✅ | ✅ | `source_range`, `node_ids`; `cfg-viewer.tsx:220,436-444` | — |
 | R16 | 5 | Fix with expected effect | ✅ | ❌ | `/optimizations` (`method_before/after`, `scan_before/after`), `POST /benchmark`; the slide-5 method `mergeDuplicateItemsQuadratic` is `O(n^2)`, applicable, optimized and verified in Docker (`demo_monolith_automatic_optimization_is_verified_on_scenarios_that_reach_it`) | UI shows no effect; `reconcileOrdersWithTransactions` stays refused (mutates existing elements) |
 | R17 | 5 | Diagnosis verifiable | ✅ | 🟡 | `confidence`, `assumptions`, `limitations`, honest `unknown`; benchmark verdicts; `String +=` in a loop is `medium` with finding `string_concat_in_loop`, Euclid is `O(log n)` (`AnalysisTest`, `AcceptanceTest.classifiesComplexityOfTheFixtureMethods`) | recursion, streams and unmodelled library calls stay `unknown` |
-| R18 | 6 | Auto decomposition (optional) | ❌ | ❌ | — | not started |
+| R18 | 6 | Auto decomposition into responsibilities (optional) | ✅ mechanical · 🟡 semantic | ❌ | `Decomposer.java`, `GET/POST /projects/{id}/decomposition[/preview|/apply]`; `DecomposerTest` (6), `e2e_decompose` (4), real Docker `decomposed_monolith_behaves_like_the_original_and_can_then_be_optimized_in_its_own_file` (original vs 17-file project: 6/6 scenarios identical, no warnings; then the slide-5 method is optimized inside `DataOptimizer.java` and verified again) | splits by member type, it does not recognise «Parser/Analyzer/Optimizer»; refuses types that use private or enclosing-class members; UI missing |
 | R19 | 6 | Quality gate: build + tests = preserved | 🟡 | 🟡 | `/verify` compiles and runs both revisions | see R4 |
 | R20 | 7 | Mandatory Java scope 1–4 | ✅ | n/a | `JavaScopeChecklistTest.slide7Sections1To4AndSlide8Bonus`: one dynamic test per slide-7 bullet (20 bullets, names in the test report). Each fragment compiles with `javac --release 21`, parses with no error and no `unknown` node, gives every method with a body a CFG and an analysis, contains the named AST kinds and resolves the named JDK types; plus `AcceptanceTest::coversMandatoryLanguageConstructs`, `LegacyJavaCompatibilityTest` | proves parsing and analysis, not execution (execution is the Docker e2e suite); the case's own technical document is still missing (R21) |
 | R21 | 7 | Case technical document | ❌ | n/a | — | not in repo; organizers' artifact |
@@ -49,7 +49,7 @@ Mandatory = case slides 2, 3, 5, 6 (gate), 7, 10, 11. Optional = slide 6 decompo
 | R24 | 10 | Demo: monolith → graph → diagnosis → improvement → tests | 🟡 | 🟡 | `scripts/demo.py` (`./dev demo`) runs the whole path through the HTTP API and stores real responses in `docs/evidence/demo/` | UI cannot yet drive the optimize/benchmark steps; the demo monolith is our own, not the organizers' |
 | R25 | 11 | Deliverables 01–04 | 🟡 | n/a | 01 `README.md`, `./dev`; 02 `./dev up` (not run); 03 tests exist and `docs/evidence/demo/` holds a saved real run (verify + benchmark); 04 `docs/SOLUTION.md` | see priorities |
 
-Percentages (mandatory only, counting R1–R11, R13–R17, R19, R20, R24, R25 = 20): backend 15 ✅ / 5 🟡 / 0 ❌;
+Percentages (mandatory only, counting R1–R11, R13–R17, R19, R20, R24, R25 = 20): backend 15 ✅ / 5 🟡 / 0 ❌ (R18 is optional and not counted);
 frontend (18 applicable, R20/R25 are not UI items) 9 ✅ / 8 🟡 / 1 ❌ (R16). UI never executed in this audit.
 
 ## Mockup comparison (slide 4)
@@ -70,8 +70,8 @@ The text brief only had a title; the slide is a full mockup.
 ## Contract mismatches (frontend ↔ openapi)
 
 - `Project` in `apps/web/src/lib/api.ts:1-6` omits `kind` and `file_count` (required in `openapi.yaml`, schema `Project`).
-- 13 operations are not consumed by the UI: `/files`, `/files/{path}`, `/complexity`, `/findings`, `/optimizations`
-  (+`preview`, `apply`), `/cfg-edits/preview|apply`, `/rollback`, `/revisions/{from}/diff/{to}`, `/benchmark`, `/export`.
+- 16 operations are not consumed by the UI: `/files`, `/files/{path}`, `/complexity`, `/findings`, `/optimizations`
+  (+`preview`, `apply`), `/decomposition` (+`preview`, `apply`), `/cfg-edits/preview|apply`, `/rollback`, `/revisions/{from}/diff/{to}`, `/benchmark`, `/export`.
 - `openapi.yaml` (schema `Project`, field `kind`) says archives reject `/verify`; the `/verify` description and
   `real_archive_project_verify_and_benchmark` say archives are accepted. The schema text is stale.
 - The verify report now carries `warnings[]` (`openapi.yaml`, schema `VerifyWarning`); `VerificationReport` in `apps/web/src/lib/api.ts` has no such field and the verify panel does not show it.
@@ -89,12 +89,13 @@ The text brief only had a title; the slide is a full mockup.
 3. **Runner behaviour:** «both timed out» counts as a failure (`runner.rs:1170`); output that depends on time or randomness
    gives false mismatches.
 4. **Silent-looking gap, now surfaced:** anonymous-class and enum-constant bodies are not analyzed (no CFG, no complexity); the parser emits an informational `unanalyzed_anonymous_body` diagnostic per body. The editor will show these as `info` entries (e.g. the reference monolith has several).
-5. **Complexity and optimizer limits:** a call to unmodelled code makes the method `unknown`; the optimizer only rewrites
+5. **Decomposition limits:** only direct static member types of a top-level class move; types that use private members or members of the enclosing class by simple name stay (a qualified use of a non-private member is fine), as do types another file refers to; the split is by type, not by meaning, and the orphaned section-banner comments of the monolith stay in the host. A single-file project turns into an archive project, so `/source` and `/transform` close for it (use `/files`); the UI does not know this yet.
+6. **Complexity and optimizer limits:** a call to unmodelled code makes the method `unknown`; the optimizer only rewrites
    keyed lookups whose enclosing loop cannot change the collection or keys, and now also accepts `equals()` with the outer
    receiver for `String`/boxed/enum keys (extra assumption `outer_key_non_null`) and constructors/setters that only store
    fields of a freshly allocated object.
-6. **Stale-JAR gate:** the e2e JAR-freshness check fails after a merge until the JAR is rebuilt.
-7. **Not verified:** the web build, the browser flow.
+7. **Stale-JAR gate:** the e2e JAR-freshness check fails after a merge until the JAR is rebuilt.
+8. **Not verified:** the web build, the browser flow.
 
 ## Priorities
 
@@ -102,6 +103,6 @@ The text brief only had a title; the slide is a full mockup.
 Done: stdin-driven demo monolith with mutant tests, user constructors / `String +=` / Euclid / `computeIfAbsent` in the analyzer, verify warnings, scripted demo with saved evidence (`./dev demo`), `docs/SOLUTION.md`.
 **P1** — UI: optimizations (preview/apply with assumptions), benchmark result, export, ZIP upload, `Project.kind`;
 per-item Java-scope checklist test.
-**P2** — `move_statement` and rollback in UI; decomposition of nested static classes into files (slide 6, optional).
+**P2** — `move_statement` and rollback in UI; a decomposition screen (candidates → preview diff → apply) on top of `/decomposition`.
 
 Do not hardcode «5.2x» or any speedup: it is a number from the case mockup, and results must come from `/benchmark`.

@@ -555,6 +555,89 @@ paths:
         '422': {$ref: '#/components/responses/Unprocessable'}
         '503': {$ref: '#/components/responses/Unavailable'}
         '504': {$ref: '#/components/responses/Timeout'}
+  /projects/{project_id}/decomposition:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: listDecomposition
+      tags: [Decomposition]
+      security: [{guestSession: []}]
+      summary: List the static member types of the current revision that can move into files of their own
+      description: |
+        Every static member type (class, interface, enum, record) of a top-level class is a candidate, extractable or
+        not. Each lists its preconditions (`satisfied`/`violated`, with the reason) and `depends_on`, the sibling types
+        that must be extracted together with it. Detection never changes anything.
+      parameters:
+        - {name: source_level, in: query, required: false, schema: {type: string, enum: ['8', '11', '17', '21'], default: '21'}}
+      responses:
+        '200':
+          description: Candidates of the current revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DecompositionList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        '504': {$ref: '#/components/responses/Timeout'}
+  /projects/{project_id}/decomposition/preview:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      operationId: previewDecomposition
+      tags: [Decomposition]
+      security: [{guestSession: []}]
+      summary: Exact diffs of splitting the selected member types into files; nothing is stored
+      description: |
+        `classes` are candidate ids (empty or omitted: every extractable type). Errors: 404 class_not_found,
+        422 not_extractable (the reasons are in the message), 422 dependency_not_selected, 422 nothing_to_extract,
+        422 transformation_invalid (the split project would not analyse cleanly).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DecompositionRequest'}
+      responses:
+        '200':
+          description: Diffs, fingerprint and the list of new files
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DecompositionPreview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        '504': {$ref: '#/components/responses/Timeout'}
+  /projects/{project_id}/decomposition/apply:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      operationId: applyDecomposition
+      tags: [Decomposition]
+      security: [{guestSession: []}]
+      summary: Explicit user action - commit the previewed split as a new, re-analysed revision
+      description: |
+        Requires the current `base_revision` (409 revision_conflict otherwise) and the `preview_sha256` of the confirmed
+        preview (409 preview_mismatch if the split would differ). A single-file project becomes an `archive` project
+        (`/source` and `/transform` then answer 409 multi_file_project); every earlier revision stays readable and can be
+        compared or verified against the new one (pass `main_class` to `/verify`). Roll back with `POST /rollback`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DecompositionApplyRequest'}
+      responses:
+        '200':
+          description: New revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DecompositionApplyResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        '504': {$ref: '#/components/responses/Timeout'}
   /projects/{project_id}/cfg-edits/preview:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -778,7 +861,7 @@ components:
       properties:
         id: {type: string, format: uuid}
         filename: {type: string, example: Main.java, description: Java file name (single_file) or archive name (archive)}
-        kind: {type: string, enum: [single_file, archive], description: "Archive projects reject the single-file /source, /transform and /verify routes with 409 multi_file_project"}
+        kind: {type: string, enum: [single_file, archive], description: "Archive projects reject the single-file /source and /transform routes with 409 multi_file_project; /verify accepts them. A single-file project becomes an archive project when it is decomposed."}
         file_count: {type: integer, minimum: 1}
         revision: {type: integer, minimum: 1}
         created_at: {type: string, format: date-time}
@@ -1170,6 +1253,88 @@ components:
         method_complexity_before: {type: string, nullable: true}
         method_complexity_after: {type: string, nullable: true}
         analysis_status: {type: string, enum: [completed, partial]}
+    DecompositionList:
+      type: object
+      required: [revision, rule, candidates]
+      properties:
+        revision: {type: integer, minimum: 1}
+        rule: {type: string, example: extract_static_member_types}
+        candidates:
+          type: array
+          items:
+            type: object
+            required: [id, name, kind, host, file, new_file, lines, extractable, depends_on, preconditions, not_extractable_reasons]
+            properties:
+              id: {type: string, example: Main.DataOptimizer}
+              name: {type: string}
+              kind: {type: string, enum: [class, interface, enum, record]}
+              host: {type: string, description: Qualified name of the top-level class it is nested in}
+              file: {type: string}
+              new_file: {type: string}
+              source_range: {$ref: '#/components/schemas/SourceRange'}
+              lines: {type: integer}
+              extractable: {type: boolean}
+              depends_on: {type: array, items: {type: string}}
+              preconditions:
+                type: array
+                items:
+                  type: object
+                  required: [id, status, detail]
+                  properties:
+                    id: {type: string, enum: [not_private, name_free, no_private_access_from_outside, self_contained, referenced_only_in_this_file, siblings_extractable]}
+                    status: {type: string, enum: [satisfied, violated]}
+                    detail: {type: string}
+              not_extractable_reasons: {type: array, items: {type: string}}
+    DecompositionRequest:
+      type: object
+      required: [base_revision]
+      properties:
+        base_revision: {type: integer, minimum: 1}
+        source_level: {type: string, enum: ['8', '11', '17', '21']}
+        classes: {type: array, items: {type: string}, description: 'Candidate ids; empty or omitted selects every extractable type'}
+    DecompositionPreview:
+      type: object
+      required: [base_revision, extracted, diff, preview_sha256, added_files, changed_files, host_lines, validation]
+      properties:
+        base_revision: {type: integer}
+        extracted:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: string}
+              name: {type: string}
+              from: {type: string}
+              new_file: {type: string}
+              lines: {type: integer}
+        diff: {type: array, items: {$ref: '#/components/schemas/FileDiff'}}
+        preview_sha256: {type: string}
+        added_files: {type: array, items: {type: string}}
+        changed_files: {type: array, items: {type: string}}
+        host_lines:
+          type: object
+          description: 'Per rewritten file: {before, after} line counts'
+          additionalProperties: {type: object}
+        validation: {type: string, enum: [valid]}
+    DecompositionApplyRequest:
+      type: object
+      required: [base_revision, preview_sha256]
+      properties:
+        base_revision: {type: integer, minimum: 1}
+        source_level: {type: string, enum: ['8', '11', '17', '21']}
+        classes: {type: array, items: {type: string}}
+        preview_sha256: {type: string}
+    DecompositionApplyResponse:
+      type: object
+      required: [revision, base_revision, extracted, diff, analysis_status, project_kind, file_count]
+      properties:
+        revision: {type: integer, minimum: 2}
+        base_revision: {type: integer}
+        extracted: {type: array, items: {type: object}}
+        diff: {type: array, items: {$ref: '#/components/schemas/FileDiff'}}
+        analysis_status: {type: string, enum: [completed, partial]}
+        project_kind: {type: string, enum: [single_file, archive]}
+        file_count: {type: integer, minimum: 1}
     RollbackRequest:
       type: object
       required: [base_revision, to_revision]

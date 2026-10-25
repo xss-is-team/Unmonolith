@@ -72,8 +72,8 @@ Changes happen through a separate editable BPMN-style process diagram. Its suppo
 ## Current scope
 
 - The API accepts a single `.java` file or a ZIP project (multi-file, packages, source levels Java 8–21); Maven/Gradle import and external dependencies are not supported (unresolved calls are reported honestly).
-- The parser produces AST data, per-method CFGs, Big O estimates with findings, a project graph, `replace_condition` and `move_statement` edits, and lookup-loop optimization proposals. The Rust API exposes these through the revisioned endpoints in `apps/api/openapi.yaml`, plus rollback, export and a runtime benchmark.
-- The web app currently covers source editing, method CFG/Big O findings, Project Overview (project graph), `replace_condition`, revision diff and behavioral verification. Optimizations, `move_statement`, benchmark, rollback, export and ZIP upload exist in the API but are not wired into the UI yet (see `docs/CASE_COMPLIANCE.md`).
+- The parser produces AST data, per-method CFGs, Big O estimates with findings, a project graph, `replace_condition` and `move_statement` edits, lookup-loop optimization proposals and the decomposition of a monolith's static member types into files. The Rust API exposes these through the revisioned endpoints in `apps/api/openapi.yaml`, plus rollback, export and a runtime benchmark.
+- The web app currently covers source editing, method CFG/Big O findings, Project Overview (project graph), `replace_condition`, revision diff and behavioral verification. Optimizations, decomposition, `move_statement`, benchmark, rollback, export and ZIP upload exist in the API but are not wired into the UI yet (see `docs/CASE_COMPLIANCE.md`).
 - The `/demo` route and its synthetic fixtures described in earlier versions are not present in `apps/web`; every view reads real API data.
 - See `docs/SOLUTION.md` for architecture, supported Java scope and limitations.
 

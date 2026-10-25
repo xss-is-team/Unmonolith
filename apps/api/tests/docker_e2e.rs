@@ -934,3 +934,75 @@ async fn verify_warns_when_the_result_proves_little() {
         .json();
     assert_eq!(stored["warnings"], report["warnings"]);
 }
+
+#[tokio::test]
+#[ignore = "needs Docker and the runner image"]
+async fn decomposed_monolith_behaves_like_the_original_and_can_then_be_optimized_in_its_own_file() {
+    let server = TestServer::start_docker().await;
+    let api = server.client().await;
+    let project = demo_project(&api).await;
+    project.analyze_single_file().await;
+
+    // 1. split the 799-line monolith into 17 files
+    let preview = api
+        .post_json(
+            &project.path("/decomposition/preview"),
+            &json!({"base_revision": 1}),
+        )
+        .await
+        .expect_status(200)
+        .json();
+    api.post_json(
+        &project.path("/decomposition/apply"),
+        &json!({"base_revision": 1, "preview_sha256": preview["preview_sha256"]}),
+    )
+    .await
+    .expect_status(200);
+    assert_eq!(project.file_paths().await.len(), 17);
+
+    // 2. the original (revision 1, a single file) and the split project behave identically on every scenario
+    let report = project
+        .verify(&json!({"baseline_revision": 1, "candidate_revision": 2, "main_class": "Main", "test_cases": demo_cases()}))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(report["status"], "passed", "{report}");
+    assert_eq!(report["behaviorally_verified"], true);
+    assert_eq!(
+        report["candidate_compilation"]["status"], "completed",
+        "{report}"
+    );
+    assert_eq!(report["warnings"], json!([]), "{report}");
+
+    // 3. the slide-5 defect now lives in its own file and is optimized there
+    let method = "DataOptimizer.mergeDuplicateItemsQuadratic(List<Item>)";
+    assert_eq!(
+        project.complexity_of(method).await["time_complexity"],
+        "O(n^2)"
+    );
+    let applied = project.optimize("21", method).await;
+    assert_eq!(applied["revision"], 3);
+    assert!(project
+        .source("DataOptimizer.java", None)
+        .await
+        .contains("computeIfAbsent"));
+    let report = project
+        .verify(&json!({"baseline_revision": 1, "candidate_revision": 3, "main_class": "Main", "test_cases": demo_cases()}))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(report["status"], "passed", "{report}");
+    assert_eq!(report["warnings"], json!([]), "{report}");
+    // the scenario that merges inventory really went through the optimized method
+    let merge = report["test_cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "merge-after-add")
+        .unwrap();
+    assert!(
+        out(&merge["baseline"]["stdout"]).contains("Уникальных позиций: 5"),
+        "{merge}"
+    );
+    assert_eq!(merge["baseline"]["stdout"], merge["candidate"]["stdout"]);
+}

@@ -40,6 +40,11 @@ impl Drop for OptimizationRun {
     }
 }
 
+pub enum DecomposeRequest<'a> {
+    Discover,
+    Apply { classes: &'a [String] },
+}
+
 pub enum OptimizeRequest<'a> {
     Discover,
     Apply {
@@ -427,8 +432,70 @@ impl JavaAnalyzer {
         request: OptimizeRequest<'_>,
     ) -> Result<OptimizationRun, ApiError> {
         check_source_level(source_level)?;
+        let (body, with_output) = match &request {
+            OptimizeRequest::Discover => (
+                serde_json::json!({
+                    "source_level": source_level, "files": files, "action": "discover",
+                }),
+                false,
+            ),
+            OptimizeRequest::Apply {
+                proposal_id,
+                acknowledged,
+                preview,
+            } => (
+                serde_json::json!({
+                    "source_level": source_level, "files": files, "action": "apply",
+                    "proposal_id": proposal_id, "acknowledged_assumptions": acknowledged,
+                    "preview": preview,
+                }),
+                true,
+            ),
+        };
+        self.run_staged("optimize", project_dir, revision, body, with_output)
+            .await
+    }
+
+    /// Runs the parser's `decompose` subcommand: lists the member types that can move into files of their own
+    /// (`Discover`) or writes the split project tree (`Apply`; an empty `classes` selects every extractable type).
+    pub async fn decompose(
+        &self,
+        project_dir: &Path,
+        revision: u64,
+        files: &[String],
+        source_level: &str,
+        request: DecomposeRequest<'_>,
+    ) -> Result<OptimizationRun, ApiError> {
+        check_source_level(source_level)?;
+        let (body, with_output) = match request {
+            DecomposeRequest::Discover => (
+                serde_json::json!({
+                    "source_level": source_level, "files": files, "action": "discover",
+                }),
+                false,
+            ),
+            DecomposeRequest::Apply { classes } => (
+                serde_json::json!({
+                    "source_level": source_level, "files": files, "action": "apply", "classes": classes,
+                }),
+                true,
+            ),
+        };
+        self.run_staged("decompose", project_dir, revision, body, with_output)
+            .await
+    }
+
+    /// Shared driver of the project tools that read one revision and may write a candidate tree.
+    async fn run_staged(
+        &self,
+        tool: &str,
+        project_dir: &Path,
+        revision: u64,
+        body: serde_json::Value,
+        with_output: bool,
+    ) -> Result<OptimizationRun, ApiError> {
         let root = fs::canonicalize(project::revision_dir(project_dir, revision)).await?;
-        let stage = project_dir.join(format!(".optimize-{}", Uuid::new_v4()));
+        let stage = project_dir.join(format!(".{tool}-{}", Uuid::new_v4()));
         fs::create_dir(&stage).await?;
         let tree = stage.join("tree");
         let mut run = OptimizationRun {
@@ -436,30 +503,16 @@ impl JavaAnalyzer {
             tree: tree.clone(),
             result: serde_json::Value::Null,
         };
-        let body = match &request {
-            OptimizeRequest::Discover => serde_json::json!({
-                "source_level": source_level, "files": files, "action": "discover",
-            }),
-            OptimizeRequest::Apply {
-                proposal_id,
-                acknowledged,
-                preview,
-            } => serde_json::json!({
-                "source_level": source_level, "files": files, "action": "apply",
-                "proposal_id": proposal_id, "acknowledged_assumptions": acknowledged,
-                "preview": preview,
-            }),
-        };
         fs::write(stage.join("request.json"), body.to_string()).await?;
         let request_path = fs::canonicalize(stage.join("request.json")).await?;
         let mut args: Vec<&std::ffi::OsStr> = vec![
-            "optimize".as_ref(),
+            tool.as_ref(),
             "--root".as_ref(),
             root.as_os_str(),
             "--input".as_ref(),
             request_path.as_os_str(),
         ];
-        if matches!(request, OptimizeRequest::Apply { .. }) {
+        if with_output {
             args.push("--output-dir".as_ref());
             args.push(tree.as_os_str());
         }
@@ -478,9 +531,10 @@ impl JavaAnalyzer {
             return Ok(run);
         }
         tracing::warn!(
+            tool,
             exit_code = status.code(),
             stderr_bytes = stderr.bytes.len(),
-            "Java optimizer rejected the request"
+            "Java tool rejected the request"
         );
         if status.code() != Some(1)
             || result.get("status").and_then(|v| v.as_str()) != Some("failed")
@@ -792,6 +846,20 @@ fn parser_failure(result: &serde_json::Value) -> ApiError {
         Some("move_rejected") => {
             ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "move_rejected", message)
         }
+        Some("class_not_found") => ApiError::new(StatusCode::NOT_FOUND, "class_not_found", message),
+        Some("nothing_to_extract") => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "nothing_to_extract",
+            message,
+        ),
+        Some("not_extractable") => {
+            ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "not_extractable", message)
+        }
+        Some("dependency_not_selected") => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "dependency_not_selected",
+            message,
+        ),
         Some("unknown_method") => ApiError::new(StatusCode::NOT_FOUND, "method_not_found", message),
         Some("unsupported_node") => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,

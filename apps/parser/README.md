@@ -276,6 +276,24 @@ non-boolean condition or unknown name), plus `invalid_operation`, `invalid_argum
 The output file is written (atomically) only on success and is never the input file. No new CFG is
 returned; request a fresh analysis of the stored output.
 
+## Decomposition mode
+
+```sh
+java -jar parser.jar decompose --root DIR --input request.json [--output-dir OUT]
+```
+
+Request `{"source_level","files":[...],"action":"discover"|"apply","classes":[ids]}`. `discover` lists every static
+member type (class, interface, enum, record) of every top-level class with its `preconditions`, `depends_on` and
+`extractable`; `apply` writes the complete candidate tree to `--output-dir` (host file rewritten, one new `<Name>.java`
+per moved type in the same directory and package) and reports `extracted`, `changed_files`, `added_files` and
+`host_lines`. An empty `classes` selects every extractable type. The move is a text edit (formatting and comments are
+kept; `static`/`protected` are dropped, `Host.Moved` becomes `Moved`, only the imports the type needs are copied). A type
+is refused when it is private, its name or file exists, code outside it uses its private members, it uses its enclosing
+class's members by simple name (or private ones at all), another file refers to it, or a sibling it needs cannot move; a
+selection must contain the siblings its types use. The result is re-analysed and rejected if it introduces a new error.
+Failure codes: `class_not_found`, `not_extractable`, `dependency_not_selected`, `nothing_to_extract`,
+`transformation_invalid`.
+
 ## Complexity and defect analysis
 
 Every method with a body gets an additive `analysis` object next to its `cfg` (`null` for abstract

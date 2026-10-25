@@ -1150,7 +1150,7 @@ final class Optimizer {
 
     /** Error diagnostics of the candidate that the baseline did not have (compared by file, code and message). */
     @SuppressWarnings("unchecked")
-    private static List<String> newErrors(Map<String, Object> baseline, Map<String, Object> candidate) {
+    static List<String> newErrors(Map<String, Object> baseline, Map<String, Object> candidate) {
         Set<String> known = new HashSet<>();
         for (Object o : (List<Object>) baseline.getOrDefault("diagnostics", List.of())) {
             Map<String, Object> d = (Map<String, Object>) o;
