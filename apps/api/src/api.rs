@@ -176,6 +176,7 @@ impl AppState {
         DecompositionPreview,
         DecompositionApplyRequest,
         DecompositionApplyResponse,
+        DecompositionGroup,
         RollbackRequest,
         BenchmarkRequest,
         BenchmarkWorkloadInput,
@@ -396,6 +397,23 @@ struct DecompositionList {
     /// `not_extractable_reasons`.
     #[schema(value_type = Vec<Object>)]
     candidates: Vec<Value>,
+    /// Suggested groups of static methods of one class (first word of the method names), each with `id`, `name`,
+    /// `host`, `new_file`, `methods`, `moves_along` (private helpers and constants that travel with it), `lines`,
+    /// `extractable`, `preconditions` and `not_extractable_reasons`.
+    #[schema(value_type = Vec<Object>)]
+    method_groups: Vec<Value>,
+}
+
+/// A group of static methods to move into a new class: a suggested group by `id` (optionally renamed) or an explicit
+/// list of method ids with a `name`.
+#[derive(Clone, Deserialize, Serialize, utoipa::ToSchema)]
+struct DecompositionGroup {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    methods: Vec<String>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -408,6 +426,9 @@ struct DecompositionRequest {
     /// selected together with it.
     #[serde(default)]
     classes: Vec<String>,
+    /// Method groups to move instead of member types (not both in one step).
+    #[serde(default)]
+    groups: Vec<DecompositionGroup>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -434,6 +455,8 @@ struct DecompositionApplyRequest {
     source_level: Option<String>,
     #[serde(default)]
     classes: Vec<String>,
+    #[serde(default)]
+    groups: Vec<DecompositionGroup>,
     preview_sha256: String,
 }
 
@@ -2233,6 +2256,7 @@ async fn list_decomposition(
         "revision": project.revision,
         "rule": run.result.get("rule").cloned().unwrap_or(Value::Null),
         "candidates": run.result.get("candidates").cloned().unwrap_or(Value::Array(Vec::new())),
+        "method_groups": run.result.get("method_groups").cloned().unwrap_or(Value::Array(Vec::new())),
     })))
 }
 
@@ -2259,6 +2283,7 @@ async fn build_split(
     directory: &std::path::Path,
     project: &Project,
     classes: &[String],
+    groups: &[DecompositionGroup],
     source_level: &str,
 ) -> Result<Split, ApiError> {
     let invalid = || {
@@ -2269,6 +2294,10 @@ async fn build_split(
         )
     };
     let files = java_files(directory, project).await?;
+    let groups: Vec<Value> = groups
+        .iter()
+        .map(|group| serde_json::to_value(group).expect("a group serializes"))
+        .collect();
     let run = state
         .0
         .analyzer
@@ -2277,7 +2306,10 @@ async fn build_split(
             project.revision,
             &files,
             source_level,
-            DecomposeRequest::Apply { classes },
+            DecomposeRequest::Apply {
+                classes,
+                groups: &groups,
+            },
         )
         .await?;
     let listed = |key: &str| -> Result<Vec<String>, ApiError> {
@@ -2381,7 +2413,15 @@ async fn preview_decomposition(
         ));
     }
     let level = level_or_default(&request.source_level);
-    let split = build_split(&state, &directory, &project, &request.classes, level).await?;
+    let split = build_split(
+        &state,
+        &directory,
+        &project,
+        &request.classes,
+        &request.groups,
+        level,
+    )
+    .await?;
     Ok(Json(serde_json::json!({
         "base_revision": project.revision,
         "extracted": json_field(&split.run, "extracted"),
@@ -2431,7 +2471,15 @@ async fn apply_decomposition(
         ));
     }
     let level = level_or_default(&request.source_level);
-    let split = build_split(&state, &directory, &project, &request.classes, level).await?;
+    let split = build_split(
+        &state,
+        &directory,
+        &project,
+        &request.classes,
+        &request.groups,
+        level,
+    )
+    .await?;
     if diff::fingerprint(&split.diff) != request.preview_sha256 {
         return Err(ApiError::new(
             StatusCode::CONFLICT,

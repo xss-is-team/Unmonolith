@@ -42,7 +42,11 @@ impl Drop for OptimizationRun {
 
 pub enum DecomposeRequest<'a> {
     Discover,
-    Apply { classes: &'a [String] },
+    Apply {
+        classes: &'a [String],
+        /// Method groups as JSON (`{id?, name?, methods?}`); when present `classes` must be empty.
+        groups: &'a [serde_json::Value],
+    },
 }
 
 pub enum OptimizeRequest<'a> {
@@ -474,9 +478,10 @@ impl JavaAnalyzer {
                 }),
                 false,
             ),
-            DecomposeRequest::Apply { classes } => (
+            DecomposeRequest::Apply { classes, groups } => (
                 serde_json::json!({
-                    "source_level": source_level, "files": files, "action": "apply", "classes": classes,
+                    "source_level": source_level, "files": files, "action": "apply",
+                    "classes": classes, "groups": groups,
                 }),
                 true,
             ),
@@ -847,6 +852,15 @@ fn parser_failure(result: &serde_json::Value) -> ApiError {
             ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "move_rejected", message)
         }
         Some("class_not_found") => ApiError::new(StatusCode::NOT_FOUND, "class_not_found", message),
+        Some("invalid_request") => {
+            ApiError::new(StatusCode::BAD_REQUEST, "invalid_request", message)
+        }
+        Some("method_not_found") => {
+            ApiError::new(StatusCode::NOT_FOUND, "method_not_found", message)
+        }
+        Some("group_overlap") => {
+            ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "group_overlap", message)
+        }
         Some("nothing_to_extract") => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "nothing_to_extract",

@@ -271,3 +271,131 @@ async fn projects_of_other_sessions_cannot_be_decomposed() {
         .await
         .expect_error(404, "project_not_found");
 }
+
+const REPORT: &str = r#"import java.util.*;
+
+public class Report {
+    private static final String SEP = ", ";
+
+    static class Row {
+        final String name;
+        final int qty;
+        Row(String name, int qty) { this.name = name; this.qty = qty; }
+    }
+
+    static Row parseRow(String line) {
+        String[] p = line.split(":");
+        return new Row(p[0].trim(), toQty(p[1]));
+    }
+
+    private static int toQty(String s) {
+        return Integer.parseInt(s.trim());
+    }
+
+    static List<Row> parseAll(List<String> lines) {
+        List<Row> rows = new ArrayList<>();
+        for (String l : lines) {
+            rows.add(parseRow(l));
+        }
+        return rows;
+    }
+
+    static String formatRow(Row r) {
+        return r.name + "=" + r.qty;
+    }
+
+    static String formatAll(List<Row> rows) {
+        StringBuilder sb = new StringBuilder();
+        for (Row r : rows) {
+            if (sb.length() > 0) {
+                sb.append(SEP);
+            }
+            sb.append(formatRow(r));
+        }
+        return sb.toString();
+    }
+
+    public static void main(String[] args) {
+        System.out.println(formatAll(parseAll(List.of("a: 1", "b: 2"))));
+    }
+}
+"#;
+
+#[tokio::test]
+async fn a_class_of_static_methods_is_split_into_responsibility_classes() {
+    let server = TestServer::start().await;
+    let api = server.client().await;
+    let project = api
+        .create_project("Report.java", REPORT.as_bytes().to_vec())
+        .await;
+    project.analyze_single_file().await;
+
+    let listing = api
+        .get(&project.path("/decomposition"))
+        .await
+        .expect_status(200)
+        .json();
+    let groups = listing["method_groups"].as_array().unwrap();
+    let names: Vec<&str> = groups.iter().map(|g| g["name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["Parsing", "Formatting"], "{listing}");
+    assert!(groups.iter().all(|g| g["extractable"] == true), "{listing}");
+    assert_eq!(
+        groups[0]["moves_along"][0]["name"], "toQty",
+        "the private helper travels with the group"
+    );
+
+    // member types and method groups are separate steps
+    api.post_json(
+        &project.path("/decomposition/preview"),
+        &json!({"base_revision": 1, "classes": ["Report.Row"], "groups": [{"id": "Report#Parsing"}]}),
+    )
+    .await
+    .expect_error(400, "invalid_request");
+    api.post_json(
+        &project.path("/decomposition/preview"),
+        &json!({"base_revision": 1, "groups": [{"id": "Report#Nope"}]}),
+    )
+    .await
+    .expect_error(404, "class_not_found");
+
+    let body = json!({"base_revision": 1, "groups": [{"id": "Report#Parsing"}, {"id": "Report#Formatting", "name": "Printing"}]});
+    let preview = api
+        .post_json(&project.path("/decomposition/preview"), &body)
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(
+        preview["added_files"],
+        json!(["Parsing.java", "Printing.java"])
+    );
+    assert_eq!(preview["changed_files"], json!(["Report.java"]));
+    assert_eq!(preview["extracted"][1]["kind"], "method_group");
+
+    let mut apply = body.clone();
+    apply["preview_sha256"] = preview["preview_sha256"].clone();
+    let applied = api
+        .post_json(&project.path("/decomposition/apply"), &apply)
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(applied["project_kind"], "archive");
+    assert_eq!(applied["file_count"], 3);
+    let host = project.source("Report.java", None).await;
+    assert!(
+        host.contains("Printing.formatAll(Parsing.parseAll("),
+        "{host}"
+    );
+    assert!(!host.contains("static Row parseRow"));
+    let parsing = project.source("Parsing.java", None).await;
+    assert!(
+        parsing.contains("static List<Report.Row> parseAll") && parsing.contains("toQty"),
+        "{parsing}"
+    );
+    let ids = method_ids(&project.methods().await);
+    assert!(
+        ids.contains("Parsing.parseAll(List<String>)")
+            && ids.contains("Printing.formatRow(Report.Row)")
+            && !ids.contains("Report.parseAll(List<String>)"),
+        "{ids}"
+    );
+}

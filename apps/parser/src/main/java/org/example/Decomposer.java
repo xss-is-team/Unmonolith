@@ -88,6 +88,12 @@ final class Decomposer {
             request.path("files").forEach(f -> files.add(f.asText()));
             List<String> classes = new ArrayList<>();
             request.path("classes").forEach(c -> classes.add(c.asText()));
+            List<MethodGroups.Spec> groups = new ArrayList<>();
+            request.path("groups").forEach(g -> {
+                List<String> methods = new ArrayList<>();
+                g.path("methods").forEach(m -> methods.add(m.asText()));
+                groups.add(new MethodGroups.Spec(g.path("id").asText(null), g.path("name").asText(null), methods));
+            });
             String action = request.path("action").asText("discover");
             Map<String, Object> result;
             if (action.equals("discover")) {
@@ -97,7 +103,7 @@ final class Decomposer {
                     err.println("apply requires --output-dir");
                     return 2;
                 }
-                result = apply(Path.of(root), files, level, classes, Path.of(outputDir));
+                result = apply(Path.of(root), files, level, classes, groups, Path.of(outputDir));
             } else {
                 return fail(out, "invalid_request", "Unknown action: " + action);
             }
@@ -114,7 +120,7 @@ final class Decomposer {
         return 1;
     }
 
-    private static Map<String, Object> failure(String code, String message) {
+    static Map<String, Object> failure(String code, String message) {
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("code", code);
         error.put("message", message);
@@ -126,10 +132,10 @@ final class Decomposer {
 
     // ---------- model ----------
 
-    private record Precondition(String id, boolean satisfied, String detail) {
+    record Precondition(String id, boolean satisfied, String detail) {
     }
 
-    private record Edit(int start, int end, String replacement) {
+    record Edit(int start, int end, String replacement) {
     }
 
     private static final class Cand {
@@ -181,6 +187,7 @@ final class Decomposer {
         result.put("status", "completed");
         result.put("rule", RULE);
         result.put("candidates", list);
+        result.put("method_groups", MethodGroups.discover(scan.loaded));
         return result;
     }
 
@@ -270,7 +277,7 @@ final class Decomposer {
         return null;
     }
 
-    private static boolean qualified(SimpleName n) {
+    static boolean qualified(SimpleName n) {
         ASTNode p = n.getParent();
         return p instanceof QualifiedName q && q.getName() == n
                 || p instanceof FieldAccess f && f.getName() == n
@@ -416,10 +423,16 @@ final class Decomposer {
     // ---------- apply ----------
 
     private static Map<String, Object> apply(Path root, List<String> files, String level, List<String> requested,
-            Path outputDir) throws IOException {
+            List<MethodGroups.Spec> groups, Path outputDir) throws IOException {
         Scan scan = scan(root, files, level);
         if (scan.failure != null) {
             return scan.failure;
+        }
+        if (!groups.isEmpty()) {
+            if (!requested.isEmpty()) {
+                return failure("invalid_request", "Select member types (classes) or method groups, not both in one step.");
+            }
+            return MethodGroups.apply(scan.loaded, scan.analysis, root, files, level, groups, outputDir);
         }
         Set<String> chosen = new LinkedHashSet<>();
         if (requested.isEmpty()) {
@@ -525,7 +538,7 @@ final class Decomposer {
         return result;
     }
 
-    private static int lineCount(String text) {
+    static int lineCount(String text) {
         return (int) text.chars().filter(ch -> ch == '\n').count() + (text.endsWith("\n") ? 0 : 1);
     }
 
@@ -550,7 +563,14 @@ final class Decomposer {
 
     /** The member's lines, including its indentation, any javadoc, and one blank line after it. */
     private static Edit removal(String source, Cand c) {
-        int start = c.start();
+        return removal(source, c.start(), c.end());
+    }
+
+    static String packageOf(AstJson json) {
+        return json.unit().getPackage() == null ? "" : json.unit().getPackage().getName().getFullyQualifiedName();
+    }
+
+    static Edit removal(String source, int start, int end) {
         int lineStart = start;
         while (lineStart > 0 && (source.charAt(lineStart - 1) == ' ' || source.charAt(lineStart - 1) == '\t')) {
             lineStart--;
@@ -558,7 +578,6 @@ final class Decomposer {
         if (lineStart > 0 && source.charAt(lineStart - 1) != '\n') {
             lineStart = start; // something else precedes it on the line: remove only the declaration
         }
-        int end = c.end();
         int cursor = end;
         while (cursor < source.length() && (source.charAt(cursor) == ' ' || source.charAt(cursor) == '\t')) {
             cursor++;
@@ -654,7 +673,7 @@ final class Decomposer {
         return out.toString();
     }
 
-    private static String applyEdits(String text, List<Edit> edits) {
+    static String applyEdits(String text, List<Edit> edits) {
         List<Edit> sorted = new ArrayList<>(edits);
         sorted.sort(Comparator.comparingInt(Edit::start).reversed());
         StringBuilder sb = new StringBuilder(text);

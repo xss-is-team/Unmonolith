@@ -1255,10 +1255,28 @@ components:
         analysis_status: {type: string, enum: [completed, partial]}
     DecompositionList:
       type: object
-      required: [revision, rule, candidates]
+      required: [revision, rule, candidates, method_groups]
       properties:
         revision: {type: integer, minimum: 1}
         rule: {type: string, example: extract_static_member_types}
+        method_groups:
+          type: array
+          description: Suggested groups of static methods of one class (first word of the method names) that can move into a class of their own. Private helpers and constants used only by the group travel with it (`moves_along`).
+          items:
+            type: object
+            required: [id, name, host, file, new_file, methods, moves_along, lines, extractable, preconditions, not_extractable_reasons]
+            properties:
+              id: {type: string, example: 'Organizer#Calculations'}
+              name: {type: string, example: Calculations}
+              host: {type: string}
+              file: {type: string}
+              new_file: {type: string}
+              methods: {type: array, items: {type: object, properties: {id: {type: string}, name: {type: string}, lines: {type: integer}}}}
+              moves_along: {type: array, items: {type: object, properties: {id: {type: string}, name: {type: string}, lines: {type: integer}}}}
+              lines: {type: integer}
+              extractable: {type: boolean}
+              preconditions: {type: array, items: {type: object, properties: {id: {type: string}, status: {type: string, enum: [satisfied, violated]}, detail: {type: string}}}}
+              not_extractable_reasons: {type: array, items: {type: string}}
         candidates:
           type: array
           items:
@@ -1292,6 +1310,17 @@ components:
         base_revision: {type: integer, minimum: 1}
         source_level: {type: string, enum: ['8', '11', '17', '21']}
         classes: {type: array, items: {type: string}, description: 'Candidate ids; empty or omitted selects every extractable type'}
+        groups:
+          type: array
+          description: 'Method groups to move instead of member types (not both in one step)'
+          items: {$ref: '#/components/schemas/DecompositionGroup'}
+    DecompositionGroup:
+      type: object
+      description: 'A suggested group by `id` (optionally renamed with `name`) or an explicit list of static method ids with a `name`; all methods of a group belong to one class'
+      properties:
+        id: {type: string, nullable: true}
+        name: {type: string, nullable: true}
+        methods: {type: array, items: {type: string}}
     DecompositionPreview:
       type: object
       required: [base_revision, extracted, diff, preview_sha256, added_files, changed_files, host_lines, validation]
@@ -1323,6 +1352,7 @@ components:
         base_revision: {type: integer, minimum: 1}
         source_level: {type: string, enum: ['8', '11', '17', '21']}
         classes: {type: array, items: {type: string}}
+        groups: {type: array, items: {$ref: '#/components/schemas/DecompositionGroup'}}
         preview_sha256: {type: string}
     DecompositionApplyResponse:
       type: object
