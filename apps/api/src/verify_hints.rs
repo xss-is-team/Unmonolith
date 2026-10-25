@@ -243,6 +243,9 @@ mod tests {
         VerifyTestCase {
             name: "c".to_owned(),
             stdin: stdin.to_owned(),
+            expected_stdout: None,
+            expected_stderr: None,
+            expected_exit_code: None,
         }
     }
 

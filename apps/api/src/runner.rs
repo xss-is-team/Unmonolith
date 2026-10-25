@@ -87,6 +87,11 @@ pub struct VerifyRequest {
     /// Archive projects only: Java language level of the sources (8, 11, 17 or 21; default 21).
     #[serde(default)]
     pub source_level: Option<String>,
+    /// How many times each revision runs every scenario (1..=5, default 1). With more than one run a
+    /// revision whose own runs disagree is reported as unstable instead of as a behavior difference.
+    #[serde(default)]
+    #[schema(minimum = 1, maximum = 5)]
+    pub repeats: Option<u8>,
 }
 
 /// What to compile in a runner container: the Java files of one revision (container path = project path).
@@ -114,6 +119,13 @@ impl CompileTarget {
 pub struct VerifyTestCase {
     pub name: String,
     pub stdin: String,
+    /// Optional expectation checked against the baseline run (exact UTF-8 text).
+    #[serde(default)]
+    pub expected_stdout: Option<String>,
+    #[serde(default)]
+    pub expected_stderr: Option<String>,
+    #[serde(default)]
+    pub expected_exit_code: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -128,6 +140,13 @@ pub struct VerificationReport {
     pub executed_test_cases: usize,
     pub test_cases: Vec<TestCaseResult>,
     pub explanation: String,
+    /// Runs per revision and scenario that were requested; reports stored before this field read as 1.
+    #[serde(default = "one_run")]
+    pub repeats: u32,
+}
+
+fn one_run() -> u32 {
+    1
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
@@ -135,6 +154,9 @@ pub struct VerificationReport {
 pub enum VerificationStatus {
     Passed,
     Failed,
+    /// No scenario differed between the revisions, but at least one revision disagreed with itself
+    /// across repeated runs, so nothing can be concluded.
+    Unstable,
     CompilationFailed,
 }
 
@@ -178,6 +200,12 @@ pub struct TestCaseResult {
     pub name: String,
     pub passed: bool,
     pub mismatches: Vec<BehaviorMismatch>,
+    /// Expectations of the scenario that the baseline run did not meet (empty when none were given).
+    #[serde(default)]
+    pub expectation_failures: Vec<BehaviorMismatch>,
+    /// Runs per revision that actually happened (a timed-out or overflowing run is not repeated).
+    #[serde(default = "one_run")]
+    pub runs: u32,
     pub baseline: ExecutionObservation,
     pub candidate: ExecutionObservation,
 }
@@ -196,6 +224,8 @@ pub enum MismatchField {
     ExitCode,
     TimedOut,
     OutputOverflow,
+    /// One revision produced different observations on repeated runs of the same input.
+    Unstable,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -266,6 +296,7 @@ impl JavaRunner {
         candidate_revision: u64,
         candidate_target: &CompileTarget,
         test_cases: &[VerifyTestCase],
+        repeats: u32,
     ) -> Result<VerificationReport, ApiError> {
         let mut baseline = self.compile_revision(baseline_target).await?;
         let mut candidate = match self.compile_revision(candidate_target).await {
@@ -290,6 +321,7 @@ impl JavaRunner {
                 executed_test_cases: 0,
                 test_cases: Vec::new(),
                 explanation: "verification was not run because at least one revision is not a compilable Java program with a conventional main entry point".to_owned(),
+                repeats,
             });
         }
 
@@ -306,57 +338,111 @@ impl JavaRunner {
         let mut results = Vec::with_capacity(test_cases.len());
 
         for (index, test_case) in test_cases.iter().enumerate() {
-            let baseline_observation = self
-                .run_case(
-                    baseline
-                        .container
-                        .as_ref()
-                        .expect("completed compilation has a container"),
-                    &baseline_main,
-                    test_case.stdin.as_bytes(),
-                )
-                .await?;
-            let candidate_observation = self
-                .run_case(
-                    candidate
-                        .container
-                        .as_ref()
-                        .expect("completed compilation has a container"),
-                    &candidate_main,
-                    test_case.stdin.as_bytes(),
-                )
-                .await?;
-            let baseline_needs_restart =
-                baseline_observation.timed_out || baseline_observation.output_overflow;
-            let candidate_needs_restart =
-                candidate_observation.timed_out || candidate_observation.output_overflow;
-            let mismatches = compare_observations(&baseline_observation, &candidate_observation);
+            let last_case = index + 1 == test_cases.len();
+            let mut baseline_runs: Vec<RawObservation> = Vec::new();
+            let mut candidate_runs: Vec<RawObservation> = Vec::new();
+            for run in 0..repeats {
+                let last_run = last_case && run + 1 == repeats;
+                // a side whose first run was cut off is not repeated: more runs would only cost time
+                let baseline_open = baseline_runs.first().is_none_or(|first| !first.cut_off());
+                let candidate_open = candidate_runs.first().is_none_or(|first| !first.cut_off());
+                if !baseline_open && !candidate_open {
+                    break;
+                }
+                if baseline_open {
+                    let observation = self
+                        .run_case(
+                            baseline
+                                .container
+                                .as_ref()
+                                .expect("completed compilation has a container"),
+                            &baseline_main,
+                            test_case.stdin.as_bytes(),
+                        )
+                        .await?;
+                    let restart = observation.cut_off();
+                    baseline_runs.push(observation);
+                    if restart && !last_run {
+                        cleanup_optional(&mut baseline.container).await?;
+                        baseline = self.compile_revision(baseline_target).await?;
+                        ensure_recompile_succeeded(&baseline.report)?;
+                    }
+                }
+                if candidate_open {
+                    let observation = self
+                        .run_case(
+                            candidate
+                                .container
+                                .as_ref()
+                                .expect("completed compilation has a container"),
+                            &candidate_main,
+                            test_case.stdin.as_bytes(),
+                        )
+                        .await?;
+                    let restart = observation.cut_off();
+                    candidate_runs.push(observation);
+                    if restart && !last_run {
+                        cleanup_optional(&mut candidate.container).await?;
+                        candidate = self.compile_revision(candidate_target).await?;
+                        ensure_recompile_succeeded(&candidate.report)?;
+                    }
+                }
+            }
+            let runs = baseline_runs.len().max(candidate_runs.len()) as u32;
+            let mut unstable = Vec::new();
+            for (side, observations) in
+                [("baseline", &baseline_runs), ("candidate", &candidate_runs)]
+            {
+                if observations
+                    .iter()
+                    .skip(1)
+                    .any(|other| !same_observation(&observations[0], other))
+                {
+                    unstable.push(BehaviorMismatch {
+                        field: MismatchField::Unstable,
+                        explanation: format!(
+                            "the {side} revision produced different observations across {} runs of the same input, so a comparison says nothing",
+                            observations.len()
+                        ),
+                    });
+                }
+            }
+            // differences between the first runs of a self-disagreeing revision are noise, not findings
+            let mismatches = if unstable.is_empty() {
+                compare_observations(&baseline_runs[0], &candidate_runs[0])
+            } else {
+                unstable
+            };
+            let expectation_failures = check_expectations(test_case, &baseline_runs[0]);
+            let baseline_observation = baseline_runs.swap_remove(0);
+            let candidate_observation = candidate_runs.swap_remove(0);
             results.push(TestCaseResult {
                 name: test_case.name.clone(),
-                passed: mismatches.is_empty(),
+                passed: mismatches.is_empty() && expectation_failures.is_empty(),
                 mismatches,
+                expectation_failures,
+                runs,
                 baseline: baseline_observation.into_public(),
                 candidate: candidate_observation.into_public(),
             });
-
-            if index + 1 < test_cases.len() && baseline_needs_restart {
-                cleanup_optional(&mut baseline.container).await?;
-                baseline = self.compile_revision(baseline_target).await?;
-                ensure_recompile_succeeded(&baseline.report)?;
-            }
-            if index + 1 < test_cases.len() && candidate_needs_restart {
-                cleanup_optional(&mut candidate.container).await?;
-                candidate = self.compile_revision(candidate_target).await?;
-                ensure_recompile_succeeded(&candidate.report)?;
-            }
         }
 
         cleanup_optional(&mut baseline.container).await?;
         cleanup_optional(&mut candidate.container).await?;
         let passed = results.iter().all(|result| result.passed);
+        let only_unstable = !passed
+            && results.iter().all(|result| {
+                result.expectation_failures.is_empty()
+                    && result
+                        .mismatches
+                        .iter()
+                        .all(|mismatch| matches!(mismatch.field, MismatchField::Unstable))
+            });
         Ok(VerificationReport {
             status: if passed {
                 VerificationStatus::Passed
+            } else if only_unstable {
+                VerificationStatus::Unstable
             } else {
                 VerificationStatus::Failed
             },
@@ -368,9 +454,12 @@ impl JavaRunner {
             test_cases: results,
             explanation: if passed {
                 "all provided test cases produced matching observations; this is not a proof of behavioral equivalence".to_owned()
+            } else if only_unstable {
+                "a revision gave different results on repeated runs of the same input (non-deterministic output such as time or random numbers); the comparison is inconclusive".to_owned()
             } else {
-                "one or more provided test cases produced different observable behavior".to_owned()
+                "one or more provided test cases produced different observable behavior or missed their expectations".to_owned()
             },
+            repeats,
         })
     }
 
@@ -1032,6 +1121,11 @@ struct RawObservation {
 }
 
 impl RawObservation {
+    /// A run that hit the time or output limit leaves a container that must be recreated.
+    fn cut_off(&self) -> bool {
+        self.timed_out || self.output_overflow
+    }
+
     fn into_public(self) -> ExecutionObservation {
         ExecutionObservation {
             stdout: captured_stream(self.stdout),
@@ -1142,6 +1236,46 @@ fn class_name(output: &[u8], class_filename: &str) -> Option<String> {
         return None;
     }
     Some(parts.join("."))
+}
+
+fn same_observation(left: &RawObservation, right: &RawObservation) -> bool {
+    left.stdout.bytes == right.stdout.bytes
+        && left.stderr.bytes == right.stderr.bytes
+        && left.exit_code == right.exit_code
+        && left.timed_out == right.timed_out
+        && left.output_overflow == right.output_overflow
+}
+
+fn check_expectations(case: &VerifyTestCase, baseline: &RawObservation) -> Vec<BehaviorMismatch> {
+    let mut failures = Vec::new();
+    if let Some(expected) = &case.expected_stdout {
+        if baseline.stdout.bytes != expected.as_bytes() {
+            failures.push(BehaviorMismatch {
+                field: MismatchField::Stdout,
+                explanation: "stdout of the baseline run differs from expected_stdout".to_owned(),
+            });
+        }
+    }
+    if let Some(expected) = &case.expected_stderr {
+        if baseline.stderr.bytes != expected.as_bytes() {
+            failures.push(BehaviorMismatch {
+                field: MismatchField::Stderr,
+                explanation: "stderr of the baseline run differs from expected_stderr".to_owned(),
+            });
+        }
+    }
+    if let Some(expected) = case.expected_exit_code {
+        if baseline.exit_code != Some(expected) {
+            failures.push(BehaviorMismatch {
+                field: MismatchField::ExitCode,
+                explanation: format!(
+                    "exit code of the baseline run is {:?}, expected {expected}",
+                    baseline.exit_code
+                ),
+            });
+        }
+    }
+    failures
 }
 
 fn compare_observations(

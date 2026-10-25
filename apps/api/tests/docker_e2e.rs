@@ -1006,3 +1006,118 @@ async fn decomposed_monolith_behaves_like_the_original_and_can_then_be_optimized
     );
     assert_eq!(merge["baseline"]["stdout"], merge["candidate"]["stdout"]);
 }
+
+const NONDETERMINISTIC: &str = r#"import java.util.Scanner;
+
+public class Main {
+    public static void main(String[] args) {
+        Scanner in = new Scanner(System.in);
+        String mode = in.hasNext() ? in.next() : "";
+        if (mode.equals("time")) {
+            System.out.println(System.nanoTime());
+        } else {
+            System.out.println("fixed " + mode);
+        }
+        System.exit(mode.equals("fail") ? 3 : 0);
+    }
+}
+"#;
+
+#[tokio::test]
+#[ignore = "needs Docker and the runner image"]
+async fn repeated_runs_tell_nondeterminism_from_a_behaviour_change_and_expectations_are_checked() {
+    let server = TestServer::start_docker().await;
+    let api = server.client().await;
+    let project = api
+        .create_project("Main.java", NONDETERMINISTIC.as_bytes().to_vec())
+        .await;
+    project.analyze_single_file().await;
+    let body = |repeats: Value, cases: Value| json!({"baseline_revision": 1, "candidate_revision": 1, "repeats": repeats, "test_cases": cases});
+    let time = json!([{"name": "time", "stdin": "time"}]);
+
+    // one run: the same program against itself looks like a behaviour change (false alarm) and says so
+    let once = project
+        .verify(&body(Value::Null, time.clone()))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(once["status"], "failed", "{once}");
+    assert_eq!(once["repeats"], 1);
+    assert!(once["not_covered"].to_string().contains("non-determinism"));
+
+    // several runs: the revision disagrees with itself, so the result is inconclusive, not "different"
+    let repeated = project
+        .verify(&body(json!(3), time))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(repeated["status"], "unstable", "{repeated}");
+    assert_eq!(repeated["behaviorally_verified"], false);
+    assert_eq!(repeated["repeats"], 3);
+    let case = &repeated["test_cases"][0];
+    assert_eq!(case["runs"], 3);
+    assert_eq!(case["passed"], false);
+    assert!(
+        case["mismatches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["field"] == "unstable"),
+        "{case}"
+    );
+    assert!(!repeated["not_covered"]
+        .to_string()
+        .contains("non-determinism"));
+
+    // a deterministic scenario passes with repeats, and its expectations are checked against the baseline
+    let met = project
+        .verify(&body(
+            json!(2),
+            json!([{"name": "fixed", "stdin": "x", "expected_stdout": "fixed x\n", "expected_exit_code": 0}]),
+        ))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(met["status"], "passed", "{met}");
+    assert_eq!(met["behaviorally_verified"], true);
+    assert_eq!(met["test_cases"][0]["runs"], 2);
+    assert!(!met["not_covered"]
+        .to_string()
+        .contains("absolute correctness"));
+
+    let missed = project
+        .verify(&body(
+            json!(2),
+            json!([{"name": "fail", "stdin": "fail", "expected_stdout": "other\n", "expected_exit_code": 0}]),
+        ))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(missed["status"], "failed", "{missed}");
+    assert_eq!(missed["behaviorally_verified"], false);
+    let failures = missed["test_cases"][0]["expectation_failures"]
+        .as_array()
+        .unwrap();
+    assert_eq!(failures.len(), 2, "{missed}");
+    assert!(missed["test_cases"][0]["mismatches"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    // the plain default (no expectations, one run) still passes and now says what it cannot show
+    let plain = project
+        .verify(&body(Value::Null, json!([{"name": "fixed", "stdin": "x"}])))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(plain["status"], "passed");
+    assert!(plain["not_covered"]
+        .to_string()
+        .contains("absolute correctness"));
+
+    // repeats out of range
+    project
+        .verify(&body(json!(6), json!([{"name": "x", "stdin": ""}])))
+        .await
+        .expect_status(400);
+}

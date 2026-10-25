@@ -123,6 +123,14 @@ the same named UTF-8 stdin fixtures. Both revisions are compiled with
 runner locates the resulting top-level class and requires a conventional
 `public static void main(String[] args)` before executing any cases.
 
+With `repeats` of 2-5 every scenario runs that many times per revision. A revision that
+disagrees with itself (time, random numbers) yields the case mismatch `unstable` and the report
+status `unstable`: the comparison is inconclusive and is never `passed`. Optional
+`expected_stdout`/`expected_stderr`/`expected_exit_code` on a scenario are checked against the
+baseline run and reported as `expectation_failures`. The stored report carries `not_covered`, the
+list of things a result cannot show (other inputs, unreached code, timing, non-determinism when
+`repeats` is 1, absolute correctness without expectations).
+
 For every revision, the API creates an ephemeral container using direct Docker
 arguments. It runs as UID/GID 65532, has no network, a read-only root filesystem,
 writable size-limited `/work` and `/tmp` tmpfs filesystems, dropped capabilities,

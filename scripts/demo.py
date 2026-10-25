@@ -203,7 +203,7 @@ def main():
         print(f"demo: optimization applied -> revision {candidate}; method is now {after['time_complexity']}")
 
         verify = api.call("POST", p + "/verify", {
-            "baseline_revision": 1, "candidate_revision": candidate,
+            "baseline_revision": 1, "candidate_revision": candidate, "repeats": 2,
             "test_cases": [{"name": n, "stdin": s} for n, s in CASES]})
         passed = sum(1 for c in verify["test_cases"] if c["passed"])
         print(f"demo: verify {verify['status']} ({passed}/{len(verify['test_cases'])} scenarios), "
@@ -222,7 +222,7 @@ def main():
         split = api.call("POST", p + "/decomposition/apply", {
             "base_revision": candidate, "preview_sha256": split_preview["preview_sha256"]})
         split_verify = api.call("POST", p + "/verify", {
-            "baseline_revision": 1, "candidate_revision": split["revision"], "main_class": "Main",
+            "baseline_revision": 1, "candidate_revision": split["revision"], "main_class": "Main", "repeats": 2,
             "test_cases": [{"name": n, "stdin": s} for n, s in CASES]})
         print(f"demo: decomposition -> revision {split['revision']} ({split['file_count']} files, Main.java "
               f"{split_preview['host_lines']['Main.java']['before']} -> {split_preview['host_lines']['Main.java']['after']} lines); "

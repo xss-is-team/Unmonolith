@@ -1498,6 +1498,7 @@ components:
         source_level: {type: string, enum: ['8', '11', '17', '21'], description: 'Archive projects: javac --release'}
         baseline_revision: {type: integer, minimum: 1}
         candidate_revision: {type: integer, minimum: 1}
+        repeats: {type: integer, minimum: 1, maximum: 5, nullable: true, description: 'Runs of every scenario per revision (default 1). With 2 or more, a revision whose own runs disagree makes the scenario `unstable` instead of a behavior difference. A run that timed out or overflowed is not repeated.'}
         test_cases:
           type: array
           minItems: 1
@@ -1511,11 +1512,14 @@ components:
       properties:
         name: {type: string, minLength: 1, maxLength: 64}
         stdin: {type: string, description: 'UTF-8 stdin, at most 65536 bytes'}
+        expected_stdout: {type: string, nullable: true, description: 'Exact expected stdout of the baseline run (at most 65536 bytes); a mismatch is reported in `expectation_failures`'}
+        expected_stderr: {type: string, nullable: true, description: 'Exact expected stderr of the baseline run'}
+        expected_exit_code: {type: integer, nullable: true, description: 'Expected exit code of the baseline run'}
     VerificationReport:
       type: object
       required: [status, baseline_revision, candidate_revision, baseline_compilation, candidate_compilation, executed_test_cases, test_cases, explanation]
       properties:
-        status: {type: string, enum: [passed, failed, compilation_failed]}
+        status: {type: string, enum: [passed, failed, unstable, compilation_failed], description: '`unstable`: no scenario differed between the revisions but at least one revision disagreed with itself across repeated runs, so the comparison is inconclusive'}
         baseline_revision: {type: integer, minimum: 1}
         candidate_revision: {type: integer, minimum: 1}
         baseline_compilation: {$ref: '#/components/schemas/CompilationResult'}
@@ -1525,6 +1529,7 @@ components:
           type: array
           items: {$ref: '#/components/schemas/TestCaseResult'}
         explanation: {type: string}
+        repeats: {type: integer, minimum: 1, description: 'Runs per revision and scenario that were requested; reports stored before this field read as 1'}
     PersistedVerificationReport:
       allOf:
         - {$ref: '#/components/schemas/VerificationReport'}
@@ -1546,6 +1551,10 @@ components:
                 changed method is not reachable from main in the static call graph), `reachability_unknown` (a
                 revision is not analyzed or has no project graph or main method).
               items: {$ref: '#/components/schemas/VerifyWarning'}
+            not_covered:
+              type: array
+              description: What this result does not cover (other inputs, unreached code, timing, non-determinism when `repeats` is 1, absolute correctness when no scenario has an expectation). Reports stored before this field existed read as empty.
+              items: {type: string}
     VerifyWarning:
       type: object
       required: [code, message]
@@ -1588,6 +1597,11 @@ components:
         mismatches:
           type: array
           items: {$ref: '#/components/schemas/BehaviorMismatch'}
+        expectation_failures:
+          type: array
+          description: Expectations of the scenario that the baseline run did not meet; empty when none were given or all were met.
+          items: {$ref: '#/components/schemas/BehaviorMismatch'}
+        runs: {type: integer, minimum: 1, description: 'Runs per revision that actually happened'}
         baseline: {$ref: '#/components/schemas/ExecutionObservation'}
         candidate: {$ref: '#/components/schemas/ExecutionObservation'}
     ExecutionObservation:
@@ -1603,5 +1617,5 @@ components:
       type: object
       required: [field, explanation]
       properties:
-        field: {type: string, enum: [stdout, stderr, exit_code, timed_out, output_overflow]}
+        field: {type: string, enum: [stdout, stderr, exit_code, timed_out, output_overflow, unstable]}
         explanation: {type: string}

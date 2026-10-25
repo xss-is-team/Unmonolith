@@ -959,6 +959,9 @@ struct PersistedVerificationReport {
     /// They never change `behaviorally_verified`; reports stored before this field existed read as empty.
     #[serde(default)]
     warnings: Vec<VerifyWarning>,
+    /// What this result does not cover, so a green status is not read as more than it is.
+    #[serde(default)]
+    not_covered: Vec<String>,
     #[serde(flatten)]
     report: VerificationReport,
 }
@@ -3222,6 +3225,7 @@ async fn verify_project(
     let project_id = parse_project_id(&project_id)?;
     let Json(request) = request.map_err(|_| ApiError::bad_request("invalid verify request"))?;
     validate_verify_request(&request)?;
+    let repeats = u32::from(request.repeats.unwrap_or(1));
     let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
     let (project, directory) = project::load(&session_dir, project_id).await?;
     let main_class = resolve_main_class(
@@ -3257,9 +3261,11 @@ async fn verify_project(
             request.candidate_revision,
             &candidate_target,
             &request.test_cases,
+            repeats,
         )
         .await?;
     let behaviorally_verified = behaviorally_verified(&report, request.test_cases.len())?;
+    let not_covered = not_covered_notes(&request.test_cases, repeats);
     let mut warnings = verify_hints::scenario_warnings(&request.test_cases);
     let baseline_analysis = load_analysis(&directory, request.baseline_revision)
         .await
@@ -3279,6 +3285,7 @@ async fn verify_project(
         requested_test_cases: request.test_cases.len(),
         behaviorally_verified,
         warnings,
+        not_covered,
         report,
     };
     let bytes = serde_json::to_vec_pretty(&persisted).map_err(|error| {
@@ -3499,6 +3506,26 @@ async fn get_verification_report(
     Ok(Json(report))
 }
 
+/// Fixed list of what a verify result cannot say, plus the parts that depend on the request.
+fn not_covered_notes(cases: &[VerifyTestCase], repeats: u32) -> Vec<String> {
+    let mut notes = vec![
+        "inputs other than the given stdin scenarios (no command-line arguments, environment variables, files or network)".to_owned(),
+        "code that none of the scenarios reaches".to_owned(),
+        "timing and resource use: only equal output, exit code and the time limit are compared".to_owned(),
+    ];
+    if repeats < 2 {
+        notes.push("non-determinism: each scenario ran once per revision, so output that varies from run to run (time, random numbers) is not detected; use repeats of 2 or more".to_owned());
+    }
+    if cases.iter().all(|case| {
+        case.expected_stdout.is_none()
+            && case.expected_stderr.is_none()
+            && case.expected_exit_code.is_none()
+    }) {
+        notes.push("absolute correctness: the revisions are only compared with each other, no scenario states an expected result".to_owned());
+    }
+    notes
+}
+
 fn validate_verify_request(request: &VerifyRequest) -> Result<(), ApiError> {
     const MAX_CASES: usize = 20;
     const MAX_STDIN_BYTES: usize = 64 * 1024;
@@ -3506,6 +3533,9 @@ fn validate_verify_request(request: &VerifyRequest) -> Result<(), ApiError> {
 
     if request.baseline_revision == 0 || request.candidate_revision == 0 {
         return Err(ApiError::bad_request("revision numbers must be positive"));
+    }
+    if !(1..=5).contains(&request.repeats.unwrap_or(1)) {
+        return Err(ApiError::bad_request("repeats must be between 1 and 5"));
     }
     if request.test_cases.is_empty() || request.test_cases.len() > MAX_CASES {
         return Err(ApiError::bad_request(format!(
@@ -3527,6 +3557,16 @@ fn validate_verify_request(request: &VerifyRequest) -> Result<(), ApiError> {
             return Err(ApiError::bad_request(
                 "a test case stdin exceeds the 65536-byte limit",
             ));
+        }
+        for expected in [&test_case.expected_stdout, &test_case.expected_stderr]
+            .into_iter()
+            .flatten()
+        {
+            if expected.len() > MAX_STDIN_BYTES {
+                return Err(ApiError::bad_request(
+                    "an expected output exceeds the 65536-byte limit",
+                ));
+            }
         }
         total = total.saturating_add(test_case.stdin.len());
     }
