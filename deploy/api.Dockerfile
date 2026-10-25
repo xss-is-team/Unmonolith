@@ -11,6 +11,8 @@ WORKDIR /src/apps/api
 COPY apps/api/Cargo.toml apps/api/Cargo.lock ./
 COPY apps/api/openapi.yaml openapi.yaml
 COPY apps/api/src src
+# the benchmark harness is compiled into the API (include_str!("../../runner/Bench.java"))
+COPY apps/runner/Bench.java /src/apps/runner/Bench.java
 RUN cargo build --release
 
 FROM eclipse-temurin:21-jre-jammy
