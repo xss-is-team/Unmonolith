@@ -32,6 +32,9 @@ import {
   type ProjectGraphResponse,
   type SourceRange,
 } from "@/lib/api";
+import { RoutedEdge, elkRoutes, type Point } from "@/components/routed-edge";
+
+const edgeTypes = { routed: RoutedEdge };
 import {
   resolveCfgSelector,
   toProjectOverviewModel,
@@ -60,7 +63,7 @@ type TypeNodeData = {
   selectType: () => void;
 };
 type FlowNode = Node<TypeNodeData, "project-type">;
-type ProjectEdge = Edge & { data: { relationship: ProjectOverviewRelationship } };
+type ProjectEdge = Edge & { data: { relationship: ProjectOverviewRelationship; points: Point[] | null } };
 
 const ProjectTypeNode = memo(function ProjectTypeNode({ data }: NodeProps<FlowNode>) {
   return (
@@ -144,6 +147,7 @@ export function ProjectGraphViewer({
   }, [navigationKey]);
   const [edgeFocus, setEdgeFocus] = useState<{ id: string; pinned: boolean } | null>(null);
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const [routes, setRoutes] = useState<Map<string, Point[]>>(new Map());
 
   const graph = graphRequest.data?.graph ?? null;
   const overview = useMemo(() => graph ? toProjectOverviewModel(graph) : null, [graph]);
@@ -230,6 +234,11 @@ export function ProjectGraphViewer({
         "elk.spacing.nodeNode": "28",
         "elk.padding": "[top=24;left=24;bottom=24;right=24]",
         "elk.layered.cycleBreaking.strategy": "GREEDY",
+        "elk.spacing.edgeEdge": "14",
+        "elk.spacing.edgeNode": "18",
+        "elk.layered.spacing.edgeEdgeBetweenLayers": "12",
+        "elk.layered.spacing.edgeNodeBetweenLayers": "16",
+        "elk.layered.mergeEdges": "false",
       },
       children: filteredTypes.map((node) => ({ id: node.id, width: NODE_WIDTH, height: NODE_HEIGHT })),
       edges: projectedRelationships.map((edge, index) => ({
@@ -239,6 +248,8 @@ export function ProjectGraphViewer({
       })),
     })).then((layout) => {
       if (!cancelled) {
+        const routes = elkRoutes(layout.edges);
+        setRoutes(new Map(projectedRelationships.map((edge, index) => [relationshipId(edge), routes.get(`project-edge-${index}`) ?? null] as const).filter((entry): entry is [string, Point[]] => entry[1] !== null)));
         setPositions(new Map(layout.children?.map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]) ?? []));
       }
     }).catch(() => {
@@ -288,7 +299,7 @@ export function ProjectGraphViewer({
       id,
       source: edge.from,
       target: edge.to,
-      type: "smoothstep" as const,
+      type: "routed" as const,
       markerStart: edge.directions.length > 1
         ? { type: MarkerType.ArrowClosed, color: relationshipColor(edge) }
         : undefined,
@@ -298,9 +309,9 @@ export function ProjectGraphViewer({
         strokeWidth: focused ? 3 : 1.4,
         opacity: dimmed ? 0.18 : focused ? 1 : 0.8,
       },
-      data: { relationship: edge },
+      data: { relationship: edge, points: routes.get(id) ?? null },
     };
-  }), [projectedRelationships, focusedEdgeId, selectedType]);
+  }), [projectedRelationships, focusedEdgeId, selectedType, routes]);
 
   function openTypeNode(_event: MouseEvent, node: FlowNode) {
     const type = filteredTypes.find((item) => item.id === node.id);
@@ -412,6 +423,7 @@ export function ProjectGraphViewer({
             nodes={flowNodes}
             edges={flowEdges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             fitView
             fitViewOptions={{ padding: 0.04, minZoom: 0.3, maxZoom: 1.2 }}
             onNodeClick={selectNode}
