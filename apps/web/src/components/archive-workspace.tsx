@@ -15,6 +15,7 @@ import { DecompositionPanel } from "@/components/decomposition-panel";
 import { DiffView } from "@/components/diff-view";
 import { HistoryPanel } from "@/components/history-panel";
 import { PreviewDialog } from "@/components/preview-dialog";
+import { loadScenarios, saveScenarios, suggestScenarios } from "@/lib/scenarios";
 import { Splitter, clamp } from "@/components/splitter";
 import { ruAssumption, ruComplexityNote, ruNotCovered, ruPrecondition, ruProposalSummary, ruRuleTitle, ruText, ruVerdict, ruWarning } from "@/lib/ru";
 import { StepBar, type Step } from "@/components/step-bar";
@@ -102,6 +103,31 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   const [candidateRevision, setCandidateRevision] = useState(initialRevision);
   const [cases, setCases] = useState<VerifyTestCase[]>([{ name: "Сценарий", stdin: "" }]);
   const [verifyReport, setVerifyReport] = useState<VerificationReport | null>(null);
+  /** The automatic quality gate: after every new revision the saved scenarios compare REV 1 with it. */
+  const [gate, setGate] = useState<{ revision: number; state: "running" | "passed" | "failed" | "unstable" | "error" | "none"; passed?: number; total?: number; text?: string } | null>(null);
+  const scenariosLoaded = useRef(false);
+  useEffect(() => {
+    void (async () => {
+      const stored = loadScenarios(initialProject.id);
+      if (stored) {
+        setCases(stored);
+      } else {
+        const sources = [initialSource];
+        for (const file of initialFiles.filter((item) => item.kind === "java" && item.path !== initialFilePath).slice(0, 30)) {
+          try { sources.push((await getProjectFile(initialProject.id, file.path, initialRevision)).source); } catch { /* a missing file only weakens the suggestion */ }
+        }
+        const suggested = suggestScenarios(sources);
+        if (suggested.some((item) => item.stdin.trim())) {
+          setCases(suggested);
+          setLogLines((lines) => [...lines, { time: logTime(), kind: "info", text: `Сценарии проверки предложены по коду: ${suggested.length}. Они запускаются автоматически после каждой правки (вкладка «Проверка»).` }]);
+        }
+      }
+      scenariosLoaded.current = true;
+    })();
+  }, [initialProject.id, initialSource, initialFiles, initialFilePath, initialRevision]);
+  useEffect(() => {
+    if (scenariosLoaded.current) saveScenarios(project.id, cases);
+  }, [project.id, cases]);
   const [verifyError, setVerifyError] = useState("");
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [benchmarkReport, setBenchmarkReport] = useState<BenchmarkReport | null>(null);
@@ -222,6 +248,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
       const manifest = await getProjectFiles(project.id, updated.revision);
       setFiles(manifest.files);
       await analyzeRevision(updated.revision);
+      void runQualityGate(updated.revision);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -257,6 +284,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
       setBenchmarkReport(null);
       setRevisions(await getProjectRevisions(project.id));
       await analyzeRevision(updated.revision);
+      void runQualityGate(updated.revision);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -312,6 +340,32 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
       setVerifyError(errorMessage(cause));
     } finally {
       setVerifyBusy(false);
+    }
+  }
+
+  /** Quality gate of the case: every new revision is compared with REV 1 on the saved scenarios, without a click. */
+  async function runQualityGate(target: number) {
+    if (target <= 1) return;
+    const usable = cases.filter((item) => item.name.trim());
+    if (!usable.some((item) => item.stdin.trim())) {
+      setGate({ revision: target, state: "none" });
+      return;
+    }
+    setGate({ revision: target, state: "running" });
+    setLogLines((lines) => [...lines, { time: logTime(), kind: "info", text: `Автопроверка: REV 1 → REV ${target}, сценариев ${usable.length}…` }]);
+    try {
+      const report = await verifyRevisions(project.id, 1, target, usable, { main_class: mainClass || null, source_level: sourceLevel, repeats: 1 });
+      const passedCount = report.test_cases.filter((item) => item.passed).length;
+      const state = report.behaviorally_verified ? "passed" : report.status === "unstable" ? "unstable" : "failed";
+      setGate({ revision: target, state, passed: passedCount, total: report.test_cases.length });
+      setBaselineRevision(1);
+      setCandidateRevision(target);
+      setVerifyReport(report);
+      setPanes((current) => ({ ...current, tests: true }));
+      setLogLines((lines) => [...lines, { time: logTime(), kind: state === "passed" ? "ok" : "error", text: state === "passed" ? `Автопроверка пройдена: поведение REV ${target} совпадает с REV 1 (${passedCount} из ${report.test_cases.length})` : report.status === "compilation_failed" ? `Автопроверка: REV ${target} не компилируется` : `Автопроверка: различия (${passedCount} из ${report.test_cases.length} совпало)` }]);
+    } catch (cause) {
+      setGate({ revision: target, state: "error", text: errorMessage(cause) });
+      setLogLines((lines) => [...lines, { time: logTime(), kind: "error", text: `Автопроверка не запущена: ${errorMessage(cause)}` }]);
     }
   }
 
@@ -413,6 +467,13 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
         <Link href="/" className="flex shrink-0 items-center gap-2 rounded px-1 hover:bg-slate-800/60" title="На главную: загрузить другой проект"><LayoutGrid size={20} className="shrink-0 text-cyan-400" /><strong className="whitespace-nowrap text-[15px] text-slate-100">Визуальная среда программирования</strong></Link>
         
         <span className="whitespace-nowrap rounded bg-slate-800 px-2 py-1 font-mono text-[11px] text-slate-400" data-testid="revision">REV {revision}</span>
+        {gate && gate.revision === revision ? (
+          <button type="button" data-testid="quality-gate" title={gate.text ?? "Автоматическая проверка поведения: REV 1 против текущей ревизии на сохранённых сценариях"} onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}
+            className={`inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded border px-2 text-[12px] ${gate.state === "passed" ? "border-emerald-700 bg-emerald-500/15 text-emerald-200" : gate.state === "running" ? "border-slate-700 text-slate-300" : gate.state === "none" ? "border-amber-800 text-amber-200" : "border-rose-700 bg-rose-500/15 text-rose-200"}`}>
+            {gate.state === "running" ? <LoaderCircle className="spin" size={13} /> : <ShieldCheck size={13} />}
+            {gate.state === "passed" ? `Поведение сохранено · ${gate.passed}/${gate.total}` : gate.state === "running" ? "Автопроверка…" : gate.state === "none" ? "Нет сценариев проверки" : gate.state === "unstable" ? "Вывод нестабилен" : gate.state === "error" ? "Автопроверка не запущена" : `Поведение изменилось · ${gate.passed}/${gate.total}`}
+          </button>
+        ) : null}
         <span className={`text-[12px] ${isDirty ? "text-amber-300" : "text-emerald-300"}`} role="status">{isDirty ? "Не сохранено" : "Сохранено"}</span>
         <Button variant="outline" size="sm" onClick={() => void saveFile()} disabled={!isDirty || busy}>{busy ? <LoaderCircle className="spin" /> : <Save />} Сохранить</Button>
         <div className="ml-auto flex items-center gap-1.5">
@@ -522,7 +583,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
         <div className="fixed inset-x-0 bottom-0 top-[78px] z-30 grid grid-rows-[40px_minmax(0,1fr)] bg-[#0a1220]" role="dialog" aria-label={overlayTitle}>
           <header className="flex items-center gap-3 border-b border-slate-700 bg-[#0d1625] px-4"><strong className="text-[14px] text-slate-100">{overlayTitle}</strong><button className="ml-auto rounded border border-slate-700 px-3 py-1 text-[12px] text-slate-200 hover:border-cyan-700" type="button" onClick={() => { setWorkbench("code"); setPanes((current) => (current.code ? current : { ...current, code: true })); }}>Код</button></header>
           <div className="min-h-0 overflow-auto">
-        {workbench === "verify" ? <VerificationWorkbench revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} cases={cases} onCases={setCases} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} repeats={repeats} onRepeats={setRepeats} report={verifyReport} error={verifyError} busy={verifyBusy} onRun={() => void runFunctionalVerification()} /> : null}
+        {workbench === "verify" ? <VerificationWorkbench onSuggest={() => void (async () => { const sources = [source]; for (const file of javaFiles.filter((item) => item.path !== activeFile).slice(0, 30)) { try { sources.push((await getProjectFile(project.id, file.path, revision)).source); } catch { /* skip */ } } setCases(suggestScenarios(sources)); })()} revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} cases={cases} onCases={setCases} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} repeats={repeats} onRepeats={setRepeats} report={verifyReport} error={verifyError} busy={verifyBusy} onRun={() => void runFunctionalVerification()} /> : null}
         {workbench === "benchmark" ? <BenchmarkWorkbench cases={cases} revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} workload={workload} onWorkload={setWorkload} iterations={measuredIterations} onIterations={setMeasuredIterations} report={benchmarkReport} error={benchmarkError} busy={benchmarkBusy} onRun={() => void runRuntimeBenchmark()} /> : null}
         {workbench === "diff" ? <DiffWorkbench revisions={revisions} from={diffFrom} to={diffTo} onFrom={setDiffFrom} onTo={setDiffTo} files={revisionDiff} onLoad={() => void loadDiff()} /> : null}
         {workbench === "history" ? <HistoryPanel projectId={project.id} revision={revision} dirty={dirty} onRolledBack={async () => { await reloadCurrentRevision(); setWorkbench("code"); }} onVerify={(baseline, candidate) => { setBaselineRevision(baseline); setCandidateRevision(candidate); setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }} /> : null}
@@ -595,7 +656,8 @@ function RevisionSelect({ label, values, value, onChange }: { label: string; val
   return <label className="grid gap-1 text-[12px] text-slate-400">{label}<select className="h-9 w-full rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[12px] text-slate-200" value={value} onChange={(event) => onChange(Number(event.target.value))}>{values.map((item) => <option key={item.revision} value={item.revision}>REV {item.revision}{item.has_analysis ? " · анализ" : ""}</option>)}</select></label>;
 }
 
-function VerificationWorkbench({ revisions, baseline, candidate, onBaseline, onCandidate, cases, onCases, mainClass, onMainClass, sourceLevel, onSourceLevel, repeats, onRepeats, report, error, busy, onRun }: {
+function VerificationWorkbench({ revisions, baseline, candidate, onBaseline, onCandidate, cases, onCases, mainClass, onMainClass, sourceLevel, onSourceLevel, repeats, onRepeats, report, error, busy, onRun, onSuggest }: {
+  onSuggest: () => void;
   revisions: { revision: number; has_analysis: boolean }[]; baseline: number; candidate: number; onBaseline: (revision: number) => void; onCandidate: (revision: number) => void;
   cases: VerifyTestCase[]; onCases: (cases: VerifyTestCase[]) => void; mainClass: string; onMainClass: (value: string) => void; sourceLevel: string; onSourceLevel: (value: string) => void; repeats: number; onRepeats: (value: number) => void; report: VerificationReport | null; error: string; busy: boolean; onRun: () => void;
 }) {
@@ -616,8 +678,9 @@ function VerificationWorkbench({ revisions, baseline, candidate, onBaseline, onC
         <Button className="self-start lg:mt-5" size="sm" variant="outline" disabled={cases.length === 1} onClick={() => onCases(cases.filter((_, i) => i !== index))}>Удалить</Button>
       </div>))}
       <div className="flex flex-wrap items-center gap-3"><Button className="w-fit" size="sm" variant="outline" disabled={cases.length >= 20} onClick={() => onCases([...cases, { name: `Сценарий ${cases.length + 1}`, stdin: "" }])}>Добавить сценарий</Button>
+        <Button className="w-fit" size="sm" variant="outline" title="Заполнить сценарии командами, которые программа сравнивает с вводом" onClick={onSuggest}>Подсказать сценарии по коду</Button>
         <Button className="w-fit" onClick={onRun} disabled={busy || !cases.length || cases.some((item) => !item.name.trim())}>{busy ? <LoaderCircle className="spin" /> : <ShieldCheck />} Запустить реальные сценарии</Button>
-        <span className="text-[12px] text-slate-500">сценарий должен доходить до изменённого кода, иначе зелёный результат ничего не доказывает</span></div>
+        <span className="text-[12px] text-slate-500">сценарии сохраняются и запускаются автоматически после каждой правки (REV 1 против новой); сценарий должен доходить до изменённого кода</span></div>
     </div>
     {error ? <p role="alert" className="m-0 text-[13px] text-rose-300">{error}{error.includes("main_class_required") ? " Введите полностью квалифицированный класс с main(String[])." : ""}</p> : null}
     {report ? <VerificationReportView report={report} /> : null}

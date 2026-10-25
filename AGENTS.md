@@ -97,8 +97,8 @@ script already sets it); bare `cargo`/`java`/`mvn` are not on PATH outside the N
 ## Known limitations (detail in docs/CASE_COMPLIANCE.md)
 
 - Edit operations: `replace_condition`, `move_statement`, optimizations (lookup-loop → Map, `String +=` in a loop →
-  `StringBuilder`, `contains` → `HashSet`), decomposition, `insert_statement`, `delete_statement` and `extract_method`, rollback. No drag-and-drop of blocks. The web UI exposes
-  condition replacement, statement move, optimization preview/apply and free text editing.
+  `StringBuilder`, `contains` → `HashSet`), decomposition, `insert_statement`, `delete_statement`, `replace_statement` and `extract_method`, rollback. The web UI
+  exposes all of them (drag palette blocks onto statements, drag statements to move them), plus free text editing.
 - Responsibility decomposition (case slide 6, optional): `GET/POST /projects/{id}/decomposition[/preview|/apply]` moves
   static member types of a top-level class into files of their own (`classes`) or groups of static methods of one class,
   grouped by the first word of the method name, into a new class (`groups`: `parse*` → `Parsing`, `format*` →
@@ -108,5 +108,5 @@ script already sets it); bare `cargo`/`java`/`mvn` are not on PATH outside the N
 - Runtime before/after measurement: `POST /benchmark`, shown in the UI benchmark tab. Verify can run each scenario
   several times (`repeats`) and then reports `unstable` instead of a false difference.
 - Multi-file (ZIP) projects are supported by the API (a decomposed single-file project becomes one); `/source` and `/transform` are single-file only
-  (`409 multi_file_project` for archives); `/verify` accepts archives (`main_class`, `source_level`). The UI uploads only `.java`.
+  (`409 multi_file_project` for archives); `/verify` accepts archives (`main_class`, `source_level`). The UI uploads `.java` and `.zip`.
 - Big O is a static estimate; methods calling unmodelled code are `unknown`.
