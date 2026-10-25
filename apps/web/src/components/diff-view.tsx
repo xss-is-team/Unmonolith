@@ -20,7 +20,7 @@ export function DiffView({ files, label = "Изменения исходника
                   : line.startsWith("@@")
                     ? "text-cyan-300"
                     : "text-slate-500";
-              return <span className={`block min-w-max px-1 ${style}`} key={`${index}-${line}`}>{line || " "}</span>;
+              return <span className={`block whitespace-pre-wrap break-words px-1 ${style}`} key={`${index}-${line}`}>{line || " "}</span>;
             })}
           </pre>
         </details>
