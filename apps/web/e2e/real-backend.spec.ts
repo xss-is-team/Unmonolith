@@ -202,6 +202,7 @@ test("real CFG move previews Java, confirms explicitly, and refreshes source and
   const priceMethod = page.locator('button[title="calc.Pricing.price(int,int,int)"]');
   await expect(priceMethod).toBeVisible();
   await priceMethod.click();
+  await page.getByRole("tab", { name: /Правка графа/ }).click();
   await expect(page.getByLabel("Перемещение оператора в исходном коде")).toBeVisible();
   const cfg = page.getByRole("region", { name: "Граф потока управления" });
   const target = page.getByLabel("Целевой оператор");
@@ -275,11 +276,13 @@ test("main_class_required, unsupported proposal, stale revision and real single-
 });
 
 test("block editor inserts a validated statement and refuses a deletion that breaks the method", async ({ page }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(45_000);
   await uploadZip(page);
   await page.locator('button[title="calc.Pricing.price(int,int,int)"]').click();
+  await page.getByRole("tab", { name: /Правка графа/ }).click();
   const cfg = page.getByRole("region", { name: "Граф потока управления" });
   await cfg.getByText("int tax = base / 5;", { exact: true }).click();
+  await page.waitForTimeout(600); // the code editor takes focus for the selected node; type only after it has
   const editor = page.getByLabel("Добавление и удаление блоков");
   await editor.getByLabel("Java-код блока").fill("int audit = tax * 2;");
   await editor.getByRole("button", { name: "Показать вставку" }).click();
@@ -290,7 +293,8 @@ test("block editor inserts a validated statement and refuses a deletion that bre
   await expect(page.locator(".cm-content")).toContainText("int audit = tax * 2;");
 
   await page.locator('button[title="calc.Pricing.price(int,int,int)"]').click();
-  await cfg.getByText("int subtotal = base * qty;", { exact: true }).click();
+  await page.getByRole("tab", { name: /Правка графа/ }).click();
+  await cfg.getByText("int subtotal = base * qty;", { exact: true }).dispatchEvent("click");
   await editor.getByRole("button", { name: "Показать удаление" }).click();
   await expect(editor.locator('[role="alert"]')).toContainText("не компилируется");
 });
@@ -299,6 +303,7 @@ test("extract method turns a statement into a private method and refuses a selec
   test.setTimeout(45_000);
   await uploadZip(page);
   await page.locator('button[title="calc.Pricing.price(int,int,int)"]').click();
+  await page.getByRole("tab", { name: /Правка графа/ }).click();
   const editor = page.getByLabel("Выделение метода");
   const pick = async (label: string, text: string) => {
     const select = editor.getByLabel(label);
@@ -316,6 +321,7 @@ test("extract method turns a statement into a private method and refuses a selec
   await expect(page.locator(".cm-content")).toContainText("int tax = taxOf(base);");
 
   await page.locator('button[title="calc.Pricing.price(int,int,int)"]').click();
+  await page.getByRole("tab", { name: /Правка графа/ }).click();
   await pick("Первый оператор выделения", "int subtotal");
   await pick("Последний оператор выделения", "int tax");
   await editor.getByLabel("Имя нового метода").fill("pair");

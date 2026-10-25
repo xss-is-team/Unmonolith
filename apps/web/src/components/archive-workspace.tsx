@@ -68,10 +68,12 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   const [loading, setLoading] = useState(true);
   const [workbench, setWorkbench] = useState<"code" | "verify" | "benchmark" | "diff" | "decompose">("code");
   const [repeats, setRepeats] = useState(2);
-  const [analysisTab, setAnalysisTab] = useState<"problems" | "recommendations" | "metrics">("problems");
+  const [analysisTab, setAnalysisTab] = useState<"problems" | "recommendations" | "metrics" | "edit">("problems");
+  const [editPortal, setEditPortal] = useState<HTMLElement | null>(null);
   const [blockTemplate, setBlockTemplate] = useState<BlockTemplate | null>(null);
   const [openTabs, setOpenTabs] = useState<string[]>([initialFilePath]);
   const [logLines, setLogLines] = useState<LogLine[]>([]);
+  const [panes, setPanes] = useState({ code: true, console: true, tests: true });
   const [revisions, setRevisions] = useState<{ revision: number; has_analysis: boolean }[]>([]);
   const [baselineRevision, setBaselineRevision] = useState(1);
   const [candidateRevision, setCandidateRevision] = useState(initialRevision);
@@ -359,7 +361,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   const overlayTitle = workbench === "verify" ? "Проверка поведения" : workbench === "benchmark" ? "Бенчмарк" : workbench === "diff" ? "Diff ревизий" : workbench === "decompose" ? "Разбор монолита" : "";
 
   return (
-    <main className="grid h-svh min-w-[1100px] grid-rows-[52px_minmax(0,1fr)_minmax(210px,30vh)] overflow-hidden bg-[#070b14]">
+    <main className="grid h-svh min-w-[1100px] grid-rows-[52px_minmax(0,1fr)_auto] overflow-hidden bg-[#070b14]">
       <header className="flex min-w-0 items-center gap-2 border-b border-slate-800 bg-[#0b1220] px-3">
         <LayoutGrid size={20} className="shrink-0 text-cyan-400" />
         <strong className="whitespace-nowrap text-[15px] text-slate-100">Визуальная среда программирования</strong>
@@ -414,7 +416,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
           </header>
           <div className="min-h-0 min-w-0 overflow-hidden">
             {view === "overview" ? <ProjectGraphViewer projectId={project.id} revision={revision} enabled={!loading && !isDirty} methods={methods} onOpenMethod={(next) => { setSelector(next); setView("cfg"); const found = methods.find((method) => method.selector === next); if (found) void openRange(found.source_range); }} onSourceRangeSelect={(next) => void openRange(next)} /> : (
-              <CfgViewer projectId={project.id} revision={revision} methods={loading || isDirty ? [] : methods} selectedSourceRange={range} selectedMethodSelector={selector} onSelectedMethodSelectorChange={setSelector} onSourceRangeSelect={(next) => { if (next) void openRange(next); }} onTransformed={reloadCurrentRevision} showAnalysisSummary blockTemplate={blockTemplate} />
+              <CfgViewer projectId={project.id} revision={revision} methods={loading || isDirty ? [] : methods} selectedSourceRange={range} selectedMethodSelector={selector} onSelectedMethodSelectorChange={setSelector} onSourceRangeSelect={(next) => { if (next) void openRange(next); }} onTransformed={reloadCurrentRevision} showAnalysisSummary blockTemplate={blockTemplate} panelContainer={editPortal} onNodeSelected={() => setAnalysisTab("edit")} />
             )}
           </div>
         </section>
@@ -422,7 +424,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
         <AnalysisPane
           loading={loading} analysis={analysis} methodCount={methods.length} findings={findings} complexity={complexity}
           diagnostics={activeDiagnostics} proposals={optimizations?.proposals ?? []} selectedMethodId={selectedMethod?.id ?? null}
-          selectedProposal={selectedProposalData} speedup={speedup} tab={analysisTab} onTab={setAnalysisTab}
+          selectedProposal={selectedProposalData} speedup={speedup} tab={analysisTab} onTab={setAnalysisTab} onPortalRef={setEditPortal}
           onOpenRange={(sourceRange, file) => void openRange({ ...sourceRange, file: sourceRange.file ?? file ?? activeFile })}
           onOpenMethod={(methodId, sourceRange, file) => { const found = methods.find((method) => method.id === methodId); if (found) { setSelector(found.selector); setView("cfg"); } void openRange({ ...sourceRange, file: sourceRange.file ?? file ?? activeFile }); }}
           onMeasure={() => { setWorkbench("benchmark"); void getProjectRevisions(project.id).then(setRevisions); }}
@@ -438,13 +440,21 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
         />
       </div>
 
-      <section className="grid min-h-0 grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)] border-t border-slate-700 bg-[#0a1220]" aria-label="Рабочая панель">
-        <div className="grid h-full min-h-0 grid-rows-[34px_minmax(0,1fr)]">
+      <section className="grid min-h-0 grid-rows-[34px_auto] border-t border-slate-700 bg-[#0a1220]" aria-label="Рабочая панель">
+        <nav className="flex items-center gap-1 border-b border-slate-800 bg-[#0d1625] px-2" aria-label="Нижние панели">
+          {([["code", "Код Java"], ["console", "Консоль"], ["tests", "Результаты тестов"]] as const).map(([id, label]) => (
+            <button key={id} type="button" aria-pressed={panes[id]} className={`rounded px-2.5 py-1 text-[12px] ${panes[id] ? "bg-slate-800 text-cyan-200" : "text-slate-500 hover:bg-slate-800 hover:text-slate-300"}`} onClick={() => setPanes((current) => ({ ...current, [id]: !current[id] }))}>{label}</button>
+          ))}
+          <button type="button" className="ml-auto rounded px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-800 hover:text-slate-300" title="Скрыть или показать все нижние панели" onClick={() => setPanes((current) => (current.code || current.console || current.tests ? { code: false, console: false, tests: false } : { code: true, console: true, tests: true }))}>{panes.code || panes.console || panes.tests ? "Свернуть ▾" : "Развернуть ▴"}</button>
+        </nav>
+        <div className={`min-h-0 ${panes.code || panes.console || panes.tests ? "h-[28vh] min-h-[190px]" : "hidden"} grid`} style={{ gridTemplateColumns: [panes.code ? "minmax(0,1.5fr)" : null, panes.console ? "minmax(0,1fr)" : null, panes.tests ? "minmax(0,1fr)" : null].filter(Boolean).join(" ") || "1fr" }}>
+        <div className={`${panes.code ? "grid" : "hidden"} h-full min-h-0 grid-rows-[34px_minmax(0,1fr)]`}>
           <header className="flex items-center gap-2 border-b border-slate-800 px-3 text-[12px] text-slate-400"><FileCode2 size={14} /><strong className="text-slate-200">Код Java</strong><span className="truncate font-mono text-slate-500">{activeFile}</span><span className="ml-auto whitespace-nowrap">{dirty ? "Черновик" : `Сохранено · REV ${revision}`}</span></header>
             <div className="min-h-0 min-w-0"><JavaEditor key={`${activeFile}:${revision}:${savedSource.length}`} ref={editorRef} value={source} diagnostics={activeDiagnostics} focusRange={range} onDirtyChange={(next) => { dirtyRef.current = next; setDirty(next); }} onMetricsChange={() => {}} onSourceSelection={(selection) => setRange(selection ? { ...selection, file: activeFile } : null)} /></div>
         </div>
-        <ConsolePane lines={logLines} />
-        <TestsPane report={verifyReport} busy={verifyBusy} onRun={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }} />
+        {panes.console ? <ConsolePane lines={logLines} /> : null}
+        {panes.tests ? <TestsPane report={verifyReport} busy={verifyBusy} onRun={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }} /> : null}
+        </div>
       </section>
 
       {workbench !== "code" ? (

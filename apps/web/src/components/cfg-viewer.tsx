@@ -1,7 +1,8 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent } from "react";
+import type { MouseEvent, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import useSWR from "swr";
 import {
   Background,
@@ -120,6 +121,8 @@ export function CfgViewer({
   onTransformed,
   showAnalysisSummary = true,
   blockTemplate = null,
+  panelContainer = null,
+  onNodeSelected,
 }: {
   projectId: string;
   revision: number;
@@ -131,6 +134,8 @@ export function CfgViewer({
   onTransformed: () => Promise<void>;
   showAnalysisSummary?: boolean;
   blockTemplate?: { code: string; nonce: number } | null;
+  panelContainer?: HTMLElement | null;
+  onNodeSelected?: () => void;
 }) {
   const selector = methods.some((method) => method.selector === selectedMethodSelector)
     ? selectedMethodSelector
@@ -222,7 +227,7 @@ export function CfgViewer({
   useEffect(() => {
     if (!positions.size || !flowRef.current) return;
     const frame = window.requestAnimationFrame(() => {
-      void flowRef.current?.fitView({ padding: 0.2, minZoom: 0.04, maxZoom: 1.4 });
+      void flowRef.current?.fitView({ padding: 0.06, minZoom: 0.5, maxZoom: 1.2 });
     });
     return () => window.cancelAnimationFrame(frame);
   }, [positions]);
@@ -272,6 +277,7 @@ export function CfgViewer({
 
   const onNodeClick = useCallback((_event: MouseEvent, node: FlowNode) => {
     setMoveNodeId(node.data.kind === "statement" ? node.id : "");
+    onNodeSelected?.();
     setMovePreview(null);
     setMoveError("");
     onSourceRangeSelect(node.data.source_range, node.data.kind === "branch");
@@ -283,8 +289,12 @@ export function CfgViewer({
       const nextKind = current?.from === node.id && current.kind === "true" ? "false" : "true";
       return findBranch(cfg, node.id, nextKind) ?? findBranch(cfg, node.id, "true");
     });
-  }, [cfg, onSourceRangeSelect]);
+  }, [cfg, onSourceRangeSelect, onNodeSelected]);
 
+  /** Big O, move, condition and block panels: in the analysis pane when a container is given, under the graph otherwise. */
+  const renderLower = (children: ReactNode) => panelContainer
+    ? createPortal(<div className="grid gap-0">{children}</div>, panelContainer)
+    : <div className="max-h-[34%] min-h-0 shrink-0 overflow-auto">{children}</div>;
   const moveSource = cfg?.nodes.find((node) => node.id === moveNodeId);
   const moveTarget = cfg?.nodes.find((node) => node.id === targetNodeId);
 
@@ -411,7 +421,7 @@ export function CfgViewer({
               onNodeClick={onNodeClick}
               onInit={(instance) => { flowRef.current = instance as ReactFlowInstance<FlowNode, Edge>; }}
               fitView
-              fitViewOptions={{ padding: 0.04, maxZoom: 1.1 }}
+              fitViewOptions={{ padding: 0.06, minZoom: 0.5, maxZoom: 1.2 }}
               minZoom={0.04}
               maxZoom={1.6}
               nodesDraggable={false}
@@ -424,7 +434,7 @@ export function CfgViewer({
         ) : null}
       </div>
 
-      <div className="max-h-[34%] min-h-0 shrink-0 overflow-auto">
+      {renderLower(<>
       {showAnalysisSummary && methodAnalysis ? <BigOPanel analysis={methodAnalysis} onSelect={onSourceRangeSelect} /> : showAnalysisSummary && analysisRequest.error ? (
         <div className="flex min-h-[30px] items-center gap-1.5 border-t border-slate-800 bg-[#0d1625] px-3 text-[13px] text-slate-400"><AlertCircle size={15} /> Big O для метода недоступна: {apiMessage(analysisRequest.error)}</div>
       ) : showAnalysisSummary && selector ? (
@@ -482,7 +492,7 @@ export function CfgViewer({
         </section>
       ) : null}
       {method ? <BlockEditor key={`${method.id}:${blockTemplate?.nonce ?? 0}`} initialCode={blockTemplate?.code} projectId={projectId} revision={revision} methodId={method.id} nodeId={moveNodeId} nodeLabel={moveSource?.text ?? ""} statements={(cfg?.nodes ?? []).filter((node) => node.kind === "statement").map((node) => ({ id: node.id, text: (node.text ?? node.statement_kind ?? "").slice(0, 60) }))} onApplied={onTransformed} /> : null}
-      </div>
+      </>)}
     </section>
   );
 }

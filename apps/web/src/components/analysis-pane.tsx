@@ -8,7 +8,7 @@ import type {
   AnalysisResult, ComplexityReport, Diagnostic, FindingsReport, OptimizationProposal, SourceRange,
 } from "@/lib/api";
 
-export type Tab = "problems" | "recommendations" | "metrics";
+export type Tab = "problems" | "recommendations" | "metrics" | "edit";
 
 const FINDING_TITLES: Record<string, string> = {
   repeated_collection_scan: "Повторный линейный перебор коллекции в цикле",
@@ -20,7 +20,7 @@ const HIGH = new Set(["repeated_collection_scan", "nested_collection_iteration"]
 /** «Анализ» of the mockup: Problems / Recommendations / Metrics tabs and the complexity card with the measured effect. */
 export function AnalysisPane({
   loading, analysis, methodCount, findings, complexity, diagnostics, recommendations, proposals, selectedMethodId, selectedProposal,
-  speedup, tab, onTab, onOpenRange, onOpenMethod, onMeasure,
+  speedup, tab, onTab, onPortalRef, onOpenRange, onOpenMethod, onMeasure,
 }: {
   loading: boolean;
   analysis: AnalysisResult | null;
@@ -35,6 +35,7 @@ export function AnalysisPane({
   speedup: { value: number; note: string } | null;
   tab: Tab;
   onTab: (tab: Tab) => void;
+  onPortalRef: (element: HTMLElement | null) => void;
   onOpenRange: (range: SourceRange, file: string | null) => void;
   onOpenMethod: (methodId: string, range: SourceRange, file: string | null) => void;
   onMeasure: () => void;
@@ -44,12 +45,12 @@ export function AnalysisPane({
   const current = complexity?.methods.find((item) => item.method_id === selectedMethodId)?.time_complexity ?? null;
   const proposalBefore = selectedProposal && selectedProposal.method_id === selectedMethodId ? (selectedProposal.complexity.method_before ?? selectedProposal.complexity.scan_before) : null;
   const proposalAfter = selectedProposal && selectedProposal.method_id === selectedMethodId ? selectedProposal.complexity.scan_after : null;
-  const tabs: [Tab, string][] = [["problems", `Проблемы (${list.length})`], ["recommendations", `Рекомендации (${proposals.length})`], ["metrics", "Метрики"]];
+  const tabs: [Tab, string][] = [["problems", `Проблемы (${list.length})`], ["recommendations", `Рекомендации (${proposals.length})`], ["metrics", "Метрики"], ["edit", "Правка графа"]];
   return (
     <aside className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] bg-[#0b1120]" aria-label="Анализ">
       <div className="grid gap-2 border-b border-slate-800 p-3">
         <div className="flex items-center justify-between"><h2 className="m-0 text-[14px] font-semibold text-slate-100">Анализ</h2><span className="font-mono text-[11px] text-slate-500">REV {analysis?.revision ?? "—"}</span></div>
-        <div className="grid grid-cols-3 gap-0.5 rounded-md bg-slate-900 p-0.5" role="tablist" aria-label="Разделы анализа">
+        <div className="grid grid-cols-2 gap-0.5 rounded-md bg-slate-900 p-0.5" role="tablist" aria-label="Разделы анализа">
           {tabs.map(([id, label]) => (
             <button key={id} type="button" role="tab" aria-selected={tab === id} className={`h-7 rounded text-[12px] ${tab === id ? "bg-cyan-500/20 text-cyan-200" : "text-slate-400 hover:text-slate-200"}`} onClick={() => onTab(id)}>{label}</button>
           ))}
@@ -87,6 +88,8 @@ export function AnalysisPane({
           </div>
         ) : null}
         {tab === "recommendations" ? <div className="grid gap-2">{recommendations}</div> : null}
+        <div ref={onPortalRef} className={`peer ${tab === "edit" ? "-m-3" : "hidden"}`} aria-label="Правка графа" />
+        {tab === "edit" ? <p className="m-0 mt-4 hidden text-[12px] leading-5 text-slate-500 peer-empty:block">Выберите метод во вкладке «CFG»: здесь появятся Big O метода, перенос оператора, замена условия и блоки.</p> : null}
         {tab === "metrics" ? (
           <div className="grid gap-2">
             <ComplexityOverview report={loading ? null : complexity} onOpen={(row, range) => onOpenMethod(row.method_id, range, row.file)} />
