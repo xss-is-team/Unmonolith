@@ -41,9 +41,10 @@ Official brief's initial scale is about 1,000 lines in a Java monolith. Support 
 
 ### Current implemented slice
 
-M1 is complete. The API now also implements the M2 CFG read path, the single
-M3 operation `replace_condition`, and the separate M4 revision verification
-operation. Verification does not gate transformations. The parser CFG is nested on each method/constructor member in
+M1–M4 are implemented, and most of M5 on the backend: ZIP/multi-file projects, `replace_condition`,
+`move_statement` (CFG edit), optimization proposals (preview/apply), rollback, export, runtime benchmark and
+the separate revision verification operation (contract in `openapi.yaml`, evidence in `docs/MULTI_FILE_ENGINE.md`
+and `docs/E2E_TESTS.md`). Verification does not gate transformations; it only reports tested scenarios. The parser CFG is nested on each method/constructor member in
 `types[].members[]` (including nested types); the flat root `methods[]` list is
 only a summary and is not the CFG source.
 

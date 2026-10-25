@@ -96,7 +96,10 @@ script already sets it); bare `cargo`/`java`/`mvn` are not on PATH outside the N
 
 ## Known limitations (detail in docs/CASE_COMPLIANCE.md)
 
-- One edit operation only: `replace_condition`. No block drag/move, no method extraction.
+- Edit operations: `replace_condition`, `move_statement`, lookup-loop → Map optimization, rollback. No block
+  add/remove/drag, no method extraction. The web UI exposes only `replace_condition` and free text editing.
 - Responsibility decomposition (case slide 6, optional) is not implemented.
-- No runtime before/after performance measurement — static Big O estimate + recommendation only.
-- Single-file projects only (matches the case: one monolith file).
+- Runtime before/after measurement exists in the API (`POST /benchmark`), not in the UI.
+- Multi-file (ZIP) projects are supported by the API; `/source` and `/transform` are single-file only
+  (`409 multi_file_project` for archives); `/verify` accepts archives (`main_class`, `source_level`). The UI uploads only `.java`.
+- Big O is a static estimate; methods calling unmodelled code are `unknown`.

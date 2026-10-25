@@ -165,8 +165,9 @@ image, or container lifecycle failures return an explicit `503` and never fall
 back to host Java execution.
 
 The request is limited to 20 uniquely named cases, 64 KiB stdin per case and
-256 KiB combined stdin. Only the existing single-file project model is
-supported: no custom JVM flags, classpaths, dependencies, Maven or Gradle.
+256 KiB combined stdin. Single-file and archive (ZIP) projects are verified through this
+route (archives compile all files together and need `main_class`/`source_level`); archives reject only the
+single-file `/source` and `/transform` with `409 multi_file_project`. No custom JVM flags, classpaths, dependencies, Maven or Gradle.
 
 Run the real-container test after building the image:
 
@@ -184,14 +185,15 @@ OpenAPI document at <http://127.0.0.1:3000/api/v1/openapi.json>.
 
 ## Scope
 
-Implemented: health, guest sessions, single `.java` projects, owned metadata and
-source access, revision-checked source updates, external analysis, CFG listing
-and retrieval, SSE analysis lifecycle, revision source history, method complexity/findings retrieval, `replace_condition`, and
-persisted isolated behavioral verification of two stored revisions. If no real worker JAR is configured, analysis and
-transformation return `503 analyzer_unavailable`; if no runner image is
-configured, verification returns `503 runner_unavailable`.
+Implemented (routes and schemas in `openapi.yaml`): health, guest sessions, single `.java` and ZIP
+(multi-file) projects with file tree and per-file edits, revision-checked updates and history, rollback,
+revision diff, external analysis (+ SSE lifecycle), method list/CFG/analysis, project graph, project-wide
+complexity and findings, `replace_condition`, optimization discovery/preview/apply (lookup loop -> Map),
+CFG `move_statement` preview/apply, runtime benchmark with honest verdicts, export, and persisted isolated
+behavioral verification of two stored revisions. If no real worker JAR is configured, analysis and
+transformation return `503 analyzer_unavailable`; if no runner image is configured, verification and
+benchmark return `503 runner_unavailable`.
 
-Not implemented: arbitrary graph edits, other AST operations, automatic
-transform acceptance/rollback, formal behavioral equivalence, multi-file builds,
-external Java dependencies, or export routes. Static analysis and fixture-based
-verification do not establish behavioral equivalence.
+Not implemented: drag/add/remove of arbitrary blocks, method extraction, monolith decomposition into files,
+formal behavioral equivalence, external Java dependencies (unresolved calls are reported, never guessed),
+Maven/Gradle import. Static analysis and fixture-based verification do not establish behavioral equivalence.

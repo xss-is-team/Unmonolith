@@ -10,26 +10,26 @@
 - [ ] **1. Пресеты типовых тестов для Organizer.java во вкладке «Проверка»**
   * **Проблема:** Сейчас при загрузке монолита список тестов пуст. Жюри не знает консольное меню `Organizer.java` и не сможет сходу написать `stdin`, чтобы увидеть зеленый Quality Gate.
   * **Что сделать:** Добавить во вкладку «Проверка» кнопку *«Загрузить тесты сценария»* (или автоматически предзаполнять 3–4 готовых кейса: добавление заметки, просмотр, поиск, выход).
-  * **Файлы:** [`apps/web/src/components/project-workspace.tsx`](file:///home/badland/tmp/java-blueprints/apps/web/src/components/project-workspace.tsx).
+  * **Файлы:** [`apps/web/src/components/project-workspace.tsx`](apps/web/src/components/project-workspace.tsx).
   * **Критерий приемки:** Пользователь загружает `Organizer.java`, жмет одну кнопку — тесты заполняются и запускается проверка с подтверждением: *«Поведение сохранено»*.
 
-- [ ] **2. Вывод метрики эффекта «до 5.2x» и $O(n^2) \to O(n)$ в карточке дефекта Big O (Слайд 5)**
-  * **Проблема:** В бэкенде рассчитывается только текущая сложность ($O(n^2)$). Жюри в слайде 5 и подкасте прямо ждет: *«Ожидаемое ускорение: до 5.2x»* и целевую сложность.
+- [ ] **2. Показ эффекта оптимизации в карточке дефекта Big O (Слайд 5, макет слайда 4)**
+  * **Проблема:** UI показывает только текущую сложность. Бэкенд уже отдаёт целевую (`GET /optimizations`: `scan_after`, `method_after`) и замер (`POST /benchmark`).
   * **Что сделать:**
-    1. В [`ComplexityAnalyzer.java`](file:///home/badland/tmp/java-blueprints/apps/parser/src/main/java/org/example/ComplexityAnalyzer.java) для находок `repeated_collection_scan` добавить поля: `target_complexity: "O(n)"` и `expected_effect: "ускорение до 5.2x"`.
-    2. В [`cfg-viewer.tsx`](file:///home/badland/tmp/java-blueprints/apps/web/src/components/cfg-viewer.tsx) вывести в карточке проблемы плашку: `Сложность: O(n²) ➔ O(n) | Ожидаемое ускорение: до 5.2x`.
-  * **Файлы:** [`apps/parser/src/main/java/org/example/ComplexityAnalyzer.java`](file:///home/badland/tmp/java-blueprints/apps/parser/src/main/java/org/example/ComplexityAnalyzer.java), [`apps/web/src/components/cfg-viewer.tsx`](file:///home/badland/tmp/java-blueprints/apps/web/src/components/cfg-viewer.tsx).
+    1. Потребить `/optimizations` и `/benchmark` во фронте; значение ускорения брать только из отчёта benchmark. «До 5.2x» из макета слайда 4 — пример, не константа: не хардкодить.
+    2. В [`cfg-viewer.tsx`](apps/web/src/components/cfg-viewer.tsx) вывести плашку `Сложность: O(n²) ➔ O(n)` и, если есть замер с вердиктом `faster`, его коэффициент.
+  * **Файлы:** [`apps/parser/src/main/java/org/example/ComplexityAnalyzer.java`](apps/parser/src/main/java/org/example/ComplexityAnalyzer.java), [`apps/web/src/components/cfg-viewer.tsx`](apps/web/src/components/cfg-viewer.tsx).
   * **Критерий приемки:** При выборе проблемного узла отображается бейдж с ожидаемым ускорением по слайду 5.
 
 - [ ] **3. Сохранение эталонного верификационного отчета (Слайд 11 — Deliverable 3)**
   * **Проблема:** Бриф требует предоставить в комплекте сдачи артефакт: *«результат запуска автотестов, подтверждающий сохранение поведения»*.
-  * **Что сделать:** Выполнить один прогон верификации `Organizer.java` (baseline vs candidate с оптимизацией) в Docker и зафиксировать финальный JSON-отчет в [`docs/verification-evidence.json`](file:///home/badland/tmp/java-blueprints/docs).
+  * **Что сделать:** Выполнить один прогон верификации `Organizer.java` (baseline vs candidate с оптимизацией) в Docker и зафиксировать финальный JSON-отчет в [`docs/verification-evidence.json`](docs).
   * **Критерий приемки:** В папке `docs/` лежит реальный JSON-отчет со статусом `passed` для всех тестов.
 
 - [ ] **4. Итоговый документ решения docs/SOLUTION.md (Слайд 11 — Deliverable 4)**
   * **Проблема:** Требование слайда 11: *«04 Описание решения: архитектура, поддержанный scope и ограничения»*.
   * **Что сделать:** Сформировать чистый итоговый `docs/SOLUTION.md` на основе аудита: архитектурная схема, поддержанные разделы Java, работа Quality Gate и зафиксированные границы.
-  * **Файлы:** Создать [`docs/SOLUTION.md`](file:///home/badland/tmp/java-blueprints/docs).
+  * **Файлы:** Создать [`docs/SOLUTION.md`](docs).
   * **Критерий приемки:** Файл готов и оформлен для жюри.
 
 ---
@@ -39,13 +39,13 @@
 - [ ] **5. Кнопка «Применить оптимизацию» (One-Click Quick Fix)**
   * **Проблема:** Сейчас после обнаружения дефекта пользователь должен вручную формулировать и вбивать текст условия.
   * **Что сделать:** На карточке дефекта $O(n^2)$ в интерфейсе добавить кнопку *«Применить рекомендацию»*, которая автоматически подставляет оптимизированное выражение и инициирует создание новой ревизии.
-  * **Файлы:** [`apps/web/src/components/cfg-viewer.tsx`](file:///home/badland/tmp/java-blueprints/apps/web/src/components/cfg-viewer.tsx), [`apps/web/src/lib/api.ts`](file:///home/badland/tmp/java-blueprints/apps/web/src/lib/api.ts).
+  * **Файлы:** [`apps/web/src/components/cfg-viewer.tsx`](apps/web/src/components/cfg-viewer.tsx), [`apps/web/src/lib/api.ts`](apps/web/src/lib/api.ts).
   * **Критерий приемки:** Оптимизация $O(n^2)$ применяется в один клик прямо из карточки диагноза.
 
 - [ ] **6. Быстрое действие на графе: «Инвертировать ветвление» (Invert Condition)**
   * **Проблема:** В кейсе говорится *«исследовать и править на блок-схеме»*. Ручной ввод текста в форме не дает полного ощущения визуального редактирования.
   * **Что сделать:** Добавить на узле условия `branch` быструю кнопку *«Инвертировать ветви»*, которая оборачивает условие в `!(...)` через существующий `POST /transform` и меняет код в редакторе.
-  * **Файлы:** [`apps/web/src/components/cfg-viewer.tsx`](file:///home/badland/tmp/java-blueprints/apps/web/src/components/cfg-viewer.tsx).
+  * **Файлы:** [`apps/web/src/components/cfg-viewer.tsx`](apps/web/src/components/cfg-viewer.tsx).
   * **Критерий приемки:** Нажатие на кнопку на блок-схеме мгновенно инвертирует логику в исходном Java-коде.
 
 - [ ] **7. Дополнительные детекторы запахов кода (Code Smells)**
@@ -53,7 +53,7 @@
   * **Что сделать:**
     1. Детектор *«Длинный метод»*: если метод > 50 строк кода — выдавать информационную диагностику с рекомендацией декомпозиции.
     2. Детектор повторных вызовов/дублирования в рамках метода.
-  * **Файлы:** [`apps/parser/src/main/java/org/example/ComplexityAnalyzer.java`](file:///home/badland/tmp/java-blueprints/apps/parser/src/main/java/org/example/ComplexityAnalyzer.java).
+  * **Файлы:** [`apps/parser/src/main/java/org/example/ComplexityAnalyzer.java`](apps/parser/src/main/java/org/example/ComplexityAnalyzer.java).
   * **Критерий приемки:** В списке диагностик появляются замечания по размеру методов.
 
 ---
@@ -63,9 +63,9 @@
 - [ ] **8. Автоматическая декомпозиция монолита (Слайд 6)**
   * **Требование брифа:** *«До: Main.java ≈1000 строк -> После: Parser, Analyzer, Optimizer, Main. При необходимости автоматически выделить ответственности.»*
   * **Что сделать:** Добавить в UI кнопку *«Декомпозировать монолит»*, которая выносит вложенные статические классы монолита (`Note`, `Storage`, `Parser`) в отдельные файлы/классы проекта.
-  * **Файлы:** [`apps/parser`](file:///home/badland/tmp/java-blueprints/apps/parser), [`apps/api`](file:///home/badland/tmp/java-blueprints/apps/api), [`apps/web`](file:///home/badland/tmp/java-blueprints/apps/web).
+  * **Файлы:** [`apps/parser`](apps/parser), [`apps/api`](apps/api), [`apps/web`](apps/web).
 
 - [ ] **9. Детализация CFG для Stream API и Lambdas**
   * **Требование брифа:** Бонусный скоуп.
   * **Что сделать:** Разворачивать цепочки `.stream().map().filter()` и тела лямбда-выражений во внутренние вспомогательные узлы CFG.
-  * **Файлы:** [`apps/parser/src/main/java/org/example/CfgBuilder.java`](file:///home/badland/tmp/java-blueprints/apps/parser/src/main/java/org/example/CfgBuilder.java).
+  * **Файлы:** [`apps/parser/src/main/java/org/example/CfgBuilder.java`](apps/parser/src/main/java/org/example/CfgBuilder.java).

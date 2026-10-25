@@ -233,7 +233,6 @@ Known limitations:
   types) and is not weighted. `sites` lists can be long; the graph adds roughly 1 MB on the 1000-line fixture.
 - Nothing here splits classes or proposes services; it is only data for an overview.
 
-## Mismatch with `../api` (not changed here)
 ## API integration
 
 The Rust API invokes this positional CLI, captures the JSON from stdout, attaches its trusted

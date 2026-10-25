@@ -1,6 +1,6 @@
 # Multi-file analysis & transformation engine
 
-Branch `feat/multi-file-engine`. This document is the frontend-facing contract and the evidence
+Merged into `main` (PR #15). This document is the frontend-facing contract and the evidence
 log for each phase. Statements cite the test that proves them; anything not listed is not claimed.
 Machine-readable contract: `apps/api/openapi.yaml` (also served at `/api/v1/openapi.json`).
 
@@ -13,9 +13,8 @@ BLUEPRINTS_REAL_JAR=$PWD/../parser/target/ASTPARSER-1.0-SNAPSHOT.jar \
 BLUEPRINTS_REAL_JAVA=$(command -v java) cargo test -- --ignored real_multi_file
 ```
 
-Known test flake (pre-existing, unrelated to this work): the four `transform_*` API tests write and
-exec a shell stub and can fail with "text file busy" when run in parallel; they pass with
-`--test-threads=1`.
+The earlier "text file busy" flake of the `transform_*` tests is fixed (`src/lib.rs::test_util::install_executable`,
+see `docs/E2E_TESTS.md`); `--test-threads=1` is no longer needed.
 
 ---
 

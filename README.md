@@ -71,12 +71,11 @@ Changes happen through a separate editable BPMN-style process diagram. Its suppo
 
 ## Current scope
 
-- The API currently accepts one `.java` file per project; Maven/Gradle import, whole-project classpath analysis, and project-wide transformations are not implemented.
-- The parser produces AST data, per-method CFGs and complexity findings, plus a compilation-unit `project_graph`. The Rust API exposes it through the revisioned `GET /api/v1/projects/{id}/graph` endpoint.
-- The web app supports source editing, method CFG/Big O, a limited condition transformation, revision diff, and optional isolated behavioral verification.
-- Project Overview currently has a type-and-relationship graph for one source file and clearly labeled frontend demos for nested flowcharts, modernization actions, and an editable BPMN plan. The demos do not analyze or change the uploaded source.
-- Open `/demo` to explore those frontend prototypes without uploading a source file or calling the project-graph API. Flowchart nodes can reveal excerpts from a synthetic `LegacyOrderApp.java` using source ranges; this code is demo data, not a parsed project.
-- Project Overview requests the real graph endpoint for an analyzed single Java file. Multi-file project navigation and the nested-flow, modernization, and BPMN examples remain explicitly labeled demo fixtures; API failures never fall back to them.
+- The API accepts a single `.java` file or a ZIP project (multi-file, packages, source levels Java 8–21); Maven/Gradle import and external dependencies are not supported (unresolved calls are reported honestly).
+- The parser produces AST data, per-method CFGs, Big O estimates with findings, a project graph, `replace_condition` and `move_statement` edits, and lookup-loop optimization proposals. The Rust API exposes these through the revisioned endpoints in `apps/api/openapi.yaml`, plus rollback, export and a runtime benchmark.
+- The web app currently covers source editing, method CFG/Big O findings, Project Overview (project graph), `replace_condition`, revision diff and behavioral verification. Optimizations, `move_statement`, benchmark, rollback, export and ZIP upload exist in the API but are not wired into the UI yet (see `docs/CASE_COMPLIANCE.md`).
+- The `/demo` route and its synthetic fixtures described in earlier versions are not present in `apps/web`; every view reads real API data.
+- See `docs/SOLUTION.md` for architecture, supported Java scope and limitations.
 
 ## Core concepts
 

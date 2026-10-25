@@ -1,119 +1,103 @@
 # Case compliance — Java Blueprints
 
-Date: 2026-10-24 · Branch: `main` @ `e07b383` (clean tree, in sync with `origin/main`)
-Method: requirement-by-requirement audit of `docs/case-brief.md` (extracted from
-`Визуальная среда программирования.pdf`, 12 slides) against actual source code and test runs.
-Status legend: **Done** (implemented + test evidence) · **Partial** · **Missing** · **Unverified**.
+Date: 2026-10-25 · Branch `main` @ `53f5484` (multi-file engine merged).
+Method: requirement-by-requirement audit of the case PDF (12 slides, read in full including slide 4 mockup
+graphics) against source code and test runs. Backend and frontend are rated separately.
+Status: ✅ done · 🟡 partial · ❌ missing · ❓ not verified. Evidence kinds are kept apart:
+**code** (file reference), **test** (name), **run** (executed in this audit), **claimed** (docs only).
 
-Updated 2026-10-24 after the `feat/project-overview` integration: the project graph endpoint
-(`GET /projects/{id}/graph`) and the Project Overview tab are now implemented — R1/R5, item 1 of
-«Missing or incomplete», priority P1.4, next step 4 and the «stale docs» risk are updated accordingly.
+## Runs behind this document
+
+| Run | Result |
+|---|---|
+| `cargo test` (apps/api) | lib 67 passed, 7 ignored. The three HTTP e2e files fail with «JAR is older than the parser sources» (`apps/api/tests/common/mod.rs:49`) when the JAR mtime is older than the sources (happens right after a merge/checkout). Rebuild with `./dev parser-build`. |
+| same with a fresh-mtime copy of the same JAR (`BLUEPRINTS_REAL_JAR`) | `e2e_analysis` 6/6, `e2e_edit` 13/13, `e2e_import` 6/6 |
+| `cargo test --test docker_e2e -- --ignored` (real Docker + runner image) | 7/7 passed |
+| `cargo test --lib -- --ignored` (7 `real_*` tests, real JAR + JDK + Docker) | 7/7 passed |
+| Parser `mvn test` | **not run** (no `mvn` on the audit machine). `target/surefire-reports` show 161 tests, 0 failures (Acceptance 13, Analysis 20, Cfg 24, ComplexityBenchmark 11, LegacyJava 28, Main 7, Optimizer 8, ProjectAnalyzer 8, ProjectGraph 2, Semantic 12, StatementMove 9, Transform 19), newer than the JAR; not confirmed by a run. |
+| Web `tsc` / `eslint` / `next build` | **not run** (no `pnpm`, no `node_modules`). Every frontend status below is from reading code. |
+| Parser CLI on `acceptance/Organizer.java` and `acceptance/Main.java` | run directly (see R13/R16) |
 
 ## Requirement matrix
 
-| # | Case ref | Requirement | Status | Implementation | Test evidence | Remaining work |
+Mandatory = case slides 2, 3, 5, 6 (gate), 7, 10, 11. Optional = slide 6 decomposition, slide 8 bonus.
+
+| ID | Slide | Requirement | Backend | Frontend | Evidence | Gap |
 |---|---|---|---|---|---|---|
-| R1 | P2 | Web tool for ≈1000-line Java monolith; program understood as code **and** as graph | Done | `apps/web` (upload panel, workspace), `apps/api` (projects), `apps/parser` (AST+CFG+project graph) | Parser `AcceptanceTest` on 976-line `Organizer.java`; API `upload_*` tests | None — project graph visible in UI (Project Overview tab, see R5) |
-| R2 | P2 | Key contract: after any transformation, automated tests confirm behavior preserved | Done | `apps/api/src/runner.rs`, `POST /projects/{id}/verify`, per-case stdout/stderr/exit comparison | API `verify_*` tests (8), opt-in `real_container_http_verification` (real Docker) **passed** | UI should encourage meaningful test cases; reports stored per project |
-| R3 | P3 | 01 Load `.java` | Done | `upload-panel.tsx` → `POST /projects` (multipart, 2 MiB limit, basename sanitization) | API upload tests | None (single file per project — matches case) |
-| R4 | P3 | 02 Parse code (AST, diagnostics, semantics) | Done | `apps/parser`: JDT AST + resolved bindings, `AstJson.java`, semantic diagnostics | `SemanticTest` (12), `MainTest` (7), partial-status handling | See R12 for scope checklist formalization |
-| R5 | P3 | 03 Build graph | Done | Per-method CFG `CfgBuilder.java` (if/switch/while/do/for/enhanced-for/try/break/continue/throw/assert/yield); project-level dependency graph `ProjectGraph.java` (types, calls, ownership, unresolved) | `CfgTest` (24), `ProjectGraphTest` (2) | None — exposed via `GET /projects/{id}/graph` + Project Overview tab |
-| R6 | P3 | 04 Explore and edit (two-way sync) | Partial | Source editor (CodeMirror) + optimistic autosave (`project-workspace.tsx`); branch-node condition editing → `replace_condition` via ASTRewrite (`Transform.java`) → new revision; re-analysis on save; revision diff view | Parser `TransformTest` (19); API `transform_*` tests; opt-in `real_ast_rewrite_http_end_to_end` **passed** | Only ONE edit operation (condition). No block move/add/remove, no method extraction; graph-side editing limited to branch conditions |
-| R7 | P3 | 05 Assemble Java | Done | ASTRewrite output committed as new source revision (validated, reparsed, diagnostics-checked) | Same as R6 | Broader operations would strengthen (R6) |
-| R8 | P3 | 06 Run and compare | Done | Docker runner compiles baseline + candidate, runs identical stdin cases, compares observations | `real_container_http_verification` **passed**; failure/timeout/overflow paths tested | Scenario quality depends on user-supplied cases (see risks) |
-| R9 | P5 | Big O defect diagnosis: complexity + defect + risk + recommendation; code line + graph node + explanation + fix with expected effect; verifiable diagnosis | Done (static) | `ComplexityAnalyzer.java`: monomial cost model over size variables, `O(...)` rendering, findings `repeated_collection_scan` (warning) and `nested_collection_iteration` (info) with message/explanation/recommendation/source_range/node_ids | `AnalysisTest` (17), `AcceptanceTest` | No runtime before/after measurement — "expected effect" is static (Big O only), no timings |
-| R10 | P6 | Monolith decomposition into responsibilities (Parser/Analyzer/Optimizer/Main) | Missing | — (explicitly optional in case: «ПРИ НЕОБХОДИМОСТИ») | — | Not started; would be a model-level refactor operation |
-| R11 | P7 | Mandatory Java scope: (1) core language + java.lang, (2) console I/O (Scanner, Formatter, String.format/printf, StandardCharsets), (3) java.util collections (List/Set/Map + impls, Iterator, Collections, Arrays, Comparator, Optional, *.of), (4) exceptions (checked/unchecked, throws/catch, custom via inheritance) | Partial | JDT parses all Java syntactically; bindings resolved against JDK 21; CFG covers the required control flow; acceptance monolith exercises classes/interfaces/records/enums, generics, collections, exceptions, switch, loops, Scanner | `AcceptanceTest` (13) over `Organizer.java` (976 lines, Russian strings incl. Cyrillic) | No systematic checklist test per P7 item (e.g., Formatter, Comparator, Optional, List.of, custom checked exceptions untested as explicit cases); the case's «technical document» with the full construct list is **not in the repo** |
-| R12 | P8 | Bonus scope (record, generics, lambdas, java.util.function, Stream API/Collectors) | Partial | Records/generics/lambdas parse & run (JDK 21 image, JDT); seen in fixture (record `Note`) | `AcceptanceTest` | No explicit Stream API verification |
-| R13 | P8 | Out-of-scope boundaries (concurrency, reflection, files, network, java.time not required) | Done (n/a) | No support claimed; runner image is plain JDK | — | None |
-| R14 | P9 | AI/libraries freely allowed; organizer-prepared monoliths | n/a (rule) | Uses JDT, React Flow, Axum, Next — allowed | — | None |
-| R15 | P10 | Final demo: full path on one example (load → visualize → change → generate → run → compare) | Unverified | All steps exist end-to-end at API level; UI wiring present (`project-workspace.tsx` verify panel, CFG viewer, transform) | API-level e2e tests passed (R2/R6/R8) | No scripted demo run captured; browser session not executed during this audit (see risks) |
-| R16 | P11 | Deliverable 1: source repo + startup instructions | Done | `README.md` (host + Nix install, `./dev up`), component READMEs | Manual: `./dev` commands verified runnable via nix shell | Keep fresh with code |
-| R17 | P11 | Deliverable 2: web demo (link or reproducible build) | Done | `pnpm build` succeeds (Next 16, routes `/`, `/projects/[projectId]`) | `next build` **passed** this audit | Deploy/hosting for the deadline |
-| R18 | P11 | Deliverable 3: behavior check — automated tests + their run results | Partial | verify pipeline + tests exist | verify tests passed | Need a captured demo report (verify JSON for a real monolith scenario) as submission evidence |
-| R19 | P11 | Deliverable 4: solution description (architecture, supported scope, limitations) | Partial | Root `README.md` (architecture, data flow, components) | — | Dedicated solution doc with explicit scope/limitations (this report helps; add `docs/SOLUTION.md`) |
-| R20 | P4 | Web interface concept (mockup slide) | Unverified | Real IDE-like workspace implemented | — | Cannot compare against the mockup: slide 4 is graphics-only and image processing is out of scope for this session |
+| R1 | 2 | Web tool for a ≈1000-line monolith | ✅ | 🟡 ❓ | test `e2e_analysis::organizer_monolith_workflow_still_works_end_to_end` (976 lines) | UI not run |
+| R2 | 2 | Program understood as code and as graph | ✅ | ✅ | `CfgBuilder.java`, `ProjectGraph.java`, `CfgTest`, `ProjectGraphTest`; UI mounts both viewers (`project-workspace.tsx:500,513`) | — |
+| R3 | 2 | Helps improve the program | ✅ | 🟡 | `Optimizer.java`, `GET /optimizations`; run: 1 proposal on Organizer, 2 on `acceptance/Main.java` | UI shows only text recommendations |
+| R4 | 2 | **Key contract**: tests confirm behavior preserved | 🟡 | 🟡 | `runner.rs` `compare_observations` (stdout, stderr, exit code, timeout, overflow), `docker_e2e` 7/7 | Gate is only as strong as the scenarios; see Honest gaps |
+| R5 | 3 | 01 Load `.java` | ✅ | ✅ | `single_file_uploads_keep_working_unchanged`, ZIP `e2e_import` 6/6; `upload-panel.tsx` | UI accepts `.java` only |
+| R6 | 3 | 02 Parse | ✅ | ✅ | JDT with bindings; `SemanticTest`, `MainTest` (surefire) | — |
+| R7 | 3 | 03 Build graph | ✅ | ✅ | CFG + project graph | methods without body have no CFG |
+| R8 | 3 | 04 Explore and edit, «Java ↔ блок-схема» two-way | 🟡 | 🟡 | `replace_condition`, `move_statement`, optimizations, rollback: `e2e_edit` 13/13, `TransformTest`, `StatementMoveTest` | no block add/remove/drag, no method extraction; UI exposes only `replace_condition` + text editing |
+| R9 | 3 | 05 Assemble Java | ✅ | ✅ | ASTRewrite → validated new revision; `real_ast_rewrite_http_end_to_end` | — |
+| R10 | 3 | 06 Run and compare | ✅ | ✅ | `real_container_http_verification`, `docker_e2e` | — |
+| R11 | 3 | Mandatory finish: full path | 🟡 | 🟡 | `real_optimize_verify_and_benchmark_end_to_end`, `organizer_workflow_runs_in_the_real_runner` | path runs, but verify is empty on Organizer; UI lacks the optimize step |
+| R12 | 4 | UI concept (mockup) | 🟡 | 🟡 | see «Mockup comparison» | no block palette, Debug, metrics tab, optimize/export buttons |
+| R13 | 5 | Complexity of method/fragment | ✅ | ✅ | `ComplexityAnalyzer.java`; run: Organizer 30/103 methods `unknown`, Main 12/67 | frequent `unknown` |
+| R14 | 5 | Defect + risk + recommendation | ✅ | ✅ | findings `repeated_collection_scan`, `nested_collection_iteration`; `cfg-viewer.tsx:416-423` | risk is inside `explanation`; two finding kinds |
+| R15 | 5 | Code line and graph node | ✅ | ✅ | `source_range`, `node_ids`; `cfg-viewer.tsx:220,436-444` | — |
+| R16 | 5 | Fix with expected effect | 🟡 | ❌ | `/optimizations` (`method_before/after`, `scan_before/after`), `POST /benchmark` | run: on `acceptance/Main.java` the slide-5 method `mergeDuplicateItemsQuadratic` gets `method_before: "unknown"` (user constructor has no cost model, `ComplexityAnalyzer.java:1749`); UI shows no effect |
+| R17 | 5 | Diagnosis verifiable | 🟡 | 🟡 | `confidence`, `assumptions`, `limitations`, honest `unknown`; benchmark verdicts | some patterns not modelled |
+| R18 | 6 | Auto decomposition (optional) | ❌ | ❌ | — | not started |
+| R19 | 6 | Quality gate: build + tests = preserved | 🟡 | 🟡 | `/verify` compiles and runs both revisions | see R4 |
+| R20 | 7 | Mandatory Java scope 1–4 | 🟡 | n/a | `AcceptanceTest::coversMandatoryLanguageConstructs`, `LegacyJavaCompatibilityTest` | no per-item checklist test |
+| R21 | 7 | Case technical document | ❌ | n/a | — | not in repo; organizers' artifact |
+| R22 | 8 | Bonus: record, **enum**, generics, lambda, `java.util.function`, Stream | 🟡 | n/a | parsed/compiled in acceptance fixtures; CFG loss for enum-constant bodies / anonymous classes claimed in `docs/CASE_AUDIT.md`, not re-verified | no per-item test |
+| R23 | 8 | Out-of-scope list | n/a | n/a | — | — |
+| R24 | 10 | Demo: monolith → graph → diagnosis → improvement → tests | 🟡 | 🟡 | see R11 | no scripted demo, no saved report |
+| R25 | 11 | Deliverables 01–04 | 🟡 | n/a | 01 `README.md`, `./dev`; 02 `./dev up` (not run); 03 tests exist, no saved run report; 04 `docs/SOLUTION.md` | see priorities |
 
-Mandatory vs optional: **mandatory** — R1–R9, R11, R15–R19. **Optional** — R10 (decomposition), R12 (bonus scope). Evaluation axes (P10): scope, behavior preservation, diagnosis/optimization usefulness, UI clarity, implementation/demo quality.
+Percentages (mandatory only, counting R1–R11, R13–R17, R19, R20, R24, R25 = 20): backend 11 ✅ / 9 🟡 / 0 ❌;
+frontend (18 applicable, R20/R25 are not UI items) 9 ✅ / 8 🟡 / 1 ❌ (R16). UI never executed in this audit.
 
-## Verified functionality (executed during this audit)
+## Mockup comparison (slide 4)
 
-- **API (Rust):** `cargo test` → 36 passed, 0 failed, 2 ignored.
-- **Opt-in integration (real deps):** `real_ast_rewrite_http_end_to_end` and
-  `real_container_http_verification` (Docker daemon + prebuilt `java-blueprints-runner:java21`) → both **passed**.
-- **Parser (JDT):** `mvn test` → 94 passed (Acceptance 13, Analysis 17, Cfg 24, Main 7, ProjectGraph 2, Semantic 12, Transform 19).
-- **Web:** `pnpm install --frozen-lockfile` OK, `eslint` clean, `next build` OK, `tsc --noEmit` OK **after** build.
-- Toolchain obtained from the project's own `flake.nix` via `nix develop` (no tools installed).
+The text brief only had a title; the slide is a full mockup.
 
-## Missing or incomplete
+| Mockup element | Backend | Frontend |
+|---|---|---|
+| Project file tree (`src/…`) | ✅ `GET /files` | ❌ |
+| Block palette (Variable, Condition, Loop, Method, Operation, Return) | ❌ | ❌ |
+| Flowchart with typed nodes and problem markers | ✅ | ✅ |
+| Analysis panel: Problems / Recommendations / Metrics | ✅ `/findings`, `/complexity` | 🟡 recommendations only |
+| «Current O(n²) → after O(n log n)» | ✅ `/optimizations` | ❌ |
+| «Expected speedup up to 5.2x» | ✅ measurable via `POST /benchmark` (value must come from measurement, never hardcoded) | ❌ |
+| Tabs: Java code / Console / Test results (per-test list) | ✅ | 🟡 code + verify panel |
+| Toolbar Import / Export Java / Optimize / Run / Debug | ✅ import, export, optimize, run | 🟡 import, run; ❌ export, optimize, debug |
 
-1. **Project-level graph exposure** — **resolved** in the `feat/project-overview` integration:
-   `GET /api/v1/projects/{id}/graph` (200 `{revision, graph: object|null}` — `null` when the
-   parser could not build the graph; 404/409 per contract; 500 `graph_invalid`) plus the
-   Project Overview tab (`project-graph-viewer.tsx`).
-2. **Editing breadth** — one operation (`replace_condition`). The case's «исследовать и править»
-   and the podcast's «перетащить блоки» imply broader block-level editing (move/add/remove,
-   extract method). Not implemented.
-3. **Runtime performance measurement** — none. Diagnosis gives static Big O + recommendation
-   (satisfies P5 wording «ожидаемый эффект» only statically; the podcast's 5.2× speedup example
-   would need timings, which the PDF does not explicitly require).
-4. **Decomposition** (optional P6) — absent.
-5. **Formal P7 scope checklist tests** — coverage is implicit via the acceptance monolith; no
-   per-item tests for Formatter, Comparator, Optional, `List.of/Set.of/Map.of`, custom checked
-   exceptions, `String.format/printf`, StandardCharsets round-trip.
-6. **Case «technical document»** with the full construct list (referenced on P7) is not in the repo.
-7. **Submission evidence** — no captured verify report for a demo monolith; no scripted demo.
+## Contract mismatches (frontend ↔ openapi)
 
-## Technical risks
+- `Project` in `apps/web/src/lib/api.ts:1-6` omits `kind` and `file_count` (required in `openapi.yaml`, schema `Project`).
+- 13 operations are not consumed by the UI: `/files`, `/files/{path}`, `/complexity`, `/findings`, `/optimizations`
+  (+`preview`, `apply`), `/cfg-edits/preview|apply`, `/rollback`, `/revisions/{from}/diff/{to}`, `/benchmark`, `/export`.
+- `openapi.yaml` (schema `Project`, field `kind`) says archives reject `/verify`; the `/verify` description and
+  `real_archive_project_verify_and_benchmark` say archives are accepted. The schema text is stale.
+- `project-workspace.tsx:737` tells users that runtime is not measured; the API now measures it (`/benchmark`).
 
-- **Runner is not a formal sandbox** (acknowledged in `apps/runner/README.md`): fine for a local
-  hackathon demo; do not expose to untrusted traffic.
-- **Verification fidelity = scenario fidelity**: `verify` compares stdout/stderr/exit for
-  user-supplied stdin cases; weak/empty cases give a green gate. UI defaults to one empty case —
-  guide users (or ship example cases) to make the «quality gate» meaningful.
-- **Complexity estimator is method-local and conservative** (no call graph; unknown calls →
-  `unknown`). Nested-loop findings trigger on linear-collection loops with a lookup shape; other
-  hot patterns (e.g., repeated `contains` on `ArrayList` without a loop) may be missed.
-- **Bleeding-edge toolchain**: Next.js 16 + React 19 with build-time-generated global types —
-  fresh-clone `./dev web-check` fails at the `tsc` step before `build` has generated
-  `.next/types` (ordering issue in `dev` script).
-- **Stale docs mislead** — **resolved** in the `feat/project-overview` integration:
-  `apps/parser/README.md` and `.serena/memories/tech_stack.md` now correctly describe complexity
-  analysis, transformations and the project graph.
-- **Single-file scope**: multi-file uploads unsupported by design; acceptable for the case
-  («в одном монолите») but the organizers' monoliths must be single-file to be processable.
+## Honest gaps (what a jury can hit)
+
+1. **Empty verify on the reference monolith.** `Organizer.main` neither reads stdin nor calls
+   `linkTasksToContacts`/`linkTasksIndexed` (only definitions at `Organizer.java:405,420`), so any change to the
+   optimized methods keeps verify green. Established by static search; the mutant was not executed in this audit.
+2. **Better demo monolith unused.** `acceptance/Main.java` (801 lines, stdin menu, slide-5 defect) is not
+   referenced by any test, and its `merge_inventory` prints elapsed milliseconds (`Main.java:690-693`), which makes
+   output nondeterministic.
+3. **Runner behaviour:** «both timed out» counts as a failure (`runner.rs:1170`); a scenario set of empty stdin is
+   accepted without any warning.
+4. **Complexity:** a call to any unmodelled code makes the method `unknown`; user-defined constructors are `unknown`.
+5. **Stale test gate:** the e2e JAR-freshness check fails after a merge until the JAR is rebuilt.
+6. **Not verified:** the web build, parser `mvn test`, the browser flow.
 
 ## Priorities
 
-**P0 — required for a compliant submission**
-1. Scripted end-to-end demo on one monolith with a captured verify report (R15/R18): pick
-   `Organizer.java`, apply one `replace_condition`, run `verify` with real stdin cases, save the
-   JSON report as submission evidence.
-2. Formalize P7 scope coverage: add a parser test suite that walks the mandatory-construct
-   checklist (R11) so «поддержка обязательного Java scope» is provable, not asserted.
-3. Solution description deliverable (R19): `docs/SOLUTION.md` — architecture, supported scope,
-   limitations (this report can seed it).
+**P0** — demo whose verify is meaningful (stdin-driven monolith that reaches the optimized methods, plus a mutant
+test that must fail); user constructors as O(1) when provably so; verify warnings for empty scenarios / unreachable
+changes; saved demo report; `docs/SOLUTION.md` (done).
+**P1** — UI: optimizations (preview/apply with assumptions), benchmark result, export, ZIP upload, `Project.kind`;
+per-item Java-scope checklist test.
+**P2** — `move_statement` and rollback in UI; decomposition of nested static classes into files (slide 6, optional).
 
-**P1 — high value, moderate cost**
-4. **Done (integration):** expose `project_graph` via a read endpoint and a UI tab —
-   `GET /projects/{id}/graph` + Project Overview tab (parser work already done & tested).
-5. Add 1–2 more edit operations (e.g., `replace_expression`, add/remove statement) to make
-   «изменить» credible beyond condition swapping; include before/after complexity in the transform
-   UI response (re-analysis already happens on the new revision).
-6. Fix `dev` web-check ordering (run build before bare tsc) and refresh stale docs
-   (parser README, serena memories).
-
-**P2 — optional / later**
-7. Runtime before/after performance measurement for the optimized fragment (timings in the
-   runner or a bench harness) to quantify the «expected effect».
-8. Responsibility decomposition (P6, optional) as a model-level refactoring operation.
-9. Bonus scope verification (Stream API/Collectors) and `ROADMAP.md`.
-
-## Recommended next steps
-
-1. `docs/SOLUTION.md` + fix stale parser README (docs-only, no code risk).
-2. Parser: checklist test module for P7 constructs (snippets per item; assert parse/CFG/analysis).
-3. Demo: `scripts/demo.sh` — upload Organizer → analyze → replace_condition → verify (stdin cases)
-   → emit report JSON + summary; run it and commit the report as evidence.
-4. **Done (integration):** `GET /projects/{id}/graph` (read from stored artifact) + Project
-   Overview web tab.
+Do not hardcode «5.2x» or any speedup: it is a number from the case mockup, and results must come from `/benchmark`.
