@@ -1,0 +1,420 @@
+{
+  "report_id": "80377f74-834f-45d2-aaa4-01597a12b4ff",
+  "created_at": "2026-10-25T02:50:27.598439Z",
+  "status": "completed",
+  "baseline_revision": 1,
+  "candidate_revision": 2,
+  "settings": {
+    "warmup_iterations": 3,
+    "measured_iterations": 12,
+    "class_loading": "fresh",
+    "iteration_timeout_ms": 10000,
+    "source_level": "21",
+    "main_class": null
+  },
+  "environment": {
+    "runner_image": "java-blueprints-runner:java21",
+    "cpu_limit": "1",
+    "memory_limit": "512m",
+    "network": "none",
+    "baseline_jvm": {
+      "arch": "aarch64",
+      "available_processors": 1,
+      "garbage_collectors": [
+        "Copy",
+        "MarkSweepCompact"
+      ],
+      "java_version": "21.0.12.1",
+      "jvm_flags": [
+        "-Xmx256m",
+        "-XX:+UseSerialGC",
+        "-Djava.security.manager=allow",
+        "-Dfile.encoding=UTF-8"
+      ],
+      "max_heap_bytes": 259522560,
+      "os": "Linux",
+      "vm": "OpenJDK 64-Bit Server VM",
+      "vm_version": "21.0.12.1+1-LTS"
+    },
+    "candidate_jvm": {
+      "arch": "aarch64",
+      "available_processors": 1,
+      "garbage_collectors": [
+        "Copy",
+        "MarkSweepCompact"
+      ],
+      "java_version": "21.0.12.1",
+      "jvm_flags": [
+        "-Xmx256m",
+        "-XX:+UseSerialGC",
+        "-Djava.security.manager=allow",
+        "-Dfile.encoding=UTF-8"
+      ],
+      "max_heap_bytes": 259522560,
+      "os": "Linux",
+      "vm": "OpenJDK 64-Bit Server VM",
+      "vm_version": "21.0.12.1+1-LTS"
+    }
+  },
+  "timings": {
+    "baseline": {
+      "compile_and_setup_ms": 1137,
+      "harness_setup_ms": 984,
+      "benchmark_process_ms": 1249
+    },
+    "candidate": {
+      "compile_and_setup_ms": 1177,
+      "harness_setup_ms": 867,
+      "benchmark_process_ms": 779
+    }
+  },
+  "static_complexity": {
+    "changes": [
+      {
+        "method_id": "Main.DataOptimizer.mergeDuplicateItemsQuadratic(List<Item>)",
+        "before": "O(n^2)",
+        "after": "O(n*m)",
+        "confidence_before": "medium",
+        "confidence_after": "medium"
+      }
+    ],
+    "unchanged_methods": 63,
+    "note": "Static estimates from the source of each revision (jdt-static-cost-model); they say nothing about measured time. `unknown` means no bound could be justified."
+  },
+  "functional": {
+    "equivalent_on_all_workloads": true,
+    "non_equivalent_workloads": [],
+    "note": "Identical stdout and outcome on the supplied workloads; this is not a proof of equivalence."
+  },
+  "runtime": {
+    "workloads": [
+      {
+        "name": "merge-150",
+        "declared_size": 150,
+        "stdin_sha256": "6703a2805bc5f327e1bbd71b8fdcaecb389e7901bedff11bf596bab9f0dba2ea",
+        "stdin_bytes": 7071,
+        "baseline": {
+          "status": "completed",
+          "samples_ns": [
+            6198167,
+            4833833,
+            3837125,
+            3389959,
+            58577208,
+            3716875,
+            3399833,
+            3155542,
+            3160916,
+            2687208,
+            2794167,
+            2688000
+          ],
+          "warmup_ns": [
+            21703584,
+            9807292,
+            56769125
+          ],
+          "stdout_sha256": "60276f57d2b071fec409f40a36e79c316259dc6cf8907f5592cce116f94c242f",
+          "stdout_bytes": 15199,
+          "outcome": "returned",
+          "stable_across_iterations": true
+        },
+        "candidate": {
+          "status": "completed",
+          "samples_ns": [
+            63308250,
+            4306750,
+            3959083,
+            2947292,
+            2632333,
+            2355708,
+            2321167,
+            2696750,
+            2580833,
+            2867709,
+            2542417,
+            2252459
+          ],
+          "warmup_ns": [
+            21726917,
+            8559625,
+            6059917
+          ],
+          "stdout_sha256": "60276f57d2b071fec409f40a36e79c316259dc6cf8907f5592cce116f94c242f",
+          "stdout_bytes": 15199,
+          "outcome": "returned",
+          "stable_across_iterations": true
+        },
+        "baseline_stats": {
+          "iterations": 12,
+          "median_ns": 3394896,
+          "min_ns": 2687208,
+          "max_ns": 58577208,
+          "p25_ns": 3065198,
+          "p75_ns": 4086302,
+          "relative_spread": 0.3007762240728435,
+          "mean_ns": 8203236.083333333,
+          "stddev_ns": 15895532.636141432,
+          "mad_ns": 521479
+        },
+        "candidate_stats": {
+          "iterations": 12,
+          "median_ns": 2664542,
+          "min_ns": 2252459,
+          "max_ns": 63308250,
+          "p25_ns": 2495740,
+          "p75_ns": 3200240,
+          "relative_spread": 0.2643981592333692,
+          "mean_ns": 7897562.583333333,
+          "stddev_ns": 17461506.413476877,
+          "mad_ns": 295792
+        },
+        "equivalent": true,
+        "verdict": "insufficient_evidence",
+        "speedup": null,
+        "speedup_ci95": [
+          0.9485258259903602,
+          1.6625387231165183
+        ],
+        "p_value": 0.05309782098521687,
+        "notes": [
+          "the medians differ but the evidence is not strong enough for a claim (significance, effect size, confidence interval and interquartile separation must all agree)"
+        ]
+      },
+      {
+        "name": "merge-600",
+        "declared_size": 600,
+        "stdin_sha256": "22fd7db0199bc760749b9e3e1e01af13acd2df0cda11e6d4b7653a918becb024",
+        "stdin_bytes": 28221,
+        "baseline": {
+          "status": "completed",
+          "samples_ns": [
+            8458083,
+            64194042,
+            9405417,
+            8942625,
+            8304042,
+            57521042,
+            8625667,
+            7993250,
+            7608542,
+            7466833,
+            9741875,
+            8525083
+          ],
+          "warmup_ns": [
+            61140584,
+            9666292,
+            8951167
+          ],
+          "stdout_sha256": "3d97f8dee8f1cc706db1e0d2a5ffaab2fadcdbfed7b062fa3a9da29ff9d0c144",
+          "stdout_bytes": 59750,
+          "outcome": "returned",
+          "stable_across_iterations": true
+        },
+        "candidate": {
+          "status": "completed",
+          "samples_ns": [
+            4486000,
+            57112416,
+            5168500,
+            4823917,
+            5180042,
+            4518167,
+            4024250,
+            3972875,
+            51208500,
+            4737584,
+            4430333,
+            4061750
+          ],
+          "warmup_ns": [
+            5793834,
+            4547792,
+            4810834
+          ],
+          "stdout_sha256": "3d97f8dee8f1cc706db1e0d2a5ffaab2fadcdbfed7b062fa3a9da29ff9d0c144",
+          "stdout_bytes": 59750,
+          "outcome": "returned",
+          "stable_across_iterations": true
+        },
+        "baseline_stats": {
+          "iterations": 12,
+          "median_ns": 8575375,
+          "min_ns": 7466833,
+          "max_ns": 64194042,
+          "p25_ns": 8226344,
+          "p75_ns": 9489532,
+          "relative_spread": 0.14730411206507005,
+          "mean_ns": 17232208.416666668,
+          "stddev_ns": 20437498.428870667,
+          "mad_ns": 706084
+        },
+        "candidate_stats": {
+          "iterations": 12,
+          "median_ns": 4627876,
+          "min_ns": 3972875,
+          "max_ns": 57112416,
+          "p25_ns": 4338187,
+          "p75_ns": 5171386,
+          "relative_spread": 0.18003917996074226,
+          "mean_ns": 12810361.166666666,
+          "stddev_ns": 19359699.04005101,
+          "mad_ns": 546395
+        },
+        "equivalent": true,
+        "verdict": "faster",
+        "speedup": 1.8529828802673192,
+        "speedup_ci95": [
+          1.6457555749547976,
+          2.126492086775813
+        ],
+        "p_value": 0.0029457841570657006,
+        "notes": []
+      },
+      {
+        "name": "merge-1200",
+        "declared_size": 1200,
+        "stdin_sha256": "f3ced875a05d6ba5017fe528fb73e6d5e0f533663a3cd8191ccce7ae1abf4c56",
+        "stdin_bytes": 56421,
+        "baseline": {
+          "status": "completed",
+          "samples_ns": [
+            13668209,
+            16116084,
+            14173208,
+            58770750,
+            14791875,
+            13262250,
+            66407750,
+            14458458,
+            13018958,
+            61236541,
+            14245416,
+            12726708
+          ],
+          "warmup_ns": [
+            13942625,
+            62769042,
+            15825125
+          ],
+          "stdout_sha256": "7b161a918ca4c92b28d8830e0e4a4f1b0c919917cad880798cc5b2e778ef13fe",
+          "stdout_bytes": 119150,
+          "outcome": "returned",
+          "stable_across_iterations": true
+        },
+        "candidate": {
+          "status": "completed",
+          "samples_ns": [
+            6085333,
+            5592375,
+            5374583,
+            5207458,
+            4899375,
+            4610083,
+            44714500,
+            5838250,
+            5377583,
+            6512667,
+            5130500,
+            5016042
+          ],
+          "warmup_ns": [
+            6295417,
+            6056375,
+            56209625
+          ],
+          "stdout_sha256": "7b161a918ca4c92b28d8830e0e4a4f1b0c919917cad880798cc5b2e778ef13fe",
+          "stdout_bytes": 119150,
+          "outcome": "returned",
+          "stable_across_iterations": true
+        },
+        "baseline_stats": {
+          "iterations": 12,
+          "median_ns": 14351937,
+          "min_ns": 12726708,
+          "max_ns": 66407750,
+          "p25_ns": 13566719,
+          "p75_ns": 26779751,
+          "relative_spread": 0.9206445095181229,
+          "mean_ns": 26073017.25,
+          "stddev_ns": 21829574.481693998,
+          "mad_ns": 1211333
+        },
+        "candidate_stats": {
+          "iterations": 12,
+          "median_ns": 5376083,
+          "min_ns": 4610083,
+          "max_ns": 44714500,
+          "p25_ns": 5101886,
+          "p75_ns": 5900021,
+          "relative_spread": 0.14846031953003702,
+          "mean_ns": 8696562.416666666,
+          "stddev_ns": 11354981.58456524,
+          "mad_ns": 411104
+        },
+        "equivalent": true,
+        "verdict": "faster",
+        "speedup": 2.6695899226258226,
+        "speedup_ci95": [
+          2.3843975506358928,
+          7.05131469053938
+        ],
+        "p_value": 0.0003081177902299892,
+        "notes": [
+          "high run-to-run spread (interquartile range above 50% of the median)"
+        ]
+      }
+    ],
+    "overall": {
+      "equivalent_on_all_workloads": true,
+      "verdict": "no_significant_difference",
+      "summary": "mixed: 2 faster, 0 slower, 1 without a supported claim"
+    }
+  },
+  "baseline_compilation": {
+    "status": "completed",
+    "exit_code": 0,
+    "timed_out": false,
+    "output_overflow": false,
+    "stdout": {
+      "utf8": "",
+      "base64": "",
+      "truncated": false
+    },
+    "stderr": {
+      "utf8": "",
+      "base64": "",
+      "truncated": false
+    },
+    "main_class": "Main",
+    "diagnostics": []
+  },
+  "candidate_compilation": {
+    "status": "completed",
+    "exit_code": 0,
+    "timed_out": false,
+    "output_overflow": false,
+    "stdout": {
+      "utf8": "",
+      "base64": "",
+      "truncated": false
+    },
+    "stderr": {
+      "utf8": "",
+      "base64": "",
+      "truncated": false
+    },
+    "main_class": "Main",
+    "diagnostics": []
+  },
+  "limitations": [
+    "Timings are for in-JVM calls of main(String[]) inside a Docker container with 1 CPU and 512 MB; absolute numbers do not transfer to other machines.",
+    "With fresh class loaders every iteration includes class loading and static initialisation; JIT-compiled JDK code is shared across iterations, the program's own classes are re-loaded. Shared mode reuses classes but static state persists between iterations.",
+    "Warmup iterations are discarded; steady state is not proven. JIT, GC and CPU frequency scaling add noise, which is why a claim needs at least 10 iterations, a significant Mann-Whitney test, a bootstrap interval excluding 1 and separated interquartile ranges.",
+    "Container creation, source copy, javac and harness compilation are timed separately and are not part of algorithm runtime.",
+    "Equivalence means identical stdout and identical outcome (return, exit code or exception type and message) on the provided workloads; it is not a proof of equivalence. stderr is not compared.",
+    "Programs that use threads, wall-clock time, randomness without a fixed seed or files may be reported unstable.",
+    "A speedup on the supplied sizes says nothing about other input sizes; use several sizes to see how the difference scales."
+  ]
+}

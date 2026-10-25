@@ -1,0 +1,91 @@
+{
+  "affected_files": [
+    "Main.java"
+  ],
+  "applicability": "applicable",
+  "assumptions": [
+    {
+      "id": "null_and_exception_timing",
+      "text": "If an element of 'items' is null, or its key accessor throws, the original code fails only when the scan reaches that element. The optimized code reads every element's key while building the index, so it may fail earlier or even when the enclosing loop would not run at all."
+    },
+    {
+      "id": "outer_key_non_null",
+      "text": "The key 'a.getId()' is never null when 'items' is scanned: the original calls equals() on it and would throw a NullPointerException, while the index lookup treats null as a plain miss."
+    },
+    {
+      "id": "single_threaded",
+      "text": "No other thread modifies 'items' or the element keys while the enclosing loop runs."
+    }
+  ],
+  "complexity": {
+    "method_before": "O(n^2)",
+    "note": "n = iterations of the enclosing loop, m = elements of 'items', k = matching pairs (the matched body runs for each, as before). HashMap get/put are O(1) in expectation for well-distributed hash codes, not a worst-case bound. Only the replaced scan changes; the method's other costs stay.",
+    "scan_after": "O(n + m + k)",
+    "scan_before": "O(n*m)"
+  },
+  "file": "Main.java",
+  "id": "opt_25d3944e0232622d",
+  "inner_loop": {
+    "end_line": 528,
+    "file": "Main.java",
+    "length": 432,
+    "line": 521,
+    "start": 17541
+  },
+  "key": {
+    "element_expression": "b.getId()",
+    "equality": "equals()",
+    "lookup_expression": "a.getId()",
+    "type": "String"
+  },
+  "method_id": "Main.DataOptimizer.mergeDuplicateItemsQuadratic(List<Item>)",
+  "not_applicable_reasons": [],
+  "outer_loop": {
+    "end_line": 531,
+    "file": "Main.java",
+    "length": 772,
+    "line": 516,
+    "start": 17298
+  },
+  "preconditions": [
+    {
+      "detail": "The inner loop body is a single 'if' comparing a key of each element with a value from outside the scan.",
+      "id": "lookup_shape",
+      "status": "satisfied"
+    },
+    {
+      "detail": "Key equality is equals() on String (consistent with hashCode() and symmetric, so the receiver side does not matter), identical to HashMap key equality.",
+      "id": "key_equality",
+      "status": "satisfied"
+    },
+    {
+      "detail": "Both key expressions are side-effect free (fields and trivial accessors only), so evaluating them once is equivalent.",
+      "id": "key_purity",
+      "status": "satisfied"
+    },
+    {
+      "detail": "Matched body has no trailing 'break': every match is processed, in iteration order.",
+      "id": "control_flow",
+      "status": "satisfied"
+    },
+    {
+      "detail": "'items' is declared outside the enclosing loop, so the index can be built before it.",
+      "id": "collection_reference",
+      "status": "satisfied"
+    },
+    {
+      "detail": "The enclosing loop only calls methods that cannot change 'items' or the keys, and assigns only local variables.",
+      "id": "collection_not_modified",
+      "status": "satisfied"
+    },
+    {
+      "detail": "The enclosing loop sits in a block where the index can be declared before it.",
+      "id": "insertion_point",
+      "status": "satisfied"
+    }
+  ],
+  "rule": "nested_scan_to_hashmap",
+  "shape": "all_matches",
+  "summary": "Build a HashMap<String, List<element>> from 'items' once before the enclosing loop and look up 'a.getId()' instead of scanning.",
+  "title": "Replace the nested scan of 'items' with a HashMap index"
+}

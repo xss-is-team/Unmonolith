@@ -1,0 +1,34 @@
+{
+  "method_id": "Main.DataOptimizer.mergeDuplicateItemsQuadratic(List<Item>)",
+  "file": null,
+  "time_complexity": "O(n*m)",
+  "space_complexity": null,
+  "confidence": "medium",
+  "analysis_engine": "jdt-static-cost-model/2",
+  "reason": "Dominant term n*m: a loop over bMatches combined with a loop over items; sequential loops are additive, the largest wins.",
+  "assumptions": [
+    "n = number of elements in items",
+    "m = number of elements in bMatches",
+    "List.get/set/add are treated as O(1), assuming a random-access list such as ArrayList.",
+    "Hash-based Map/Set operations are treated as O(1) on average.",
+    "Constructor of Item only stores its arguments into fields, so it is O(1)."
+  ],
+  "limitations": [
+    "Static upper-bound estimate from the source; no execution, no profiling.",
+    "Loop bounds come from recognised counter, collection-size and midpoint-search patterns; anything else is unknown.",
+    "A callee is trusted only when it is proven O(1); a callee's cost as a function of its arguments is not tracked.",
+    "Standard-library costs assume typical implementations (see assumptions); user-defined generics and streams are unknown.",
+    "Space complexity is not estimated."
+  ],
+  "source_range": {
+    "file": null,
+    "start": 16552,
+    "length": 1816,
+    "line": 497,
+    "end_line": 538
+  },
+  "cfg_node_ids": [
+    "m52.n5",
+    "m52.n7"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "from_revision": 1,
+  "to_revision": 2,
+  "files": [
+    {
+      "path": "Main.java",
+      "status": "modified",
+      "additions": 7,
+      "deletions": 2,
+      "unified_diff": "--- a/Main.java\n+++ b/Main.java\n@@ -512,14 +512,19 @@\n             List<Item> result = new ArrayList<Item>();\n             Set<String> processedIds = new HashSet<String>();\n \n+            Map<String, List<Item>> itemsById = new HashMap<>();\n+            for (Item b : items) {\n+                itemsById.computeIfAbsent(b.getId(), ignored -> new ArrayList<>()).add(b);\n+            }\n             // Классический вложенный цикл O(n²)\n             for (Item a : items) {\n                 if (processedIds.contains(a.getId())) {\n                     continue;\n                 }\n                 Item combined = new Item(a.getId(), a.getName(), a.getCategory(), a.getPrice(), 0);\n-                for (Item b : items) {\n-                    if (a.getId().equals(b.getId())) {\n+                List<Item> bMatches = itemsById.get(a.getId());\n+                if (bMatches != null) {\n+                    for (Item b : bMatches) {\n                         combined.setQuantity(combined.getQuantity() + b.getQuantity());\n                         if (b.getPrice() > combined.getPrice()) {\n                             combined = new Item(combined.getId(), b.getName(), b.getCategory(), b.getPrice(), combined.getQuantity());\n"
+    }
+  ]
+}

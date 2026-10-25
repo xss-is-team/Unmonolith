@@ -1,0 +1,82 @@
+{
+  "complexity": {
+    "method_id": "Main.DataOptimizer.mergeDuplicateItemsQuadratic(List<Item>)",
+    "file": null,
+    "time_complexity": "O(n^2)",
+    "space_complexity": null,
+    "confidence": "medium",
+    "analysis_engine": "jdt-static-cost-model/2",
+    "reason": "Dominant term n^2: 2 nested loops over items; sequential loops are additive, the largest wins.",
+    "assumptions": [
+      "n = number of elements in items",
+      "Hash-based Map/Set operations are treated as O(1) on average.",
+      "Constructor of Item only stores its arguments into fields, so it is O(1).",
+      "String/StringBuilder operations are treated as O(1) (short strings).",
+      "List.get/set/add are treated as O(1), assuming a random-access list such as ArrayList."
+    ],
+    "limitations": [
+      "Static upper-bound estimate from the source; no execution, no profiling.",
+      "Loop bounds come from recognised counter, collection-size and midpoint-search patterns; anything else is unknown.",
+      "A callee is trusted only when it is proven O(1); a callee's cost as a function of its arguments is not tracked.",
+      "Standard-library costs assume typical implementations (see assumptions); user-defined generics and streams are unknown.",
+      "Space complexity is not estimated."
+    ],
+    "source_range": {
+      "file": null,
+      "start": 16552,
+      "length": 1555,
+      "line": 497,
+      "end_line": 533
+    },
+    "cfg_node_ids": [
+      "m52.n4"
+    ]
+  },
+  "project_findings": {
+    "findings": [
+      {
+        "file": null,
+        "finding": {
+          "explanation": "The loop over 'items' on line 521 searches for a matching element, and it runs once per iteration of the enclosing loop. Each search is O(n), so the nested work grows as O(n*m) (O(n^2) when both loops cover the same data).",
+          "id": "repeated_collection_scan",
+          "message": "Repeated linear scan of 'items' inside a loop",
+          "node_ids": [
+            "m52.n4",
+            "m52.n9"
+          ],
+          "recommendation": "The inner loop does not stop at the first match, so index 'items' as a Map<Key, List<Element>> (group by the compared value) built once before the outer loop. Assumes keys have consistent equals()/hashCode() and 'items' is not modified meanwhile.",
+          "severity": "warning",
+          "source_range": {
+            "end_line": 528,
+            "length": 432,
+            "line": 521,
+            "start": 17541
+          }
+        },
+        "method_id": "Main.DataOptimizer.mergeDuplicateItemsQuadratic(List<Item>)"
+      },
+      {
+        "file": null,
+        "finding": {
+          "explanation": "The loop over 'transactions' on line 542 searches for a matching element, and it runs once per iteration of the enclosing loop. Each search is O(n), so the nested work grows as O(n*m) (O(n^2) when both loops cover the same data).",
+          "id": "repeated_collection_scan",
+          "message": "Repeated linear scan of 'transactions' inside a loop",
+          "node_ids": [
+            "m53.n3",
+            "m53.n4"
+          ],
+          "recommendation": "The inner loop does not stop at the first match, so index 'transactions' as a Map<Key, List<Element>> (group by the compared value) built once before the outer loop. Assumes keys have consistent equals()/hashCode() and 'transactions' is not modified meanwhile.",
+          "severity": "warning",
+          "source_range": {
+            "end_line": 549,
+            "length": 383,
+            "line": 542,
+            "start": 18500
+          }
+        },
+        "method_id": "Main.DataOptimizer.reconcileOrdersWithTransactions(List<Order>,List<Transaction>)"
+      }
+    ],
+    "revision": 1
+  }
+}
