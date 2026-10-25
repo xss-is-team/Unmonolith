@@ -663,6 +663,16 @@ async fn organizer_workflow_runs_in_the_real_runner() {
         .json();
     assert_eq!(report["status"], "passed", "{report}");
     assert_eq!(report["behaviorally_verified"], true);
+    // green, but the optimized method is not reachable from Organizer.main: the report must say so
+    let warnings = report["warnings"].as_array().unwrap();
+    assert!(
+        warnings.iter().any(|w| w["code"] == "change_not_reached"
+            && w["message"]
+                .as_str()
+                .unwrap()
+                .contains("linkTasksToContacts")),
+        "{report}"
+    );
     assert_eq!(report["baseline_compilation"]["main_class"], "Organizer");
     for result in report["test_cases"].as_array().unwrap() {
         assert_eq!(result["baseline"]["stdout"], result["candidate"]["stdout"]);
@@ -671,4 +681,256 @@ async fn organizer_workflow_runs_in_the_real_runner() {
             result["candidate"]["exit_code"]
         );
     }
+}
+
+// ------------------------------------------------------------------ demo monolith (stdin-driven)
+
+/// Scenarios that reach the optimized method (`merge_inventory`) and ones that do not.
+fn demo_cases() -> Value {
+    cases(&[
+        ("help", "help\nexit\n"),
+        ("inventory", "inventory\nexit\n"),
+        ("merge-seed-duplicates", "merge_inventory\ninventory\nexit\n"),
+        (
+            "merge-after-add",
+            "add_item ITM-101;Ноутбук Pro 15;Электроника;90000;2\nadd_item ITM-105;Кабель;Аксессуары;300;40\nmerge_inventory\ninventory\nexit\n",
+        ),
+        ("unknown-command", "foo\nexit\n"),
+        ("eof-without-exit", "orders\n"),
+    ])
+}
+
+async fn demo_project(api: &Api) -> Project {
+    api.create_project("Main.java", demo_source().into_bytes())
+        .await
+}
+
+async fn put_candidate(project: &Project, source: &str) -> u64 {
+    let revision = project.revision().await;
+    project
+        .api
+        .put_json(
+            &project.path("/source"),
+            &json!({"source": source, "expected_revision": revision}),
+        )
+        .await
+        .expect_status(200)
+        .json()["revision"]
+        .as_u64()
+        .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "needs Docker and the runner image"]
+async fn demo_monolith_manual_optimization_is_verified_on_scenarios_that_reach_it() {
+    // The automatic optimizer currently refuses this method (equals() receiver is the outer value and the loop
+    // constructs a user class), so the candidate is the monolith's own `mergeDuplicateItemsOptimized`.
+    let server = TestServer::start_docker().await;
+    let api = server.client().await;
+    let project = demo_project(&api).await;
+    project.analyze_single_file().await;
+    let original = demo_source();
+    let call = "DataOptimizer.mergeDuplicateItemsQuadratic(context.inventory)";
+    assert!(original.contains(call));
+    let candidate = put_candidate(
+        &project,
+        &original.replace(
+            call,
+            "DataOptimizer.mergeDuplicateItemsOptimized(context.inventory)",
+        ),
+    )
+    .await;
+
+    project.analyze_single_file().await;
+    let report = project
+        .verify(&json!({"baseline_revision": 1, "candidate_revision": candidate, "test_cases": demo_cases()}))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(report["status"], "passed", "{report}");
+    assert_eq!(report["behaviorally_verified"], true);
+    // main (which now calls the other merge) changed and is reachable, and every scenario has input
+    assert_eq!(report["warnings"], json!([]), "{report}");
+    // the gate is meaningful: the merge scenario really executed the defective method (duplicates collapsed)
+    let merge = report["test_cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "merge-seed-duplicates")
+        .unwrap();
+    assert!(
+        out(&merge["baseline"]["stdout"]).contains("Уникальных позиций: 4"),
+        "{merge}"
+    );
+    assert_eq!(merge["baseline"]["stdout"], merge["candidate"]["stdout"]);
+}
+
+#[tokio::test]
+#[ignore = "needs Docker and the runner image"]
+async fn demo_monolith_automatic_optimization_is_verified_on_scenarios_that_reach_it() {
+    let server = TestServer::start_docker().await;
+    let api = server.client().await;
+    let project = demo_project(&api).await;
+    project.analyze_single_file().await;
+    let method = "Main.DataOptimizer.mergeDuplicateItemsQuadratic(List<Item>)";
+    let before = project.complexity_of(method).await;
+    assert_eq!(before["time_complexity"], "O(n^2)", "{before}");
+    let applied = project.optimize("21", method).await;
+    let revision = applied["revision"].as_u64().unwrap();
+
+    let report = project
+        .verify(&json!({"baseline_revision": 1, "candidate_revision": revision, "test_cases": demo_cases()}))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(report["status"], "passed", "{report}");
+    let merge = report["test_cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "merge-after-add")
+        .unwrap();
+    assert!(
+        out(&merge["baseline"]["stdout"]).contains("Уникальных позиций: 5"),
+        "{merge}"
+    );
+    assert_eq!(merge["baseline"]["stdout"], merge["candidate"]["stdout"]);
+}
+
+#[tokio::test]
+#[ignore = "needs Docker and the runner image"]
+async fn demo_monolith_mutants_are_caught_only_by_scenarios_that_reach_them() {
+    let server = TestServer::start_docker().await;
+    let api = server.client().await;
+    let project = demo_project(&api).await;
+    project.analyze_single_file().await;
+    let original = demo_source();
+
+    // mutant 1: changes the merge command's output
+    let merge_line = "Слияние завершено. Уникальных позиций: %d%n";
+    assert!(original.contains(merge_line));
+    let merge_mutant = put_candidate(
+        &project,
+        &original.replace(merge_line, "Слияние выполнено: %d%n"),
+    )
+    .await;
+    let report = project
+        .verify(&json!({"baseline_revision": 1, "candidate_revision": merge_mutant, "test_cases": demo_cases()}))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(report["status"], "failed", "{report}");
+    let failed: Vec<&str> = report["test_cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["passed"] == false)
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        failed,
+        ["merge-seed-duplicates", "merge-after-add"],
+        "{report}"
+    );
+
+    // mutant 2: changes only the help text, so scenarios that never print it stay green
+    let help_line = "Показать эту справку";
+    assert!(original.contains(help_line));
+    let help_mutant =
+        put_candidate(&project, &original.replace(help_line, "Показать справку")).await;
+    let report = project
+        .verify(&json!({"baseline_revision": 1, "candidate_revision": help_mutant, "test_cases": demo_cases()}))
+        .await
+        .expect_status(200)
+        .json();
+    let failed: Vec<&str> = report["test_cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["passed"] == false)
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(failed, ["help"], "{report}");
+}
+
+#[tokio::test]
+#[ignore = "needs Docker and the runner image"]
+async fn verify_warns_when_the_result_proves_little() {
+    let server = TestServer::start_docker().await;
+    let api = server.client().await;
+    let project = demo_project(&api).await;
+    project.analyze_single_file().await;
+    let original = demo_source();
+    let codes = |report: &Value| -> Vec<String> {
+        report["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w["code"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    // 1. the candidate only changes a method that nothing calls: green, but nothing exercised it
+    let unused = "public static List<Item> mergeDuplicateItemsOptimized(List<Item> items) {";
+    assert!(original.contains(unused));
+    let edited = original.replace(
+        unused,
+        &format!("{unused}\n            System.out.println(\"never printed\");"),
+    );
+    let candidate = put_candidate(&project, &edited).await;
+    project.analyze_single_file().await;
+    let report = project
+        .verify(&json!({"baseline_revision": 1, "candidate_revision": candidate, "test_cases": demo_cases()}))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(report["status"], "passed", "{report}");
+    assert_eq!(report["behaviorally_verified"], true);
+    assert_eq!(codes(&report), ["change_not_reached"], "{report}");
+    let message = report["warnings"][0]["message"].as_str().unwrap();
+    assert!(
+        message.contains("mergeDuplicateItemsOptimized"),
+        "{message}"
+    );
+
+    // 2. a single scenario without any input
+    let report = project
+        .verify(&json!({"baseline_revision": 1, "candidate_revision": candidate, "test_cases": cases(&[("empty", "")])}))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(
+        codes(&report),
+        ["empty_scenarios", "change_not_reached"],
+        "{report}"
+    );
+
+    // 3. the same revision against itself: nothing was changed at all
+    let report = project
+        .verify(
+            &json!({"baseline_revision": 1, "candidate_revision": 1, "test_cases": demo_cases()}),
+        )
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(codes(&report), ["no_method_changes"], "{report}");
+
+    // 4. an unanalyzed candidate cannot be checked, and the report says so instead of staying silent
+    let unanalyzed = put_candidate(&project, &format!("{edited}\n// touched\n")).await;
+    let report = project
+        .verify(&json!({"baseline_revision": 1, "candidate_revision": unanalyzed, "test_cases": demo_cases()}))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(codes(&report), ["reachability_unknown"], "{report}");
+
+    // the persisted report keeps the warnings
+    let id = report["report_id"].as_str().unwrap();
+    let stored = project
+        .api
+        .get(&project.path(&format!("/verify/{id}")))
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(stored["warnings"], report["warnings"]);
 }

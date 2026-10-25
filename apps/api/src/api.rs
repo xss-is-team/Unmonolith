@@ -41,7 +41,9 @@ use crate::{
         ExecutionObservation, JavaRunner, MismatchField, RunnerDiagnostic, TestCaseResult,
         VerificationReport, VerificationStatus, VerifyRequest, VerifyTestCase,
     },
-    session, Config,
+    session,
+    verify_hints::{self, VerifyWarning},
+    Config,
 };
 
 #[derive(Clone)]
@@ -213,6 +215,7 @@ impl AppState {
         ExecutionObservation,
         BehaviorMismatch,
         MismatchField,
+        VerifyWarning,
         PersistedVerificationReport
     )),
     modifiers(&SecurityAddon),
@@ -864,6 +867,10 @@ struct PersistedVerificationReport {
     #[schema(minimum = 1)]
     requested_test_cases: usize,
     behaviorally_verified: bool,
+    /// Advisory notes on how much a result can be trusted (empty scenarios, unchanged or unreachable code).
+    /// They never change `behaviorally_verified`; reports stored before this field existed read as empty.
+    #[serde(default)]
+    warnings: Vec<VerifyWarning>,
     #[serde(flatten)]
     report: VerificationReport,
 }
@@ -2888,6 +2895,17 @@ async fn verify_project(
         )
         .await?;
     let behaviorally_verified = behaviorally_verified(&report, request.test_cases.len())?;
+    let mut warnings = verify_hints::scenario_warnings(&request.test_cases);
+    let baseline_analysis = load_analysis(&directory, request.baseline_revision)
+        .await
+        .ok();
+    let candidate_analysis = load_analysis(&directory, request.candidate_revision)
+        .await
+        .ok();
+    warnings.extend(verify_hints::change_warnings(
+        baseline_analysis.as_ref(),
+        candidate_analysis.as_ref(),
+    ));
     let persisted = PersistedVerificationReport {
         report_id: Uuid::new_v4(),
         created_at: OffsetDateTime::now_utc()
@@ -2895,6 +2913,7 @@ async fn verify_project(
             .expect("RFC 3339 supports all current UTC dates"),
         requested_test_cases: request.test_cases.len(),
         behaviorally_verified,
+        warnings,
         report,
     };
     let bytes = serde_json::to_vec_pretty(&persisted).map_err(|error| {

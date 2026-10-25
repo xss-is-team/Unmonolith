@@ -293,7 +293,8 @@ class OptimizerTest {
     void semanticallyUnsafeScansAreReportedAsNotApplicable(@TempDir Path root) throws IOException {
         assertNotApplicable(root.resolve("a"), scanWith("y.w() == x.w()", "", ""), "key_equality"); // floating point
         assertNotApplicable(root.resolve("b"), scanWith("y.s() == x.s()", "", ""), "key_equality"); // reference identity
-        assertNotApplicable(root.resolve("c"), scanWith("x.s().equals(y.s())", "", ""), "key_equality"); // outer receiver
+        // "x.s().equals(y.s())" (outer receiver on a String) is applicable since equals() on String is symmetric;
+        // it needs the outer_key_non_null assumption (see stringKeyWithOuterReceiver...); other key types stay refused.
         assertNotApplicable(root.resolve("d"), scanWith("y.id() == x.id()", "", "sink(ys);"), "collection_not_modified"); // escapes
         assertNotApplicable(root.resolve("e"), scanWith("y.id() == x.id()", "", "ys.add(y);"), "collection_not_modified"); // grows
         assertNotApplicable(root.resolve("f"), scanWith("y.id() == x.computed()", "", ""), "key_purity"); // not a field accessor
@@ -379,5 +380,65 @@ class OptimizerTest {
         // java.util.List and Map are already imported; HashMap is added
         assertTrue(candidate.contains("import java.util.HashMap;"), candidate);
         assertTrue(candidate.contains("Map<Integer, Customer> customersById = new HashMap<>();"), candidate);
+    }
+
+    private static final String MERGE = "import java.util.*;\n"
+            + "class Box { final String id; int qty; Box(String id, int qty) { this.id = id; this.qty = qty; }\n"
+            + "  String id() { return id; } int qty() { return qty; } void setQty(int q) { this.qty = q; } }\n"
+            + "class Merge { List<Box> merge(List<Box> items) { List<Box> out = new ArrayList<>();\n"
+            + "  for (Box a : items) { Box c = new Box(a.id(), 0);\n"
+            + "    for (Box b : items) { if (a.id().equals(b.id())) { c.setQty(c.qty() + b.qty()); } }\n"
+            + "    out.add(c); }\n  return out; } }\n";
+
+    private static JsonNode mergeProposal(Path root, String source) throws IOException {
+        write(root, "Merge.java", source);
+        JsonNode list = proposals(root, "Merge.java");
+        assertEquals(1, list.size(), list.toString());
+        return list.get(0);
+    }
+
+    @Test
+    void stringKeyWithOuterReceiverAndStoringConstructorIsApplicableWithAnExtraAssumption(@TempDir Path root) throws IOException {
+        JsonNode p = mergeProposal(root, MERGE);
+        assertEquals("applicable", p.get("applicability").asText(), p.toString());
+        Set<String> ids = new java.util.TreeSet<>();
+        p.get("assumptions").forEach(a -> ids.add(a.get("id").asText()));
+        assertEquals(Set.of("null_and_exception_timing", "outer_key_non_null", "single_threaded"), ids);
+    }
+
+    @Test
+    void sameShapeWithInnerReceiverNeedsNoOuterKeyAssumption(@TempDir Path root) throws IOException {
+        JsonNode p = mergeProposal(root, MERGE.replace("a.id().equals(b.id())", "b.id().equals(a.id())"));
+        assertEquals("applicable", p.get("applicability").asText(), p.toString());
+        p.get("assumptions").forEach(a -> assertFalse(a.get("id").asText().equals("outer_key_non_null")));
+    }
+
+    @Test
+    void outerReceiverOnANonSymmetricKeyTypeIsStillRefused(@TempDir Path root) throws IOException {
+        JsonNode p = mergeProposal(root, MERGE.replace("final String id;", "final Object id;").replace("Box(String id,", "Box(Object id,")
+                .replace("String id() {", "Object id() {"));
+        assertEquals("not_applicable", p.get("applicability").asText(), p.toString());
+        assertTrue(p.get("not_applicable_reasons").toString().contains("outer value"), p.toString());
+    }
+
+    @Test
+    void constructorThatValidatesIsStillRefused(@TempDir Path root) throws IOException {
+        JsonNode p = mergeProposal(root, MERGE.replace("this.id = id;", "this.id = java.util.Objects.requireNonNull(id);"));
+        assertEquals("not_applicable", p.get("applicability").asText(), p.toString());
+        assertTrue(p.get("not_applicable_reasons").toString().contains("constructor may run arbitrary code"), p.toString());
+    }
+
+    @Test
+    void setterOnAnExistingElementOfTheScannedCollectionIsStillRefused(@TempDir Path root) throws IOException {
+        String source = MERGE.replace("Box c = new Box(a.id(), 0);", "Box c = a;");
+        JsonNode p = mergeProposal(root, source);
+        assertEquals("not_applicable", p.get("applicability").asText(), p.toString());
+        assertTrue(p.get("not_applicable_reasons").toString().contains("setQty"), p.toString());
+    }
+
+    @Test
+    void setterThatDoesMoreThanStoreIsStillRefused(@TempDir Path root) throws IOException {
+        JsonNode p = mergeProposal(root, MERGE.replace("void setQty(int q) { this.qty = q; }", "void setQty(int q) { this.qty = q; System.out.println(q); }"));
+        assertEquals("not_applicable", p.get("applicability").asText(), p.toString());
     }
 }

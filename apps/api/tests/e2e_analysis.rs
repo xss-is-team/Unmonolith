@@ -458,7 +458,7 @@ async fn organizer_monolith_workflow_still_works_end_to_end() {
             "O(n + m)",
         ),
         ("Organizer.multiply(long[][],long[][],int)", "O(n^3)"),
-        ("Organizer.gcd(int,int)", "unknown"),
+        ("Organizer.gcd(int,int)", "O(log n)"),
     ];
     for (method, time) in expectations {
         assert_eq!(

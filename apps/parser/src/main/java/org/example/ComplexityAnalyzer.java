@@ -2,6 +2,7 @@ package org.example;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -171,6 +172,8 @@ final class ComplexityAnalyzer {
             "Hash-based Map/Set operations are treated as O(1) on average.";
     private static final String ASSUME_BINARY_SEARCH =
             "A midpoint search loop halves the interval [lo, hi] each iteration (assuming no int overflow of lo + hi).";
+    private static final String ASSUME_EUCLID =
+            "Euclid's algorithm: the remainder at least halves every two iterations, so the loop runs O(log(min(a, b))) times.";
     private static final String ASSUME_STRING = "String/StringBuilder operations are treated as O(1) (short strings).";
 
     private final AstJson json;
@@ -364,6 +367,12 @@ final class ComplexityAnalyzer {
                     if (halving != null) {
                         factor = halving;
                         loopNote = ASSUME_BINARY_SEARCH;
+                    } else {
+                        Factor euclid = euclidFactor(st);
+                        if (euclid != null) {
+                            factor = euclid;
+                            loopNote = ASSUME_EUCLID;
+                        }
                     }
                 }
                 perIteration = expr(st.getExpression());
@@ -407,6 +416,10 @@ final class ComplexityAnalyzer {
         Cost total = init.plus(perIteration.times(factor));
         if (loopNote != null) {
             total.notes.add(loopNote);
+        }
+        if (detectStringConcatenation(info, body)) {
+            total.notes.add(STRING_CONCAT_NOTE);
+            total.weak = true;
         }
         if (stack.isEmpty()) {
             fragments.add(fragment(info, total));
@@ -748,6 +761,80 @@ final class ComplexityAnalyzer {
             return null;
         }
         return new Factor(Kind.LOG, bound.key(), bound.collection(), bound.viaEnv(), true, null, null);
+    }
+
+    /**
+     * {@code while (b != 0) { t = a % b; a = b; b = t; }} (or {@code t = b; b = a % b; a = t;}): Euclid's algorithm on two
+     * integral locals. Nothing else may touch them in the loop, so the shape is exactly the textbook one.
+     */
+    private Factor euclidFactor(WhileStatement st) {
+        if (!(strip(st.getExpression()) instanceof InfixExpression cond) || cond.hasExtendedOperands()
+                || cond.getOperator() != InfixExpression.Operator.NOT_EQUALS
+                        && cond.getOperator() != InfixExpression.Operator.GREATER
+                || !(constLong(strip(cond.getRightOperand())) instanceof Long zero) || zero != 0) {
+            return null;
+        }
+        IVariableBinding b = counterVar(strip(cond.getLeftOperand()));
+        if (b == null || !isIntegral(b.getType()) || hasContinue(st.getBody())) {
+            return null;
+        }
+        List<?> body = st.getBody() instanceof Block blk ? blk.statements() : List.of(st.getBody());
+        if (body.size() != 3) {
+            return null;
+        }
+        // each statement as "target = value" (a declaration with initializer counts)
+        IVariableBinding[] target = new IVariableBinding[3];
+        Expression[] value = new Expression[3];
+        for (int i = 0; i < 3; i++) {
+            if (body.get(i) instanceof VariableDeclarationStatement vds && vds.fragments().size() == 1) {
+                VariableDeclarationFragment f = (VariableDeclarationFragment) vds.fragments().get(0);
+                target[i] = f.resolveBinding();
+                value[i] = f.getInitializer() == null ? null : strip(f.getInitializer());
+            } else if (body.get(i) instanceof ExpressionStatement es && es.getExpression() instanceof Assignment a
+                    && a.getOperator() == Assignment.Operator.ASSIGN
+                    && strip(a.getLeftHandSide()) instanceof SimpleName n && n.resolveBinding() instanceof IVariableBinding vb) {
+                target[i] = vb;
+                value[i] = strip(a.getRightHandSide());
+            } else {
+                return null;
+            }
+            if (target[i] == null || value[i] == null || target[i].isField() || !isIntegral(target[i].getType())) {
+                return null;
+            }
+        }
+        boolean ok = false;
+        // form 1: t = a % b; a = b; b = t
+        if (isRemainderBy(value[0], b) && value[1] instanceof SimpleName v1 && b.isEqualTo(v1.resolveBinding())
+                && target[2].isEqualTo(b) && value[2] instanceof SimpleName v2 && target[0].isEqualTo(v2.resolveBinding())
+                && !target[0].isEqualTo(b) && !target[1].isEqualTo(b) && !target[1].isEqualTo(target[0])
+                && target[1].isEqualTo(remainderDividend(value[0]))) {
+            ok = true;
+        }
+        // form 2: t = b; b = a % b; a = t
+        if (value[0] instanceof SimpleName w0 && b.isEqualTo(w0.resolveBinding()) && target[1].isEqualTo(b)
+                && isRemainderBy(value[1], b) && value[2] instanceof SimpleName w2 && target[0].isEqualTo(w2.resolveBinding())
+                && !target[0].isEqualTo(b) && !target[2].isEqualTo(b) && !target[2].isEqualTo(target[0])
+                && target[2].isEqualTo(remainderDividend(value[1]))) {
+            ok = true;
+        }
+        if (!ok) {
+            return null;
+        }
+        String key = "var:" + b.getKey();
+        descriptions.putIfAbsent(key, "initial value of " + b.getName());
+        return new Factor(Kind.LOG, key, false, false, true, null, null);
+    }
+
+    private static boolean isRemainderBy(Expression e, IVariableBinding divisor) {
+        return strip(e) instanceof InfixExpression ie && !ie.hasExtendedOperands()
+                && ie.getOperator() == InfixExpression.Operator.REMAINDER
+                && strip(ie.getLeftOperand()) instanceof SimpleName
+                && strip(ie.getRightOperand()) instanceof SimpleName r && divisor.isEqualTo(r.resolveBinding());
+    }
+
+    private static IVariableBinding remainderDividend(Expression e) {
+        SimpleName left = (SimpleName) strip(((InfixExpression) strip(e)).getLeftOperand());
+        return left.resolveBinding() instanceof IVariableBinding vb ? vb : null;
     }
 
     private Expression declaredInit(IVariableBinding v) {
@@ -1746,6 +1833,12 @@ final class ComplexityAnalyzer {
             }
             return Cost.constant();
         }
+        if (ConstructorPurity.isTrivial(n, json.peers().stream().map(AstJson::unit).toList())) {
+            Cost trivial = Cost.constant();
+            trivial.notes.add("Constructor of " + name.substring(name.lastIndexOf('.') + 1)
+                    + " only stores its arguments into fields, so it is O(1).");
+            return trivial;
+        }
         return Cost.unknown("Constructor of " + name.substring(name.lastIndexOf('.') + 1) + " has no known cost model.");
     }
 
@@ -1979,6 +2072,75 @@ final class ComplexityAnalyzer {
                     "If this is a search by key, build an index once instead; if all pairs are needed, the quadratic cost is inherent.",
                     inner.stmt(), ids));
         }
+    }
+
+    private static final String STRING_CONCAT_NOTE = "A String is extended inside a loop: each concatenation copies the string built so far, "
+            + "so the real cost also grows with the final string length (up to quadratic); this estimate counts iterations only.";
+
+    /**
+     * Reports {@code s += x} / {@code s = s + x} on a String declared outside the loop (not inside nested loops, which
+     * are reported on their own). Returns whether such a concatenation was found.
+     */
+    private boolean detectStringConcatenation(LoopInfo loop, Statement body) {
+        Set<String> declaredInside = new HashSet<>();
+        List<Assignment> concatenations = new ArrayList<>();
+        body.accept(new ASTVisitor() {
+            @Override
+            public boolean visit(ForStatement n) {
+                return false;
+            }
+
+            @Override
+            public boolean visit(EnhancedForStatement n) {
+                return false;
+            }
+
+            @Override
+            public boolean visit(WhileStatement n) {
+                return false;
+            }
+
+            @Override
+            public boolean visit(DoStatement n) {
+                return false;
+            }
+
+            @Override
+            public boolean visit(VariableDeclarationFragment f) {
+                if (f.resolveBinding() != null) {
+                    declaredInside.add(f.resolveBinding().getKey());
+                }
+                return true;
+            }
+
+            @Override
+            public boolean visit(Assignment a) {
+                if (strip(a.getLeftHandSide()) instanceof SimpleName name && name.resolveBinding() instanceof IVariableBinding vb
+                        && !vb.isField() && vb.getType().getQualifiedName().equals("java.lang.String")) {
+                    boolean plusAssign = a.getOperator() == Assignment.Operator.PLUS_ASSIGN;
+                    boolean selfConcat = a.getOperator() == Assignment.Operator.ASSIGN
+                            && strip(a.getRightHandSide()) instanceof InfixExpression ie
+                            && ie.getOperator() == InfixExpression.Operator.PLUS
+                            && strip(ie.getLeftOperand()) instanceof SimpleName left && vb.isEqualTo(left.resolveBinding());
+                    if ((plusAssign || selfConcat) && !declaredInside.contains(vb.getKey())) {
+                        concatenations.add(a);
+                    }
+                }
+                return true;
+            }
+        });
+        if (concatenations.isEmpty()) {
+            return false;
+        }
+        Assignment first = concatenations.get(0);
+        String variable = norm(json.text(first.getLeftHandSide()));
+        findings.add(finding("string_concat_in_loop", "warning",
+                "String '" + variable + "' is extended inside a loop",
+                "Strings are immutable: every concatenation on line " + json.range(first).get("line")
+                        + " copies all characters collected so far, so building the result takes up to quadratic time in its length.",
+                "Collect the pieces in a StringBuilder and call toString() once after the loop (or use String.join / Collectors.joining).",
+                first, new ArrayList<>(loop.nodeIds())));
+        return true;
     }
 
     private Map<String, Object> finding(String id, String severity, String message, String explanation,

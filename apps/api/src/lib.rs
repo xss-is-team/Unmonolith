@@ -7,6 +7,7 @@ mod error;
 mod project;
 mod runner;
 mod session;
+mod verify_hints;
 
 use std::{env, io, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 

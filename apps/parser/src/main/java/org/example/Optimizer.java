@@ -58,6 +58,7 @@ final class Optimizer {
 
     private static final String A_NULL_TIMING = "null_and_exception_timing";
     private static final String A_THREADS = "single_threaded";
+    private static final String A_OUTER_KEY = "outer_key_non_null";
 
     private Optimizer() {
     }
@@ -150,6 +151,7 @@ final class Optimizer {
         String keyType;
         String keyTypeDescription;
         String equality;
+        boolean outerReceiver;
         String collectionName;
         final List<Precondition> preconditions = new ArrayList<>();
 
@@ -458,18 +460,18 @@ final class Optimizer {
                 violation = "Reference '==' compares identity, while a HashMap compares with equals().";
             }
         } else {
-            if (!kt.receiverIsInner()) {
-                violation = "The receiver of equals() is the outer value: a null or asymmetric equals would behave differently.";
-            } else if (ti.isPrimitive()) {
+            boolean outerReceiver = !kt.receiverIsInner();
+            boolean symmetric = ti.getQualifiedName().equals("java.lang.String") || isBoxedType(ti) || ti.isEnum();
+            if (ti.isPrimitive()) {
                 violation = "equals() on a primitive does not compile.";
-            } else if (ti.getQualifiedName().equals("java.lang.String") || isBoxedType(ti)) {
-                semantics = "equals() on " + ti.getName() + " (consistent with hashCode())";
+            } else if (outerReceiver && !(symmetric && ti.isEqualTo(to))) {
+                violation = "The receiver of equals() is the outer value: a null or asymmetric equals would behave differently.";
+            } else if (symmetric) {
+                semantics = "equals() on " + (ti.isEnum() ? "enum " : "") + ti.getName() + " (consistent with hashCode()"
+                        + (outerReceiver ? " and symmetric, so the receiver side does not matter" : "") + ")";
                 c.keyType = ti.getQualifiedName();
                 c.keyTypeDescription = ti.getName();
-            } else if (ti.isEnum()) {
-                semantics = "equals() on enum " + ti.getName();
-                c.keyType = ti.getQualifiedName();
-                c.keyTypeDescription = ti.getName();
+                c.outerReceiver = outerReceiver;
             } else {
                 violation = "equals() of " + ti.getName() + " is not known to be consistent with hashCode().";
             }
@@ -578,6 +580,15 @@ final class Optimizer {
 
     /** {@code return field;} / {@code return this.field;} or an implicit record accessor, not overridable in the project. */
     private static boolean isTrivialAccessor(ProjectAnalyzer.Loaded loaded, IMethodBinding b) {
+        return trivialMember(loaded, b, false);
+    }
+
+    /** {@code void setX(T v) { this.x = v; }}: stores one parameter into a field of the receiver and nothing else. */
+    private static boolean isTrivialSetter(ProjectAnalyzer.Loaded loaded, IMethodBinding b) {
+        return trivialMember(loaded, b, true);
+    }
+
+    private static boolean trivialMember(ProjectAnalyzer.Loaded loaded, IMethodBinding b, boolean setter) {
         IMethodBinding decl = b.getMethodDeclaration();
         MethodDeclaration md = null;
         for (AstJson peer : loaded.jsons()) {
@@ -588,19 +599,38 @@ final class Optimizer {
         }
         if (md == null) {
             // implicit record accessor: no explicit declaration, no parameters
-            return decl.getDeclaringClass().isRecord() && decl.getParameterTypes().length == 0
+            return !setter && decl.getDeclaringClass().isRecord() && decl.getParameterTypes().length == 0
                     && java.util.Arrays.stream(decl.getDeclaringClass().getDeclaredFields())
                             .anyMatch(f -> f.getName().equals(decl.getName()));
         }
-        if (md.getBody() == null || md.getBody().statements().size() != 1 || !md.parameters().isEmpty()
-                || !(md.getBody().statements().get(0) instanceof ReturnStatement rs) || rs.getExpression() == null) {
+        if (md.getBody() == null || md.getBody().statements().size() != 1) {
             return false;
         }
-        Expression value = AstJson.strip(rs.getExpression());
-        boolean field = value instanceof SimpleName n && n.resolveBinding() instanceof IVariableBinding vb && vb.isField()
-                || value instanceof FieldAccess fa && fa.getExpression() instanceof ThisExpression;
-        if (!field) {
-            return false;
+        if (setter) {
+            if (md.parameters().size() != 1 || !(md.getBody().statements().get(0) instanceof ExpressionStatement es)
+                    || !(es.getExpression() instanceof Assignment a) || a.getOperator() != Assignment.Operator.ASSIGN
+                    || !(AstJson.strip(a.getRightHandSide()) instanceof SimpleName rhs)
+                    || !(rhs.resolveBinding() instanceof IVariableBinding rv) || !rv.isParameter()) {
+                return false;
+            }
+            Expression lhs = AstJson.strip(a.getLeftHandSide());
+            boolean ownField = lhs instanceof SimpleName ln && ln.resolveBinding() instanceof IVariableBinding lv && lv.isField()
+                    && !Modifier.isStatic(lv.getModifiers())
+                    || lhs instanceof FieldAccess lf && lf.getExpression() instanceof ThisExpression;
+            if (!ownField) {
+                return false;
+            }
+        } else {
+            if (!md.parameters().isEmpty() || !(md.getBody().statements().get(0) instanceof ReturnStatement rs)
+                    || rs.getExpression() == null) {
+                return false;
+            }
+            Expression value = AstJson.strip(rs.getExpression());
+            boolean field = value instanceof SimpleName n && n.resolveBinding() instanceof IVariableBinding vb && vb.isField()
+                    || value instanceof FieldAccess fa && fa.getExpression() instanceof ThisExpression;
+            if (!field) {
+                return false;
+            }
         }
         // a subclass in the project could override the accessor
         if (!Modifier.isPrivate(decl.getModifiers()) && !Modifier.isStatic(decl.getModifiers())
@@ -788,7 +818,8 @@ final class Optimizer {
             ITypeBinding t = n.resolveTypeBinding();
             String name = t == null ? "" : t.getErasure().getQualifiedName();
             boolean jdk = name.startsWith("java.lang.") || name.startsWith("java.util.") || name.startsWith("java.math.");
-            if (!jdk || n.getAnonymousClassDeclaration() != null) {
+            boolean storesOnly = !jdk && ConstructorPurity.isTrivial(n, loaded.jsons().stream().map(AstJson::unit).toList());
+            if (!(jdk || storesOnly) || n.getAnonymousClassDeclaration() != null) {
                 problem("The enclosing loop constructs " + (t == null ? "an object" : t.getName())
                         + ", whose constructor may run arbitrary code.");
             }
@@ -841,6 +872,10 @@ final class Optimizer {
 
         private boolean isBenign(MethodInvocation mi, IMethodBinding b) {
             if (isTrivialAccessor(loaded, b)) {
+                return true;
+            }
+            // a plain setter on an object this loop itself allocated cannot change the scanned collection or its keys
+            if (mi.getExpression() != null && isTrivialSetter(loaded, b) && freshLocal(mi.getExpression())) {
                 return true;
             }
             String decl = b.getDeclaringClass().getErasure().getQualifiedName();
@@ -912,7 +947,9 @@ final class Optimizer {
 
                 @Override
                 public boolean visit(Assignment a) {
-                    if (AstJson.strip(a.getLeftHandSide()) instanceof SimpleName an && vb.isEqualTo(an.resolveBinding())) {
+                    if (AstJson.strip(a.getLeftHandSide()) instanceof SimpleName an && vb.isEqualTo(an.resolveBinding())
+                            && !(a.getOperator() == Assignment.Operator.ASSIGN
+                            && AstJson.strip(a.getRightHandSide()) instanceof ClassInstanceCreation)) {
                         writes[0]++;
                     }
                     return true;
@@ -947,6 +984,11 @@ final class Optimizer {
         list.add(assumption(A_NULL_TIMING, "If an element of '" + c.collectionName + "' is null, or its key accessor throws, the original code "
                 + "fails only when the scan reaches that element. The optimized code reads every element's key while building the "
                 + "index, so it may fail earlier or even when the enclosing loop would not run at all."));
+        if (c.outerReceiver) {
+            list.add(assumption(A_OUTER_KEY, "The key '" + AstJson.normalize(c.json.text(c.outerKey)) + "' is never null when "
+                    + "'" + c.collectionName + "' is scanned: the original calls equals() on it and would throw a "
+                    + "NullPointerException, while the index lookup treats null as a plain miss."));
+        }
         list.add(assumption(A_THREADS, "No other thread modifies '" + c.collectionName
                 + "' or the element keys while the enclosing loop runs."));
         return list;

@@ -374,12 +374,13 @@ class AcceptanceTest {
         expected.put("Organizer.bubbleSort(", "O(n^2)");
         expected.put("Organizer.linkTasksIndexed(", "O(n + m)");
         expected.put("Organizer.linkTasksToContacts(", "O(n*m)");
-        expected.put("Organizer.gcd(", "unknown");
+        expected.put("Organizer.gcd(", "O(log n)"); // Euclid's algorithm, textbook form
         expected.put("Organizer.binarySearch(", "O(log n)");
         expected.put("Organizer.countWhere(", "unknown");
         expected.put("Organizer.clamp(", "O(1)");
         expected.forEach((id, time) -> assertEquals(time, method(root, id).at("/analysis/complexity/time").asText(), id));
-        assertEquals("low", method(root, "Organizer.gcd(").at("/analysis/complexity/confidence").asText());
+        assertEquals("medium", method(root, "Organizer.gcd(").at("/analysis/complexity/confidence").asText());
+        assertEquals("low", method(root, "Organizer.countWhere(").at("/analysis/complexity/confidence").asText());
     }
 
     @Test

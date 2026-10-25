@@ -3,6 +3,7 @@ package org.example;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
@@ -423,5 +424,64 @@ class AnalysisTest {
         var names = new java.util.ArrayList<String>();
         m.fieldNames().forEachRemaining(names::add);
         assertTrue(names.containsAll(java.util.List.of("kind", "id", "name", "parameters", "body", "cfg", "analysis")));
+    }
+
+    private static final String BOX = "static class Box { final String id; int qty; Box(String id, int qty) { this.id = id; this.qty = qty; } }\n";
+
+    @Test
+    void constructorThatOnlyStoresItsArgumentsIsConstant(@TempDir Path dir) throws IOException {
+        JsonNode a = analyze(dir, "List<Box> copy(List<Box> items) { List<Box> out = new ArrayList<>(); for (Box b : items) { out.add(new Box(b.id, b.qty)); } return out; }\n" + BOX);
+        assertEquals("O(n)", time(a), a.toString());
+        assertTrue(a.toString().contains("only stores its arguments into fields"), a.toString());
+    }
+
+    @Test
+    void constructorWithValidationOrCallsStaysUnknown(@TempDir Path dir) throws IOException {
+        String validating = "static class Box { final String id; Box(String id) { if (id == null) { throw new IllegalArgumentException(); } this.id = id; } }\n";
+        assertEquals("unknown", time(analyze(dir, "void f(List<String> l) { for (String s : l) { new Box(s); } }\n" + validating)));
+        String calling = "static class Box { final String id; Box(String id) { this.id = id.trim(); } }\n";
+        assertEquals("unknown", time(analyze(dir, "void f(List<String> l) { for (String s : l) { new Box(s); } }\n" + calling)));
+        String initializer = "static class Box { final long t = System.nanoTime(); Box(String id) { } }\n";
+        assertEquals("unknown", time(analyze(dir, "void f(List<String> l) { for (String s : l) { new Box(s); } }\n" + initializer)));
+        String subclass = "static class Base { Base() { System.out.println(); } } static class Box extends Base { Box(String id) { } }\n";
+        assertEquals("unknown", time(analyze(dir, "void f(List<String> l) { for (String s : l) { new Box(s); } }\n" + subclass)));
+    }
+
+    @Test
+    void stringConcatenationInALoopIsReportedAndNotClaimedWithHighConfidence(@TempDir Path dir) throws IOException {
+        for (String body : new String[] {"s += x;", "s = s + x;"}) {
+            JsonNode a = analyze(dir, "String join(List<String> l) { String s = \"\"; for (String x : l) { " + body + " } return s; }");
+            assertEquals("O(n)", time(a));
+            assertEquals("medium", a.at("/complexity/confidence").asText(), body);
+            JsonNode f = finding(a, "string_concat_in_loop");
+            assertNotNull(f, body + " " + a);
+            assertEquals("warning", f.get("severity").asText());
+            assertTrue(f.get("recommendation").asText().contains("StringBuilder"));
+            assertFalse(f.get("node_ids").isEmpty());
+        }
+    }
+
+    @Test
+    void stringBuilderAndPerIterationStringsAreNotReported(@TempDir Path dir) throws IOException {
+        JsonNode builder = analyze(dir, "String join(List<String> l) { StringBuilder s = new StringBuilder(); for (String x : l) { s.append(x); } return s.toString(); }");
+        assertNull(finding(builder, "string_concat_in_loop"));
+        JsonNode local = analyze(dir, "int f(List<String> l) { int n = 0; for (String x : l) { String s = \"a\"; s += x; n += s.length(); } return n; }");
+        assertNull(finding(local, "string_concat_in_loop"));
+    }
+
+    @Test
+    void euclidsAlgorithmIsLogarithmicInBothTextbookForms(@TempDir Path dir) throws IOException {
+        assertEquals("O(log n)", time(analyze(dir, "static int g(int a, int b) { while (b != 0) { int t = a % b; a = b; b = t; } return a; }")));
+        assertEquals("O(log n)", time(analyze(dir, "static int g(int a, int b) { while (b > 0) { int t = b; b = a % b; a = t; } return a; }")));
+        JsonNode composed = analyze(dir, "static int g(int a, int b) { while (b != 0) { int t = a % b; a = b; b = t; } return a; }\n"
+                + "static int s(List<Integer> l, int m) { int r = 0; for (int x : l) { r += g(x, m); } return r; }");
+        assertEquals("O(log n)", time(composed));
+    }
+
+    @Test
+    void loopsThatOnlyLookLikeEuclidStayUnknown(@TempDir Path dir) throws IOException {
+        assertEquals("unknown", time(analyze(dir, "static int g(int a, int b) { while (b != 0) { int t = a % b; a = b + 1; b = t; } return a; }")));
+        assertEquals("unknown", time(analyze(dir, "static int g(int a, int b) { while (b != 0) { int t = a % b; a = b; b = t + 1; } return a; }")));
+        assertEquals("unknown", time(analyze(dir, "static int g(int a, int b) { while (b != 0) { int t = a / b; a = b; b = t; } return a; }")));
     }
 }

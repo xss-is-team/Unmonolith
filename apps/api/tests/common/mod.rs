@@ -781,6 +781,13 @@ pub fn organizer_source() -> Vec<u8> {
         .expect("Organizer.java acceptance fixture")
 }
 
+/// The stdin-driven demo monolith (`tests/fixtures/demo/Main.java`): a copy of the parser's
+/// `acceptance/Main.java` with deterministic output; its `merge_inventory` command reaches the slide-5 defect.
+pub fn demo_source() -> String {
+    std::fs::read_to_string(api_dir().join("tests/fixtures/demo/Main.java"))
+        .expect("demo monolith fixture")
+}
+
 pub fn entries_with(
     base: Vec<(String, Vec<u8>)>,
     path: &str,

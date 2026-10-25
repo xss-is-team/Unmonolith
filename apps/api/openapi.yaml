@@ -1372,6 +1372,21 @@ components:
             behaviorally_verified:
               type: boolean
               description: True only for a complete passed run of every supplied non-empty fixture.
+            warnings:
+              type: array
+              description: |
+                Advisory notes on how much a result can be trusted; they never change `behaviorally_verified`.
+                Reports stored before this field existed read as empty. Codes: `empty_scenarios` (no scenario has
+                stdin), `no_method_changes` (no method differs between the revisions), `change_not_reached` (a
+                changed method is not reachable from main in the static call graph), `reachability_unknown` (a
+                revision is not analyzed or has no project graph or main method).
+              items: {$ref: '#/components/schemas/VerifyWarning'}
+    VerifyWarning:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string, enum: [empty_scenarios, no_method_changes, change_not_reached, reachability_unknown]}
+        message: {type: string}
     CompilationResult:
       type: object
       required: [status, exit_code, timed_out, output_overflow, stdout, stderr, main_class, diagnostics]
