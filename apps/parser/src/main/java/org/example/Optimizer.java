@@ -172,6 +172,7 @@ final class Optimizer {
             proposals.add(describe(c, d.analysis));
         }
         proposals.addAll(StringBuilderRule.discover(d.loaded, d.analysis));
+        proposals.addAll(ContainsToSetRule.discover(d.loaded, d.analysis));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("status", "completed");
         result.put("rule", RULE);
@@ -1099,6 +1100,9 @@ final class Optimizer {
         }
         if (chosen == null && StringBuilderRule.owns(d.loaded, proposalId)) {
             return StringBuilderRule.apply(d.loaded, d.analysis, root, files, level, proposalId, acknowledged, preview, outputDir);
+        }
+        if (chosen == null && ContainsToSetRule.owns(d.loaded, proposalId)) {
+            return ContainsToSetRule.apply(d.loaded, d.analysis, root, files, level, proposalId, acknowledged, preview, outputDir);
         }
         if (chosen == null) {
             return failure("proposal_not_found", "No optimization proposal with this id exists in this revision.");

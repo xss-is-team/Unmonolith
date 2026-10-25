@@ -160,7 +160,7 @@ final class StringBuilderRule {
         }
     }
 
-    private static boolean isLoop(ASTNode n) {
+    static boolean isLoop(ASTNode n) {
         return n instanceof ForStatement || n instanceof EnhancedForStatement || n instanceof WhileStatement || n instanceof DoStatement;
     }
 
@@ -315,7 +315,7 @@ final class StringBuilderRule {
         return c;
     }
 
-    private static boolean startsLine(String source, int position) {
+    static boolean startsLine(String source, int position) {
         int i = position;
         while (i > 0 && (source.charAt(i - 1) == ' ' || source.charAt(i - 1) == '\t')) {
             i--;
