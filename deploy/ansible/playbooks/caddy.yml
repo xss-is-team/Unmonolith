@@ -1,0 +1,80 @@
+---
+- name: Caddy HTTPS reverse proxy setup
+  hosts: vps
+  become: true
+
+  pre_tasks:
+    - name: Ensure app_domain placeholder was replaced
+      ansible.builtin.assert:
+        that:
+          - app_domain != "REPLACE_WITH_YOUR_DOMAIN.tech"
+        fail_msg: "Set app_domain in group_vars/vps.yml before running the Caddy playbook."
+
+  tasks:
+    - name: Install Caddy repository prerequisites
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - debian-archive-keyring
+          - debian-keyring
+        state: present
+        update_cache: true
+
+    - name: Download Caddy repository key
+      ansible.builtin.get_url:
+        url: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+        dest: /tmp/caddy-stable.gpg.key
+        mode: "0644"
+      register: caddy_key_download
+
+    - name: Check whether the Caddy keyring already exists
+      ansible.builtin.stat:
+        path: /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      register: caddy_keyring
+
+    - name: Install Caddy keyring
+      ansible.builtin.command:
+        cmd: >-
+          gpg --dearmor --yes
+          -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+          /tmp/caddy-stable.gpg.key
+      when: caddy_key_download.changed or not caddy_keyring.stat.exists
+
+    - name: Install Caddy APT source
+      ansible.builtin.get_url:
+        url: https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt
+        dest: /etc/apt/sources.list.d/caddy-stable.list
+        mode: "0644"
+
+    - name: Install Caddy
+      ansible.builtin.apt:
+        name: caddy
+        state: present
+        update_cache: true
+
+    - name: Install Caddyfile
+      ansible.builtin.template:
+        src: ../templates/Caddyfile.j2
+        dest: /etc/caddy/Caddyfile
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - validate caddy config
+        - reload caddy
+
+    - name: Ensure Caddy service is enabled
+      ansible.builtin.service:
+        name: caddy
+        state: started
+        enabled: true
+
+  handlers:
+    - name: validate caddy config
+      ansible.builtin.command: caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      changed_when: false
+
+    - name: reload caddy
+      ansible.builtin.service:
+        name: caddy
+        state: reloaded

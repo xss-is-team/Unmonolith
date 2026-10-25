@@ -1,0 +1,96 @@
+name: Deploy
+
+# Builds api/web/runner images, pushes them to Docker Hub, then pulls and starts them on the VDS over SSH
+# (host Caddy, installed by deploy/ansible, terminates TLS for https://unmonolith.sh9.top).
+#
+# Secrets:  DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, VDS_HOST, VDS_USER, VDS_SSH_KEY
+# Optional: VDS_PORT (default 22), VDS_PATH (default /opt/java-blueprints)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and push ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { image: api, dockerfile: deploy/api.Dockerfile, context: . }
+          - { image: web, dockerfile: deploy/web.Dockerfile, context: ., args: "BLUEPRINTS_API_ORIGIN=http://api:3000" }
+          - { image: runner, dockerfile: apps/runner/Dockerfile, context: apps/runner }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.args }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/java-blueprints-${{ matrix.image }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/java-blueprints-${{ matrix.image }}:latest
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+
+  deploy:
+    name: Deploy to VDS
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      VDS_PORT: ${{ secrets.VDS_PORT || '22' }}
+      VDS_PATH: ${{ secrets.VDS_PATH || '/opt/java-blueprints' }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.VDS_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "$VDS_PORT" -H "${{ secrets.VDS_HOST }}" >> ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<CFG
+          Host vds
+            HostName ${{ secrets.VDS_HOST }}
+            User ${{ secrets.VDS_USER }}
+            Port $VDS_PORT
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+          CFG
+      - name: Upload stack files
+        run: |
+          ssh vds "mkdir -p '$VDS_PATH'"
+          scp deploy/prod/compose.yaml "vds:$VDS_PATH/"
+      - name: Pull and start
+        run: |
+          ssh vds bash -se <<REMOTE
+          set -euo pipefail
+          cd '$VDS_PATH'
+          printf 'DOCKERHUB_USERNAME=%s\nIMAGE_TAG=%s\n' '${{ secrets.DOCKERHUB_USERNAME }}' '${{ github.sha }}' > .env
+          echo '${{ secrets.DOCKERHUB_TOKEN }}' | docker login -u '${{ secrets.DOCKERHUB_USERNAME }}' --password-stdin
+          docker compose pull
+          # the API starts runners by this fixed name
+          docker tag '${{ secrets.DOCKERHUB_USERNAME }}/java-blueprints-runner:${{ github.sha }}' java-blueprints-runner:java21
+          docker compose up -d --remove-orphans
+          docker image prune -f
+          REMOTE
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS https://unmonolith.sh9.top/api/v1/healthz; then exit 0; fi
+            sleep 5
+          done
+          echo "https://unmonolith.sh9.top did not become healthy" >&2
+          exit 1

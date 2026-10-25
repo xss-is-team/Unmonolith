@@ -1,0 +1,42 @@
+# Production stack on the VDS (https://unmonolith.sh9.top). Copied there by .github/workflows/deploy.yml.
+# Reads DOCKERHUB_USERNAME and IMAGE_TAG from the .env file next to it.
+#
+# The API controls the host Docker through the mounted socket (one throw-away runner container per
+# verify/benchmark call): run this on a dedicated machine. The web port is bound to 127.0.0.1; the host's Caddy (installed by deploy/ansible) terminates TLS on 80/443.
+services:
+  # The API starts runners as java-blueprints-runner:java21; this one-shot service only makes sure the image is on the host.
+  runner-image:
+    image: ${DOCKERHUB_USERNAME}/java-blueprints-runner:${IMAGE_TAG:-latest}
+    entrypoint: ["true"]
+    restart: "no"
+
+  api:
+    image: ${DOCKERHUB_USERNAME}/java-blueprints-api:${IMAGE_TAG:-latest}
+    depends_on:
+      runner-image:
+        condition: service_completed_successfully
+    environment:
+      BLUEPRINTS_SECURE_COOKIES: "true"
+    volumes:
+      - blueprints-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/v1/healthz || wget -qO- http://127.0.0.1:3000/api/v1/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    image: ${DOCKERHUB_USERNAME}/java-blueprints-web:${IMAGE_TAG:-latest}
+    depends_on:
+      api:
+        condition: service_healthy
+        restart: true
+    # only the host Caddy (see deploy/ansible) reaches the UI; it is not exposed on public interfaces
+    ports:
+      - "127.0.0.1:3001:3001"
+    restart: unless-stopped
+
+volumes:
+  blueprints-data:

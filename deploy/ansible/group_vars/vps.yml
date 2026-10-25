@@ -1,0 +1,57 @@
+---
+app_domain: "unmonolith.sh9.top"
+# Must be the VDS public IP (checked against DNS by playbooks/app.yml). Fill in before the first run.
+expected_public_ip: "REPLACE_WITH_VDS_IP"
+
+# Domains that should not serve content and should not redirect anywhere.
+blocked_domains: []
+
+# Host Caddy -> web container (published on 127.0.0.1 only)
+app_upstream_host: "127.0.0.1"
+app_upstream_port: 3001
+
+# Java Blueprints stack (deploy/prod/compose.yaml)
+app_dir: /opt/java-blueprints
+app_compose_src: "{{ playbook_dir }}/../../prod/compose.yaml"
+dockerhub_username: "REPLACE_WITH_DOCKERHUB_USERNAME"
+# Read-only token is enough; leave empty when the Docker Hub repositories are public.
+dockerhub_token: "{{ lookup('ansible.builtin.env', 'DOCKERHUB_TOKEN', default='') }}"
+image_tag: latest
+runner_image_name: java-blueprints-runner:java21
+
+swap_size_mb: 2048  # the JVM parser, Rust API and Next.js share the box; 0 disables swap
+
+admin_user: deploy
+server_timezone: Europe/Moscow
+nodejs_major_version: "20"
+nodejs_min_version: "20.9.0"
+go_version: "1.26.4"
+go_min_version: "1.26.4"
+go_arch_map:
+  x86_64: amd64
+  aarch64: arm64
+go_checksums:
+  amd64: "sha256:1153d3d50e0ac764b447adfe05c2bcf08e889d42a02e0fe0259bd47f6733ad7f"
+  arm64: "sha256:ef758ae7c6cf9267c9c0ef080b8965f453d89ab2d25d9eb22de4405925238768"
+
+base_packages:
+  - ca-certificates
+  - curl
+  - dnsutils
+  - fail2ban
+  - gnupg
+  - htop
+  - mc
+  - python3
+  - python3-venv
+  - ufw
+  - vim
+  - wget
+
+open_tcp_ports:
+  - "22"
+  - "80"
+  - "443"
+
+open_udp_ports:
+  - "443"  # HTTP/3

@@ -1,0 +1,118 @@
+---
+- name: Base VPS setup
+  hosts: vps
+  become: true
+
+  tasks:
+    - name: Ensure we are on a Debian-family host
+      ansible.builtin.assert:
+        that:
+          - ansible_facts["os_family"] == "Debian"
+        fail_msg: "These playbooks support only Ubuntu/Debian hosts."
+
+    - name: Ensure APT metadata directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /var/lib/apt/lists
+        - /var/lib/apt/lists/partial
+        - /var/cache/apt/archives
+        - /var/cache/apt/archives/partial
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Upgrade packages
+      ansible.builtin.apt:
+        upgrade: dist
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name: "{{ base_packages }}"
+        state: present
+
+    - name: Set timezone
+      community.general.timezone:
+        name: "{{ server_timezone }}"
+
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Reset UFW rules to defaults
+      community.general.ufw:
+        state: reset
+
+    - name: Deny incoming traffic by default
+      community.general.ufw:
+        direction: incoming
+        default: deny
+
+    - name: Allow outgoing traffic by default
+      community.general.ufw:
+        direction: outgoing
+        default: allow
+
+    - name: Allow required ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: "{{ open_tcp_ports }}"
+
+    - name: Allow required UDP ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: udp
+      loop: "{{ open_udp_ports | default([]) }}"
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled
+
+    - name: Ensure fail2ban is enabled
+      ansible.builtin.service:
+        name: fail2ban
+        state: started
+        enabled: true
+
+    - name: Create swap file
+      when: swap_size_mb | int > 0
+      block:
+        - name: Allocate /swapfile
+          ansible.builtin.command:
+            cmd: "fallocate -l {{ swap_size_mb }}M /swapfile"
+            creates: /swapfile
+
+        - name: Restrict /swapfile permissions
+          ansible.builtin.file:
+            path: /swapfile
+            owner: root
+            group: root
+            mode: "0600"
+
+        - name: Format /swapfile
+          ansible.builtin.command: mkswap /swapfile
+          when: ansible_facts["swaptotal_mb"] | int == 0
+
+        - name: Enable /swapfile
+          ansible.builtin.command: swapon /swapfile
+          when: ansible_facts["swaptotal_mb"] | int == 0
+
+        - name: Persist swap in fstab
+          ansible.posix.mount:
+            src: /swapfile
+            name: none
+            fstype: swap
+            opts: sw
+            state: present
+
+    - name: Verify Python 3.11 is available
+      ansible.builtin.command: python3 --version
+      register: python3_version
+      changed_when: false

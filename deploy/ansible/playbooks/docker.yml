@@ -1,0 +1,91 @@
+---
+- name: Docker setup
+  hosts: vps
+  become: true
+
+  vars:
+    docker_repo_os: "{{ 'ubuntu' if ansible_distribution == 'Ubuntu' else 'debian' }}"
+    docker_arch_map:
+      x86_64: amd64
+      aarch64: arm64
+      armv7l: armhf
+    docker_arch: "{{ docker_arch_map.get(ansible_architecture, ansible_architecture) }}"
+    docker_old_packages:
+      - docker.io
+      - docker-doc
+      - docker-compose
+      - podman-docker
+      - containerd
+      - runc
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+
+  tasks:
+    - name: Remove conflicting Docker packages
+      ansible.builtin.apt:
+        name: "{{ docker_old_packages }}"
+        state: absent
+        purge: true
+
+    - name: Add Docker APT repository
+      ansible.builtin.deb822_repository:
+        name: docker
+        state: present
+        types:
+          - deb
+        uris:
+          - "https://download.docker.com/linux/{{ docker_repo_os }}"
+        suites:
+          - "{{ ansible_distribution_release }}"
+        components:
+          - stable
+        architectures:
+          - "{{ docker_arch }}"
+        signed_by: "https://download.docker.com/linux/{{ docker_repo_os }}/gpg"
+        install_python_debian: true
+
+    - name: Install Docker Engine and Compose plugin
+      ansible.builtin.apt:
+        name: "{{ docker_packages }}"
+        state: present
+        update_cache: true
+
+    - name: Configure Docker daemon (bounded container logs)
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": { "max-size": "10m", "max-file": "3" }
+          }
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart docker
+
+    - name: Ensure Docker service is enabled
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add admin user to docker group
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        groups: docker
+        append: true
+
+    - name: Verify Docker Compose plugin is available
+      ansible.builtin.command: docker compose version
+      register: docker_compose_version
+      changed_when: false
+
+  handlers:
+    - name: restart docker
+      ansible.builtin.service:
+        name: docker
+        state: restarted

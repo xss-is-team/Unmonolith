@@ -1,0 +1,51 @@
+hosts := "vps"
+default_playbook := "playbooks/site.yml"
+collections_file := "collections/requirements.yml"
+
+collections:
+    ansible-galaxy collection install -r {{collections_file}}
+
+# Check that Ansible can reach the host over SSH.
+ping:
+    ansible {{hosts}} -m ping
+
+# Verify sudo access and prompt for the become password.
+whoami:
+    ansible {{hosts}} -b --ask-become-pass -m command -a "whoami"
+
+# Run the base server playbook.
+base:
+    ansible-galaxy collection install -r {{collections_file}}
+    ansible-playbook playbooks/base.yml --ask-become-pass
+
+# Install Node.js, npm, Go, Python 3.11, and uv.
+runtime:
+    ansible-playbook playbooks/runtime.yml --ask-become-pass
+
+# Install Docker Engine and Docker Compose plugin.
+docker:
+    ansible-playbook playbooks/docker.yml --ask-become-pass
+
+# Install and configure Caddy as a system service.
+caddy:
+    ansible-galaxy collection install -r {{collections_file}}
+    ansible-playbook playbooks/caddy.yml --ask-become-pass
+
+# Deploy/refresh the Java Blueprints stack (pulls images from Docker Hub). DOCKERHUB_TOKEN env if repos are private.
+app:
+    ansible-galaxy collection install -r {{collections_file}}
+    ansible-playbook playbooks/app.yml --ask-become-pass
+
+# Run the full VPS automation from start to finish.
+site:
+    ansible-galaxy collection install -r {{collections_file}}
+    ansible-playbook {{default_playbook}} --ask-become-pass
+
+# Backward-compatible alias for the full setup.
+setup:
+    ansible-galaxy collection install -r {{collections_file}}
+    ansible-playbook {{default_playbook}} --ask-become-pass
+
+# Run any playbook file through the same inventory.
+run playbook_file:
+    ansible-playbook {{playbook_file}} --ask-become-pass

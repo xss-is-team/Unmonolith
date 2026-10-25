@@ -1,0 +1,13 @@
+{{ app_domain }} {
+    encode zstd gzip
+    # SSE (analyze/stream) must not be buffered
+    reverse_proxy {{ app_upstream_host }}:{{ app_upstream_port }} {
+        flush_interval -1
+    }
+}
+
+{% for domain in blocked_domains | default([]) %}
+http://{{ domain }}, https://{{ domain }} {
+    abort
+}
+{% endfor %}

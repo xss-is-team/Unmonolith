@@ -1,0 +1,90 @@
+---
+- name: Java Blueprints stack (Docker Hub images, compose, runner image)
+  hosts: vps
+  become: true
+
+  pre_tasks:
+    - name: Ensure placeholders were replaced
+      ansible.builtin.assert:
+        that:
+          - dockerhub_username != "REPLACE_WITH_DOCKERHUB_USERNAME"
+          - expected_public_ip != "REPLACE_WITH_VDS_IP"
+        fail_msg: "Set dockerhub_username and expected_public_ip in group_vars/vps.yml."
+
+    - name: Resolve the app domain
+      ansible.builtin.command: "dig +short {{ app_domain }} A"
+      register: app_dns
+      changed_when: false
+
+    - name: Warn when DNS does not point at this VDS yet (Caddy cannot get a certificate until it does)
+      ansible.builtin.debug:
+        msg: "{{ app_domain }} resolves to '{{ app_dns.stdout | trim }}', expected {{ expected_public_ip }}"
+      when: expected_public_ip not in app_dns.stdout_lines
+
+  tasks:
+    - name: Create app directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: "0755"
+
+    - name: Install compose file
+      ansible.builtin.copy:
+        src: "{{ app_compose_src }}"
+        dest: "{{ app_dir }}/compose.yaml"
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: "0644"
+
+    - name: Write .env (IMAGE_TAG is overwritten by the CI deploy job on every release)
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/.env"
+        content: |
+          DOCKERHUB_USERNAME={{ dockerhub_username }}
+          IMAGE_TAG={{ image_tag }}
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: "0640"
+        force: false
+
+    - name: Log in to Docker Hub as the deploy user
+      community.docker.docker_login:
+        username: "{{ dockerhub_username }}"
+        password: "{{ dockerhub_token }}"
+      become_user: "{{ admin_user }}"
+      when: dockerhub_token | length > 0
+      no_log: true
+
+    - name: Pull images
+      ansible.builtin.command:
+        cmd: docker compose pull
+        chdir: "{{ app_dir }}"
+      become_user: "{{ admin_user }}"
+      changed_when: true
+
+    - name: Tag the runner image under the fixed name the API starts
+      ansible.builtin.shell: |
+        . ./.env
+        docker tag "$DOCKERHUB_USERNAME/java-blueprints-runner:$IMAGE_TAG" {{ runner_image_name }}
+      args:
+        chdir: "{{ app_dir }}"
+        executable: /bin/bash
+      become_user: "{{ admin_user }}"
+      changed_when: true
+
+    - name: Start the stack
+      ansible.builtin.command:
+        cmd: docker compose up -d --remove-orphans
+        chdir: "{{ app_dir }}"
+      become_user: "{{ admin_user }}"
+      changed_when: true
+
+    - name: Wait for the API through the web proxy
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_upstream_port }}/api/v1/healthz"
+      register: health
+      retries: 30
+      delay: 5
+      until: health.status == 200

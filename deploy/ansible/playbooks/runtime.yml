@@ -1,0 +1,147 @@
+---
+- name: Runtime tools setup
+  hosts: vps
+  become: true
+
+  tasks:
+    - name: Check current Node.js version
+      ansible.builtin.command: node --version
+      register: node_version_before
+      failed_when: false
+      changed_when: false
+
+    - name: Configure NodeSource repository for Node.js 20
+      when:
+        - node_version_before.rc != 0 or
+          (node_version_before.stdout | regex_replace('^v', '')) is version(nodejs_min_version, '<')
+      block:
+        - name: Download NodeSource setup script
+          ansible.builtin.get_url:
+            url: "https://deb.nodesource.com/setup_{{ nodejs_major_version }}.x"
+            dest: /tmp/nodesource_setup.sh
+            mode: "0755"
+
+        - name: Run NodeSource setup script
+          ansible.builtin.command: /bin/bash /tmp/nodesource_setup.sh
+
+    - name: Install Node.js
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: true
+
+    - name: Check installed Node.js version
+      ansible.builtin.command: node --version
+      register: node_version_after
+      changed_when: false
+
+    - name: Assert Node.js version is new enough
+      ansible.builtin.assert:
+        that:
+          - "(node_version_after.stdout | regex_replace('^v', '')) is version(nodejs_min_version, '>=')"
+        fail_msg: "Node.js must be >= {{ nodejs_min_version }}, got {{ node_version_after.stdout }}."
+
+    - name: Verify npm is available
+      ansible.builtin.command: npm --version
+      register: npm_version
+      changed_when: false
+
+    - name: Resolve Go architecture
+      ansible.builtin.set_fact:
+        go_arch: "{{ go_arch_map[ansible_architecture] | default(ansible_architecture) }}"
+
+    - name: Ensure Go architecture is supported
+      ansible.builtin.assert:
+        that:
+          - go_arch in go_checksums
+        fail_msg: "Unsupported Go architecture {{ ansible_architecture }} mapped to {{ go_arch }}."
+
+    - name: Check current Go version
+      ansible.builtin.command: /usr/local/go/bin/go version
+      register: go_version_before
+      failed_when: false
+      changed_when: false
+
+    - name: Parse current Go version
+      ansible.builtin.set_fact:
+        go_current_version: >-
+          {{
+            (
+              go_version_before.stdout
+              | default('')
+              | regex_search('go[0-9]+\\.[0-9]+(\\.[0-9]+)?')
+              | default('go0.0.0', true)
+              | regex_replace('^go', '')
+            )
+          }}
+
+    - name: Determine whether Go installation is required
+      ansible.builtin.set_fact:
+        go_install_required: "{{ go_version_before.rc != 0 or go_current_version is version(go_min_version, '<') }}"
+
+    - name: Download Go archive
+      ansible.builtin.get_url:
+        url: "https://go.dev/dl/go{{ go_version }}.linux-{{ go_arch }}.tar.gz"
+        dest: "/tmp/go{{ go_version }}.linux-{{ go_arch }}.tar.gz"
+        mode: "0644"
+        checksum: "{{ go_checksums[go_arch] }}"
+      when: go_install_required
+
+    - name: Remove existing Go installation before upgrade
+      ansible.builtin.file:
+        path: /usr/local/go
+        state: absent
+      when: go_install_required
+
+    - name: Install Go system-wide
+      ansible.builtin.unarchive:
+        src: "/tmp/go{{ go_version }}.linux-{{ go_arch }}.tar.gz"
+        dest: /usr/local
+        remote_src: true
+      when: go_install_required
+
+    - name: Link Go binaries into PATH
+      ansible.builtin.file:
+        src: "/usr/local/go/bin/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        state: link
+        force: true
+      loop:
+        - go
+        - gofmt
+
+    - name: Check installed Go version
+      ansible.builtin.command: go version
+      register: go_version_after
+      changed_when: false
+
+    - name: Assert Go version is new enough
+      ansible.builtin.assert:
+        that:
+          - "(go_version_after.stdout | regex_search('go[0-9]+\\.[0-9]+(\\.[0-9]+)?') | regex_replace('^go', '')) is version(go_min_version, '>=')"
+        fail_msg: "Go must be >= {{ go_min_version }}, got {{ go_version_after.stdout }}."
+
+    - name: Check current uv version
+      ansible.builtin.command: uv --version
+      register: uv_version_before
+      failed_when: false
+      changed_when: false
+
+    - name: Download uv installer
+      ansible.builtin.get_url:
+        url: https://astral.sh/uv/install.sh
+        dest: /tmp/uv-install.sh
+        mode: "0755"
+      when: uv_version_before.rc != 0
+
+    - name: Install uv system-wide
+      ansible.builtin.command: /bin/sh /tmp/uv-install.sh
+      environment:
+        UV_INSTALL_DIR: /usr/local/bin
+        UV_NO_MODIFY_PATH: "1"
+      when: uv_version_before.rc != 0
+
+    - name: Verify uv is available
+      ansible.builtin.command: uv --version
+      register: uv_version_after
+      changed_when: false

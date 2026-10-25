@@ -1,0 +1,6 @@
+---
+# Node.js/Go/uv (playbooks/runtime.yml) are not needed by Java Blueprints: everything ships as Docker images.
+- import_playbook: base.yml
+- import_playbook: docker.yml
+- import_playbook: caddy.yml
+- import_playbook: app.yml
