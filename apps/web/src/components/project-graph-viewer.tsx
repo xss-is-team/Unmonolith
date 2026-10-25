@@ -490,7 +490,7 @@ export function ProjectGraphViewer({
         </div>
       ) : null}
 
-      <div className="grid max-h-[90px] grid-cols-2 gap-1.5 overflow-auto border-t border-slate-800 bg-[#0b1321] px-3 py-2 [&_details]:min-w-0 [&_details]:rounded [&_details]:border [&_details]:border-slate-700 [&_details]:bg-slate-900 [&_details]:px-2.5 [&_details]:py-1.5 [&_details]:text-[12px] [&_details]:text-slate-400 [&_summary]:flex [&_summary]:cursor-pointer [&_summary]:justify-between [&_summary]:text-[13px] [&_summary]:text-slate-300">
+      <div className="hidden max-h-[90px] grid-cols-2 gap-1.5 overflow-auto border-t border-slate-800 bg-[#0b1321] px-3 py-2 [&_details]:min-w-0 [&_details]:rounded [&_details]:border [&_details]:border-slate-700 [&_details]:bg-slate-900 [&_details]:px-2.5 [&_details]:py-1.5 [&_details]:text-[12px] [&_details]:text-slate-400 [&_summary]:flex [&_summary]:cursor-pointer [&_summary]:justify-between [&_summary]:text-[13px] [&_summary]:text-slate-300">
         <details>
           <summary>Внешние типы и вызовы <span>{externals.length + overview.externalCallCount}</span></summary>
           <div className="mt-1 grid gap-1 [&>div]:flex [&>div]:min-w-0 [&>div]:justify-between [&>div]:gap-1.5 [&>div>span]:overflow-hidden [&>div>span]:text-ellipsis [&>div>span]:whitespace-nowrap [&>p]:m-0 [&>p]:text-slate-500">

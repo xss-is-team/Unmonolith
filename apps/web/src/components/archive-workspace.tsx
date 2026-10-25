@@ -75,7 +75,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   const [blockTemplate, setBlockTemplate] = useState<BlockTemplate | null>(null);
   const [openTabs, setOpenTabs] = useState<string[]>([initialFilePath]);
   const [logLines, setLogLines] = useState<LogLine[]>([]);
-  const [panes, setPanes] = useState({ code: true, console: true, tests: true });
+  const [panes, setPanes] = useState({ code: false, console: false, tests: false });
   const [codeTall, setCodeTall] = useState(false);
   const [revisions, setRevisions] = useState<{ revision: number; has_analysis: boolean }[]>([]);
   const [baselineRevision, setBaselineRevision] = useState(1);
@@ -136,6 +136,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   }, [analyzeRevision]);
 
   async function openFile(path: string, nextRange: SourceRange | null = null) {
+    setPanes((current) => (current.code ? current : { ...current, code: true }));
     if (path === activeFile) {
       setRange(nextRange);
       setWorkbench("code");
@@ -164,6 +165,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   }
 
   async function openRange(sourceRange: SourceRange | null) {
+    setPanes((current) => (current.code ? current : { ...current, code: true }));
     if (!sourceRange) {
       setRange(null);
       setWorkbench("code");
@@ -280,6 +282,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
       setLogLines((lines) => [...lines, { time: logTime(), kind: "info", text: `Проверка: REV ${baselineRevision} → REV ${candidateRevision}, сценариев ${cases.length}, запусков ${repeats}…` }]);
       const report = await verifyRevisions(project.id, baselineRevision, candidateRevision, cases, { main_class: mainClass || null, source_level: sourceLevel, repeats });
       setVerifyReport(report);
+      setPanes((current) => ({ ...current, console: true, tests: true }));
       const passedCount = report.test_cases.filter((item) => item.passed).length;
       setLogLines((lines) => [...lines, { time: logTime(), kind: report.baseline_compilation.status === "completed" && report.candidate_compilation.status === "completed" ? "ok" : "error", text: `Сборка REV ${report.baseline_revision}: ${report.baseline_compilation.status}; REV ${report.candidate_revision}: ${report.candidate_compilation.status}` }]);
       setLogLines((lines) => [...lines, report.status === "compilation_failed"
@@ -412,7 +415,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
 
       {error ? <div className="absolute top-14 left-1/2 z-50 flex w-[min(720px,95vw)] -translate-x-1/2 items-center gap-2 rounded border border-rose-900 bg-rose-950 px-3 py-2 text-[13px] text-rose-200 shadow-xl" role="alert"><AlertCircle size={16} />{error}<button className="ml-auto bg-transparent text-slate-400" type="button" aria-label="Закрыть сообщение" onClick={() => setError("")}>×</button></div> : null}
 
-      <div className="grid min-h-0 min-w-0 grid-cols-[240px_minmax(420px,1fr)_400px]">
+      <div className="grid min-h-0 min-w-0 grid-cols-[224px_minmax(420px,1fr)_380px]">
         <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] border-r border-slate-800 bg-[#0b1120]" aria-label="Файлы проекта">
           <div className="min-h-0 overflow-auto">
             <div className="flex h-10 items-center justify-between border-b border-slate-800 px-3 text-[13px] font-semibold text-slate-200"><span className="flex items-center gap-2"><FolderOpen size={15} /> Проект</span><span className="font-mono text-[11px] text-slate-500">{javaFiles.length}</span></div>
