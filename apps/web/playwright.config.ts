@@ -14,6 +14,8 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"], ["html", { outputFolder: "playwright-report", open: "never" }]],
   outputDir: ".next-playwright/test-results",
+  // shared CI runners analyse and compile several times slower than a laptop
+  expect: { timeout: process.env.CI ? 20_000 : 5_000 },
   use: {
     baseURL: `http://127.0.0.1:${webPort}`,
     trace: "retain-on-failure",
