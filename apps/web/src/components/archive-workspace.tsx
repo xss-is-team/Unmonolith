@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { DecompositionPanel } from "@/components/decomposition-panel";
 import { DiffView } from "@/components/diff-view";
 import { HistoryPanel } from "@/components/history-panel";
+import { PreviewDialog } from "@/components/preview-dialog";
 import { Splitter, clamp } from "@/components/splitter";
 import { ruAssumption, ruComplexityNote, ruNotCovered, ruPrecondition, ruProposalSummary, ruRuleTitle, ruText, ruVerdict, ruWarning } from "@/lib/ru";
 import { StepBar, type Step } from "@/components/step-bar";
@@ -580,12 +581,12 @@ function OptimizationPanel({ proposals, revision, selectedId, onSelect, selected
       {selected.preconditions.map((condition) => <p className={`m-0 text-[11px] leading-4 ${condition.status === "satisfied" ? "text-emerald-400" : "text-amber-300"}`} key={condition.id}>{condition.status === "satisfied" ? "✓" : "!"} {ruPrecondition(condition)}{condition.status === "satisfied" ? "" : ` — ${condition.detail}`}</p>)}
       {selected.applicability === "not_applicable" ? <p className="m-0 text-[12px] text-amber-300">{selected.not_applicable_reasons?.join("; ") || "Нарушено предусловие оптимизации."}</p> : <Button variant="outline" size="sm" disabled={busy || Boolean(preview)} onClick={onPreview}>Предпросмотр diff</Button>}
       {error ? <p className="m-0 text-[12px] text-rose-300" role="alert">{error}</p> : null}
-      {preview ? <div className="grid gap-2" aria-label="Предпросмотр оптимизации"><DiffView files={preview.diff} label="Diff оптимизации" />
+      {preview ? <PreviewDialog title={`Предпросмотр: ${ruRuleTitle(selected.rule, selected.title)}`} onClose={() => onSelect("")}><div className="grid gap-3" aria-label="Предпросмотр оптимизации"><DiffView files={preview.diff} label="Diff оптимизации" />
         {selected.assumptions.map((assumption) => <label className="flex items-start gap-2 text-[12px] leading-5 text-amber-200" key={assumption.id}><input className="mt-0.5 size-5 shrink-0 cursor-pointer accent-cyan-500" type="checkbox" checked={acknowledged.includes(assumption.id)} onChange={() => onToggleAssumption(assumption.id)} /><span>{ruAssumption(assumption)}</span></label>)}
         <p className="m-0 text-[11px] leading-4 text-slate-500">Подтвердите каждое допущение: предпросмотр — это только переписывание кода, а совпадение поведения показывает вкладка «Проверка».</p>
         <div className="flex flex-wrap gap-2"><Button size="sm" disabled={busy || acknowledged.length !== selected.assumptions.length} onClick={onApply}>Применить · REV {revision + 1}</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => onSelect("")}>Отмена</Button></div>
         <button className="text-left text-[11px] text-cyan-300" type="button" onClick={() => onOpenFile(selected.file, selected.outer_loop ?? { start: 0, length: 1 })}>Открыть затронутый файл</button>
-      </div> : null}
+      </div></PreviewDialog> : null}
     </div> : null}
   </section>;
 }

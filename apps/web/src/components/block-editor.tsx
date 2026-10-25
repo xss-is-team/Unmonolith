@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AlertCircle, Check, LoaderCircle, Pencil, Plus, Scissors, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DiffView } from "@/components/diff-view";
+import { PreviewDialog } from "@/components/preview-dialog";
 import {
   ApiError, applyCfgEdit, previewCfgEdit,
   type CfgEditOperation, type CfgEditPreview,
@@ -130,6 +131,7 @@ export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, 
       </div>
       {error ? <p className="m-0 flex items-center gap-1.5 text-[12px] text-rose-300" role="alert"><AlertCircle size={14} />{error}</p> : null}
       {preview ? (
+        <PreviewDialog title="Предпросмотр правки" onClose={() => { setPreview(null); setOperation(null); }}>
         <div className="grid gap-2" aria-label="Предпросмотр правки блока">
           <DiffView files={preview.diff} label="Diff правки блока" />
           <div className="flex flex-wrap items-center gap-2">
@@ -137,6 +139,7 @@ export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, 
             <Button variant="outline" onClick={() => { setPreview(null); setOperation(null); }} disabled={busy}>Отмена</Button>
           </div>
         </div>
+        </PreviewDialog>
       ) : null}
     </section>
   );

@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BlockEditor } from "@/components/block-editor";
+import { PreviewDialog } from "@/components/preview-dialog";
 import { ruFinding, ruText } from "@/lib/ru";
 import { DiffView } from "@/components/diff-view";
 import {
@@ -489,7 +490,7 @@ export function CfgViewer({
           </div>
           <p className="m-0 text-[11px] text-slate-500">Перетаскивание узлов меняет только раскладку; неподдерживаемые и зависимые перемещения отклоняются API.</p>
           {moveError ? <p className="m-0 text-[12px] text-rose-300" role="alert">{moveError}</p> : null}
-          {movePreview ? <div className="grid gap-2" aria-label="Предпросмотр перемещения"><DiffView files={movePreview.diff} label="Diff перемещения CFG" /><div className="flex flex-wrap items-center gap-2"><Button onClick={() => void confirmMove()} disabled={moveBusy}>{moveBusy ? <LoaderCircle className="spin" /> : <Check />} Подтвердить перемещение</Button><Button variant="outline" onClick={() => setMovePreview(null)} disabled={moveBusy}>Отмена</Button><small className="text-slate-500">Preview привязан к ревизии {movePreview.base_revision}.</small></div></div> : null}
+          {movePreview ? <PreviewDialog title="Перемещение оператора: проверьте diff" onClose={() => setMovePreview(null)}><div className="grid gap-2" aria-label="Предпросмотр перемещения"><DiffView files={movePreview.diff} label="Diff перемещения CFG" /><div className="flex flex-wrap items-center gap-2"><Button onClick={() => void confirmMove()} disabled={moveBusy}>{moveBusy ? <LoaderCircle className="spin" /> : <Check />} Подтвердить перемещение</Button><Button variant="outline" onClick={() => setMovePreview(null)} disabled={moveBusy}>Отмена</Button><small className="text-slate-500">Preview привязан к ревизии {movePreview.base_revision}.</small></div></div></PreviewDialog> : null}
         </section>
       ) : null}
       {method ? <BlockEditor key={`${method.id}:${blockTemplate?.nonce ?? 0}`} initialCode={blockTemplate?.code} projectId={projectId} revision={revision} methodId={method.id} nodeId={moveNodeId} nodeLabel={moveSource?.text ?? ""} statements={(cfg?.nodes ?? []).filter((node) => node.kind === "statement").map((node) => ({ id: node.id, text: (node.text ?? node.statement_kind ?? "").slice(0, 60) }))} onApplied={onTransformed} /> : null}
