@@ -26,6 +26,7 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BlockEditor } from "@/components/block-editor";
 import { DiffView } from "@/components/diff-view";
 import {
   ApiError,
@@ -468,6 +469,7 @@ export function CfgViewer({
           {movePreview ? <div className="grid gap-2" aria-label="Предпросмотр перемещения"><DiffView files={movePreview.diff} label="Diff перемещения CFG" /><div className="flex flex-wrap items-center gap-2"><Button onClick={() => void confirmMove()} disabled={moveBusy}>{moveBusy ? <LoaderCircle className="spin" /> : <Check />} Подтвердить перемещение</Button><Button variant="outline" onClick={() => setMovePreview(null)} disabled={moveBusy}>Отмена</Button><small className="text-slate-500">Preview привязан к ревизии {movePreview.base_revision}.</small></div></div> : null}
         </section>
       ) : null}
+      {method ? <BlockEditor projectId={projectId} revision={revision} methodId={method.id} nodeId={moveNodeId} nodeLabel={moveSource?.text ?? ""} onApplied={onTransformed} /> : null}
       </div>
     </section>
   );

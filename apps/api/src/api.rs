@@ -568,6 +568,21 @@ enum CfgEditOperation {
         target_node_id: String,
         position: MovePosition,
     },
+    /// Inserts Java statements before/after a statement of a block. The code must parse as statements and the result
+    /// must analyse without a new error; whether the behaviour is kept is for `/verify` to show.
+    InsertStatement {
+        /// CFG node of the statement the code is placed next to.
+        target_node_id: String,
+        position: MovePosition,
+        /// One or more Java statements (at most 4000 characters).
+        code: String,
+    },
+    /// Deletes one whole statement of a block; refused when the result no longer compiles (still used variable,
+    /// missing return).
+    DeleteStatement {
+        /// CFG node of the statement to delete.
+        node_id: String,
+    },
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -2633,6 +2648,20 @@ async fn build_edit_candidate(
             "node_id": node_id,
             "target_node_id": target_node_id,
             "position": position,
+        }),
+        CfgEditOperation::InsertStatement {
+            target_node_id,
+            position,
+            code,
+        } => serde_json::json!({
+            "type": "insert_statement",
+            "target_node_id": target_node_id,
+            "position": position,
+            "code": code,
+        }),
+        CfgEditOperation::DeleteStatement { node_id } => serde_json::json!({
+            "type": "delete_statement",
+            "node_id": node_id,
         }),
     };
     let run = state

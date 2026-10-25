@@ -336,12 +336,10 @@ export type OptimizationApplyResult = {
   analysis_status: "completed" | "partial";
 };
 
-export type CfgEditOperation = {
-  type: "move_statement";
-  node_id: string;
-  target_node_id: string;
-  position: "before" | "after";
-};
+export type CfgEditOperation =
+  | { type: "move_statement"; node_id: string; target_node_id: string; position: "before" | "after" }
+  | { type: "insert_statement"; target_node_id: string; position: "before" | "after"; code: string }
+  | { type: "delete_statement"; node_id: string };
 
 export type CfgEditPreview = {
   base_revision: number;

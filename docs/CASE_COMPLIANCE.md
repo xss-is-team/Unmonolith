@@ -10,7 +10,7 @@ Status: ✅ done · 🟡 partial · ❌ missing · ❓ not verified. Evidence ki
 
 | Run | Result |
 |---|---|
-| `cargo test` (apps/api), fresh JAR built by `mvn package` | lib 76 passed (7 ignored); `e2e_analysis` 6/6, `e2e_decompose` 5/5, `e2e_edit` 13/13, `e2e_import` 6/6. The e2e files refuse to run when the JAR is older than `apps/parser/src` (`apps/api/tests/common/mod.rs:49`): rebuild with `./dev parser-build` after any pull. |
+| `cargo test` (apps/api), fresh JAR built by `mvn package` | lib 76 passed (7 ignored); `e2e_analysis` 6/6, `e2e_decompose` 5/5, `e2e_edit` 14/14, `e2e_import` 6/6. The e2e files refuse to run when the JAR is older than `apps/parser/src` (`apps/api/tests/common/mod.rs:49`): rebuild with `./dev parser-build` after any pull. |
 | `cargo test --test docker_e2e -- --ignored` (real Docker, runner image) | 13/13 passed. Run with `BLUEPRINTS_REAL_RUNNER_IMAGE=<image id>`: resolving the image by tag failed inside the test process on the audit machine although the same `docker image inspect` worked in a shell. |
 | `cargo test --lib -- --ignored` (7 `real_*` tests, real JAR + JDK + Docker) | 7/7 passed |
 | Parser `mvn test` (Maven 3.9.9, JDK 26 with `release 21`) | 215 tests, 0 failures (Acceptance 13, Analysis 27, Cfg 24, ComplexityBenchmark 11, Decomposer 6, MethodGroups 3, StringBuilderRule 2, JavaScopeChecklist 27, LegacyJava 28, Main 7, Optimizer 14, ProjectAnalyzer 8, ProjectGraph 2, Semantic 12, StatementMove 9, Transform 19) |
@@ -30,11 +30,11 @@ Mandatory = case slides 2, 3, 5, 6 (gate), 7, 10, 11. Optional = slide 6 decompo
 | R5 | 3 | 01 Load `.java` | ✅ | ✅ | `single_file_uploads_keep_working_unchanged`, ZIP `e2e_import` 6/6; `upload-panel.tsx` | UI accepts `.java` only |
 | R6 | 3 | 02 Parse | ✅ | ✅ | JDT with bindings; `SemanticTest`, `MainTest` (surefire) | — |
 | R7 | 3 | 03 Build graph | ✅ | ✅ | CFG + project graph | methods without body have no CFG |
-| R8 | 3 | 04 Explore and edit, «Java ↔ блок-схема» two-way | 🟡 | 🟡 | `replace_condition`, `move_statement`, optimizations, rollback: `e2e_edit` 13/13, `TransformTest`, `StatementMoveTest` | no block add/remove/drag, no method extraction; UI exposes only `replace_condition` + text editing |
+| R8 | 3 | 04 Explore and edit, «Java ↔ блок-схема» two-way | ✅ | 🟡 | `replace_condition`, `move_statement`, `insert_statement`, `delete_statement`, optimizations, rollback: `e2e_edit` 14/14, `TransformTest`, `StatementMoveTest`, `StatementEditTest` (4); every edit is re-analysed and refused on a new error; UI: condition replace, move, block palette (insert/delete) with preview diff | no drag-and-drop of nodes (layout only), no method extraction |
 | R9 | 3 | 05 Assemble Java | ✅ | ✅ | ASTRewrite → validated new revision; `real_ast_rewrite_http_end_to_end` | — |
 | R10 | 3 | 06 Run and compare | ✅ | ✅ | `real_container_http_verification`, `docker_e2e` | — |
 | R11 | 3 | Mandatory finish: full path | 🟡 | 🟡 | `real_optimize_verify_and_benchmark_end_to_end`, `organizer_workflow_runs_in_the_real_runner` | path runs, but verify is empty on Organizer; UI lacks the optimize step |
-| R12 | 4 | UI concept (mockup) | 🟡 | 🟡 | see «Mockup comparison» | no block palette, Debug, metrics tab, optimize/export buttons |
+| R12 | 4 | UI concept (mockup) | 🟡 | ✅ | see «Mockup comparison» | no Debug |
 | R13 | 5 | Complexity of method/fragment | ✅ | ✅ | `ComplexityAnalyzer.java`; measured before the latest changes: Organizer 30/103 methods `unknown`, Main 12/67 (not re-measured) | frequent `unknown` |
 | R14 | 5 | Defect + risk + recommendation | ✅ | ✅ | findings `repeated_collection_scan`, `nested_collection_iteration`; `cfg-viewer.tsx:416-423` | risk is inside `explanation`; two finding kinds |
 | R15 | 5 | Code line and graph node | ✅ | ✅ | `source_range`, `node_ids`; `cfg-viewer.tsx:220,436-444` | — |
@@ -50,7 +50,7 @@ Mandatory = case slides 2, 3, 5, 6 (gate), 7, 10, 11. Optional = slide 6 decompo
 | R25 | 11 | Deliverables 01–04 | 🟡 | n/a | 01 `README.md`, `./dev`; 02 `./dev up` (not run); 03 tests exist and `docs/evidence/demo/` holds a saved real run (verify + benchmark); 04 `docs/SOLUTION.md` | see priorities |
 
 Percentages (mandatory only, counting R1–R11, R13–R17, R19, R20, R24, R25 = 20): backend 15 ✅ / 5 🟡 / 0 ❌ (R18 is optional and not counted);
-frontend: the UI now covers analysis, Big O overview, optimization preview/apply, verify (repeats, expectations, warnings), benchmark, decomposition, revision diff, export; the real-backend Playwright suite (`apps/web/e2e/real-backend.spec.ts`) passes 3/3. Missing: block palette/drag-and-drop, debug, rollback screen.
+frontend: the UI now covers analysis, Big O overview, optimization preview/apply, verify (repeats, expectations, warnings), benchmark, decomposition, revision diff, export; the real-backend Playwright suite (`apps/web/e2e/real-backend.spec.ts`) passes 4/4. Missing: block palette/drag-and-drop, debug, rollback screen.
 
 ## Mockup comparison (slide 4)
 
@@ -59,7 +59,7 @@ The text brief only had a title; the slide is a full mockup.
 | Mockup element | Backend | Frontend |
 |---|---|---|
 | Project file tree (`src/…`) | ✅ `GET /files` | ✅ |
-| Block palette (Variable, Condition, Loop, Method, Operation, Return) | ❌ | ❌ |
+| Block palette (Variable, Condition, Loop, Method, Operation, Return) | ✅ `insert_statement`, `delete_statement` | ✅ palette of Java templates, edit text, preview diff, apply |
 | Flowchart with typed nodes and problem markers | ✅ | ✅ |
 | Analysis panel: Problems / Recommendations / Metrics | ✅ `/findings`, `/complexity` | ✅ findings, Big O overview, per-method complexity |
 | «Current O(n²) → after O(n log n)» | ✅ `/optimizations` | ✅ in the proposal |
@@ -90,7 +90,7 @@ Not consumed: `POST /rollback` has a client function but no screen; `GET /graph`
    receiver for `String`/boxed/enum keys (extra assumption `outer_key_non_null`) and constructors/setters that only store
    fields of a freshly allocated object.
 7. **Stale-JAR gate:** the e2e JAR-freshness check fails after a merge until the JAR is rebuilt.
-8. **Verified:** the web build (`pnpm build`), `tsc`, `eslint` and the browser flow (`pnpm exec playwright test`, 3/3 against the real API, parser and Docker runner). Not verified: a deployed public instance, other browsers.
+8. **Verified:** the web build (`pnpm build`), `tsc`, `eslint` and the browser flow (`pnpm exec playwright test`, 4/4 against the real API, parser and Docker runner). Not verified: a deployed public instance, other browsers.
 
 ## Priorities
 

@@ -272,3 +272,24 @@ test("main_class_required, unsupported proposal, stale revision and real single-
   await expect(page.locator(".cm-content")).toContainText("class Organizer");
   await expect(page.getByRole("button", { name: "CFG", exact: true })).toBeEnabled();
 });
+
+test("block editor inserts a validated statement and refuses a deletion that breaks the method", async ({ page }) => {
+  test.setTimeout(90_000);
+  await uploadZip(page);
+  await page.locator('button[title="calc.Pricing.price(int,int,int)"]').click();
+  const cfg = page.getByRole("region", { name: "Граф потока управления" });
+  await cfg.getByText("int tax = base / 5;", { exact: true }).click();
+  const editor = page.getByLabel("Добавление и удаление блоков");
+  await editor.getByLabel("Java-код блока").fill("int audit = tax * 2;");
+  await editor.getByRole("button", { name: "Показать вставку" }).click();
+  await expect(page.getByLabel("Предпросмотр правки блока")).toContainText("int audit = tax * 2;");
+  await page.getByRole("button", { name: /Применить · REV 2/ }).click();
+  await expect(page.getByTestId("revision")).toContainText("REV 2");
+  await page.getByTestId("file-src/main/java/calc/Pricing.java").click();
+  await expect(page.locator(".cm-content")).toContainText("int audit = tax * 2;");
+
+  await page.locator('button[title="calc.Pricing.price(int,int,int)"]').click();
+  await cfg.getByText("int subtotal = base * qty;", { exact: true }).click();
+  await editor.getByRole("button", { name: "Показать удаление" }).click();
+  await expect(editor.locator('[role="alert"]')).toContainText("не компилируется");
+});

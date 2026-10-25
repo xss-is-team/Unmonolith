@@ -1410,12 +1410,17 @@ components:
         operation: {$ref: '#/components/schemas/CfgEditOperation'}
     CfgEditOperation:
       type: object
-      required: [type, node_id, target_node_id, position]
+      required: [type]
+      description: |
+        `move_statement` needs `node_id`, `target_node_id`, `position`; `insert_statement` needs `target_node_id`, `position`, `code`;
+        `delete_statement` needs `node_id`. Every edit is validated by re-analysis (a new error refuses it); whether the behaviour is
+        kept is for `/verify` to show.
       properties:
-        type: {type: string, enum: [move_statement]}
-        node_id: {type: string, example: 'f1m0.n3', description: 'CFG node of the statement to move (a statement node, or the condition node of an if/loop to move the whole compound statement)'}
+        type: {type: string, enum: [move_statement, insert_statement, delete_statement]}
+        node_id: {type: string, example: 'f1m0.n3', description: 'CFG node of the statement to move or delete (a statement node, or the condition node of an if/loop to move the whole compound statement)'}
         target_node_id: {type: string, example: 'f1m0.n2'}
         position: {type: string, enum: [before, after]}
+        code: {type: string, maxLength: 4000, description: 'insert_statement: one or more Java statements'}
     CfgEditApplyRequest:
       allOf:
         - {$ref: '#/components/schemas/CfgEditRequest'}

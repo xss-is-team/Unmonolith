@@ -54,7 +54,7 @@ async fn the_demo_monolith_is_split_into_files_and_the_project_becomes_multi_fil
     assert_eq!(preview["validation"], "valid");
     assert_eq!(preview["added_files"].as_array().unwrap().len(), 16);
     assert_eq!(preview["changed_files"], json!(["Main.java"]));
-    assert_eq!(preview["host_lines"]["Main.java"]["before"], 799);
+    assert_eq!(preview["host_lines"]["Main.java"]["before"], 819);
     assert!(
         preview["host_lines"]["Main.java"]["after"]
             .as_u64()

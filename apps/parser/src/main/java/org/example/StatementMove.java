@@ -18,6 +18,7 @@ import java.util.TreeSet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.eclipse.jdt.core.JavaCore;
+import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.core.dom.*;
 import org.eclipse.jdt.core.dom.rewrite.ASTRewrite;
 import org.eclipse.jdt.core.dom.rewrite.ListRewrite;
@@ -141,8 +142,12 @@ final class StatementMove {
         }
         String methodId = request.path("method_id").asText("");
         JsonNode op = request.path("operation");
-        if (!op.path("type").asText("").equals("move_statement")) {
-            return failure("unsupported_operation", "Only 'move_statement' is supported.", null);
+        String type = op.path("type").asText("");
+        if (type.equals("insert_statement") || type.equals("delete_statement")) {
+            return editStructural(root, request, outputDir, type);
+        }
+        if (!type.equals("move_statement")) {
+            return failure("unsupported_operation", "Supported operations: move_statement, insert_statement, delete_statement.", null);
         }
         String nodeId = op.path("node_id").asText("");
         String targetId = op.path("target_node_id").asText("");
@@ -257,7 +262,12 @@ final class StatementMove {
         operation.put("relative_to", describe(r, target));
         operation.put("jumped_over", evidence);
         result.put("operation", operation);
+        return finish(root, files, level, single, r, methodId, rewritten, result, outputDir);
+    }
 
+    /** Writes the candidate tree, re-analyses it and maps the CFG nodes (shared by every statement edit). */
+    private static Map<String, Object> finish(Path root, List<String> files, String level, boolean single, Resolved r,
+            String methodId, String rewritten, Map<String, Object> result, Path outputDir) throws IOException {
         if (outputDir == null) {
             return result; // dry run: analysis only
         }
@@ -290,6 +300,115 @@ final class StatementMove {
         result.put("node_mapping", nodeMapping(r.methodJson, afterMethod));
         result.put("candidate_status", after.analysis.get("status"));
         return result;
+    }
+
+    private static final int MAX_INSERT_CHARS = 4000;
+
+    /**
+     * {@code insert_statement} (Java statements placed before/after a statement of a block) and {@code delete_statement}
+     * (one statement of a block removed). Both are text-preserving ASTRewrite edits; the result is re-analysed and
+     * refused when it introduces an error (a deleted declaration that is still used, a missing return, a type error).
+     * Whether the edit keeps the behaviour is for the verify step to show.
+     */
+    private static Map<String, Object> editStructural(Path root, JsonNode request, Path outputDir, String type) throws IOException {
+        String level = request.path("source_level").asText(ProjectAnalyzer.DEFAULT_SOURCE_LEVEL);
+        boolean single = request.path("mode").asText("project").equals("single");
+        List<String> files = new ArrayList<>();
+        for (JsonNode file : request.path("files")) {
+            files.add(file.asText());
+        }
+        String methodId = request.path("method_id").asText("");
+        JsonNode op = request.path("operation");
+
+        Resolved r = new Resolved();
+        r.analysis = single && files.size() == 1 ? analyzeSingle(root, files.get(0), level, r)
+                : ProjectAnalyzer.analyze(root, files, level, loaded -> r.loaded = loaded);
+        if ("failed".equals(r.analysis.get("status")) || r.loaded == null) {
+            return failure("analysis_failed", "The project could not be analysed: " + firstDiagnostic(r.analysis), null);
+        }
+        Map<String, Object> failure = resolveMethod(r, methodId);
+        if (failure != null) {
+            return failure;
+        }
+        ASTRewrite rewrite = ASTRewrite.create(r.json.unit().getAST());
+        Map<String, Object> operation = new LinkedHashMap<>();
+        operation.put("type", type);
+        if (type.equals("delete_statement")) {
+            String nodeId = op.path("node_id").asText("");
+            Statement statement = statementOf(r, nodeId);
+            if (nodeId.isEmpty() || statement == null) {
+                return failure("unsupported_node", "Node '" + nodeId + "' is not a whole statement of a block that can be deleted.", null);
+            }
+            rewrite.getListRewrite((Block) statement.getParent(), Block.STATEMENTS_PROPERTY).remove(statement, null);
+            operation.put("deleted", describe(r, statement));
+        } else {
+            String targetId = op.path("target_node_id").asText("");
+            String position = op.path("position").asText("");
+            String code = op.path("code").asText("");
+            if (targetId.isEmpty() || !(position.equals("before") || position.equals("after")) || code.isBlank()) {
+                return failure("invalid_operation", "target_node_id, position (before|after) and code are required.", null);
+            }
+            if (code.length() > MAX_INSERT_CHARS) {
+                return failure("invalid_operation", "The code to insert is longer than " + MAX_INSERT_CHARS + " characters.", null);
+            }
+            Statement target = statementOf(r, targetId);
+            if (target == null) {
+                return failure("unsupported_node", "Node '" + targetId + "' is not a statement of a block.", null);
+            }
+            List<String> pieces = parseStatements(code);
+            if (pieces == null) {
+                return failure("invalid_operation", "The code is not a sequence of valid Java statements.", null);
+            }
+            Block block = (Block) target.getParent();
+            ListRewrite list = rewrite.getListRewrite(block, Block.STATEMENTS_PROPERTY);
+            int base = block.statements().indexOf(target) + (position.equals("after") ? 1 : 0);
+            for (int i = 0; i < pieces.size(); i++) {
+                list.insertAt(rewrite.createStringPlaceholder(pieces.get(i), ASTNode.EMPTY_STATEMENT), base + i, null);
+            }
+            operation.put("inserted", pieces);
+            operation.put("position", position);
+            operation.put("relative_to", describe(r, target));
+        }
+        String sourceText = r.json.sourceText();
+        Document document = new Document(sourceText);
+        Map<String, String> formatting = JavaCore.getOptions();
+        Optimizer.applyIndentation(formatting, sourceText);
+        try {
+            rewrite.rewriteAST(document, formatting).apply(document);
+        } catch (Exception e) {
+            return failure("rewrite_failed", "Could not apply the edit: " + e, null);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("status", "completed");
+        result.put("method_id", methodId);
+        result.put("file", r.json.file() == null ? files.get(0) : r.json.file());
+        result.put("operation", operation);
+        return finish(root, files, level, single, r, methodId, document.get(), result, outputDir);
+    }
+
+    /** The statements of {@code code} as source text, or null when it is not a valid statement sequence. */
+    private static List<String> parseStatements(String code) {
+        String prefix = "class Snippet { void run() {\n";
+        String wrapped = prefix + code + "\n} }";
+        ASTParser parser = ASTParser.newParser(AST.getJLSLatest());
+        parser.setKind(ASTParser.K_COMPILATION_UNIT);
+        parser.setSource(wrapped.toCharArray());
+        CompilationUnit unit = (CompilationUnit) parser.createAST(null);
+        for (IProblem problem : unit.getProblems()) {
+            if (problem.isError()) {
+                return null;
+            }
+        }
+        if (unit.types().size() != 1 || !(unit.types().get(0) instanceof TypeDeclaration type) || type.getMethods().length != 1
+                || type.getMethods()[0].getBody() == null) {
+            return null;
+        }
+        List<String> pieces = new ArrayList<>();
+        for (Object s : type.getMethods()[0].getBody().statements()) {
+            Statement statement = (Statement) s;
+            pieces.add(wrapped.substring(statement.getStartPosition(), statement.getStartPosition() + statement.getLength()));
+        }
+        return pieces.isEmpty() ? null : pieces;
     }
 
     @SuppressWarnings("unchecked")

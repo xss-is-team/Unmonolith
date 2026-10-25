@@ -688,7 +688,7 @@ async fn invalid_requests_and_stale_revisions_are_refused() {
         .await
         .expect_error(400, "invalid_request");
     let mut unknown_op = valid.clone();
-    unknown_op["operation"]["type"] = json!("delete_statement");
+    unknown_op["operation"]["type"] = json!("rename_variable");
     project
         .cfg_preview(&unknown_op)
         .await
@@ -873,4 +873,75 @@ async fn foreign_sessions_cannot_edit_optimize_or_roll_back() {
         .expect_error(404, "project_not_found");
     foreign.benchmark(&json!({"baseline_revision": 1, "candidate_revision": 1, "workloads": [{"name": "a", "stdin": "1"}]})).await.expect_error(404, "project_not_found");
     assert_eq!(project.revision().await, 1);
+}
+
+#[tokio::test]
+async fn statements_can_be_inserted_and_deleted_from_the_cfg_with_validation() {
+    let (_server, project, _original) = pricing().await;
+    let tax = project.cfg_node(PRICE, "int tax = base / 5;").await;
+
+    // insert: a new statement after `tax`, previewed and applied as revision 2
+    let body = json!({
+        "base_revision": 1, "source_level": "8", "method_id": PRICE,
+        "operation": {"type": "insert_statement", "target_node_id": tax, "position": "after", "code": "int audit = tax * 2;"},
+    });
+    let preview = project.cfg_preview(&body).await.expect_status(200).json();
+    let unified = preview["diff"][0]["unified_diff"].as_str().unwrap();
+    assert!(
+        unified.contains("+        int audit = tax * 2;"),
+        "{unified}"
+    );
+    assert_eq!(preview["operation"]["type"], "insert_statement");
+    project
+        .cfg_apply(&body, &preview["preview_sha256"])
+        .await
+        .expect_status(200);
+    assert_eq!(project.revision().await, 2);
+    assert!(project
+        .source(PRICING, None)
+        .await
+        .contains("int audit = tax * 2;"));
+
+    // delete the statement that was just inserted (nothing uses it): applies
+    project.analyze("8").await;
+    let audit = project.cfg_node(PRICE, "int audit = tax * 2;").await;
+    let delete = json!({
+        "base_revision": 2, "source_level": "8", "method_id": PRICE,
+        "operation": {"type": "delete_statement", "node_id": audit},
+    });
+    let delete_preview = project.cfg_preview(&delete).await.expect_status(200).json();
+    project
+        .cfg_apply(&delete, &delete_preview["preview_sha256"])
+        .await
+        .expect_status(200);
+    assert!(!project.source(PRICING, None).await.contains("int audit"));
+
+    // refusals: broken code, a deletion that breaks the method, an unknown node, a type error
+    project.analyze("8").await;
+    let subtotal = project.cfg_node(PRICE, "int subtotal = base * qty;").await;
+    let bad = |code: &str| {
+        json!({"base_revision": 3, "source_level": "8", "method_id": PRICE,
+            "operation": {"type": "insert_statement", "target_node_id": subtotal, "position": "before", "code": code}})
+    };
+    project
+        .cfg_preview(&bad("int = ;"))
+        .await
+        .expect_error(400, "invalid_operation");
+    project
+        .cfg_preview(&bad("String s = subtotal;"))
+        .await
+        .expect_error(422, "transformation_invalid");
+    let remove_used = json!({"base_revision": 3, "source_level": "8", "method_id": PRICE,
+        "operation": {"type": "delete_statement", "node_id": subtotal}});
+    project
+        .cfg_preview(&remove_used)
+        .await
+        .expect_error(422, "transformation_invalid");
+    let unknown = json!({"base_revision": 3, "source_level": "8", "method_id": PRICE,
+        "operation": {"type": "delete_statement", "node_id": "nope"}});
+    project
+        .cfg_preview(&unknown)
+        .await
+        .expect_error(422, "unsupported_node");
+    assert_eq!(project.revision().await, 3, "refused edits change nothing");
 }
