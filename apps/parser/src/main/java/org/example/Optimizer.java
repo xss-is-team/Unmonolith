@@ -59,6 +59,7 @@ final class Optimizer {
     private static final String A_NULL_TIMING = "null_and_exception_timing";
     private static final String A_THREADS = "single_threaded";
     private static final String A_OUTER_KEY = "outer_key_non_null";
+    private static final String A_CALLEE_KEYS = "callees_keep_keys";
 
     private Optimizer() {
     }
@@ -154,6 +155,8 @@ final class Optimizer {
         boolean outerReceiver;
         String collectionName;
         final List<Precondition> preconditions = new ArrayList<>();
+        /** Project methods called in the loop that write object fields: the keys must not be among them (an assumption). */
+        final Set<String> writingCallees = new LinkedHashSet<>();
 
         boolean applicable() {
             return preconditions.stream().allMatch(Precondition::satisfied);
@@ -332,6 +335,7 @@ final class Optimizer {
                         : "'" + c.collectionName + "' is declared inside the enclosing loop."));
         Effects effects = new Effects(loaded, collection, inner, method);
         outer.accept(effects);
+        c.writingCallees.addAll(effects.writingCallees);
         c.preconditions.add(new Precondition("collection_not_modified", simple && effects.problem == null,
                 !simple ? "Cannot reason about a collection that is not a plain variable."
                         : effects.problem == null
@@ -635,25 +639,154 @@ final class Optimizer {
             }
         }
         // a subclass in the project could override the accessor
-        if (!Modifier.isPrivate(decl.getModifiers()) && !Modifier.isStatic(decl.getModifiers())
-                && !Modifier.isFinal(decl.getModifiers()) && !Modifier.isFinal(decl.getDeclaringClass().getModifiers())
-                && !decl.getDeclaringClass().isRecord()) {
-            boolean[] overridden = {false};
-            for (AstJson peer : loaded.jsons()) {
-                peer.unit().accept(new ASTVisitor() {
-                    @Override
-                    public boolean visit(MethodDeclaration other) {
-                        IMethodBinding ob = other.resolveBinding();
-                        if (ob != null && ob != decl && ob.overrides(decl)) {
-                            overridden[0] = true;
-                        }
-                        return !overridden[0];
-                    }
-                });
-            }
-            return !overridden[0];
+        return !overriddenInProject(loaded, decl);
+    }
+
+    private static boolean overriddenInProject(ProjectAnalyzer.Loaded loaded, IMethodBinding decl) {
+        if (Modifier.isPrivate(decl.getModifiers()) || Modifier.isStatic(decl.getModifiers())
+                || Modifier.isFinal(decl.getModifiers()) || Modifier.isFinal(decl.getDeclaringClass().getModifiers())
+                || decl.getDeclaringClass().isRecord()) {
+            return false;
         }
-        return true;
+        boolean[] overridden = {false};
+        for (AstJson peer : loaded.jsons()) {
+            peer.unit().accept(new ASTVisitor() {
+                @Override
+                public boolean visit(MethodDeclaration other) {
+                    IMethodBinding ob = other.resolveBinding();
+                    if (ob != null && ob != decl && ob.overrides(decl)) {
+                        overridden[0] = true;
+                    }
+                    return !overridden[0];
+                }
+            });
+        }
+        return overridden[0];
+    }
+
+    /** What a project method can change, transitively: nothing but locals and console output, object fields, or unknown. */
+    enum Writes { NOTHING, FIELDS, UNKNOWN }
+
+    static Writes calleeWrites(ProjectAnalyzer.Loaded loaded, IMethodBinding b, int depth, Set<IMethodBinding> seen) {
+        IMethodBinding decl = b.getMethodDeclaration();
+        if (depth > 4 || !seen.add(decl)) {
+            return depth > 4 ? Writes.UNKNOWN : Writes.NOTHING;
+        }
+        MethodDeclaration md = null;
+        for (AstJson peer : loaded.jsons()) {
+            if (peer.unit().findDeclaringNode(decl) instanceof MethodDeclaration found) {
+                md = found;
+                break;
+            }
+        }
+        if (md == null || md.getBody() == null || overriddenInProject(loaded, decl)) {
+            return Writes.UNKNOWN;
+        }
+        Writes[] result = {Writes.NOTHING};
+        md.getBody().accept(new ASTVisitor() {
+            void fields() {
+                if (result[0] == Writes.NOTHING) {
+                    result[0] = Writes.FIELDS;
+                }
+            }
+
+            void unknown() {
+                result[0] = Writes.UNKNOWN;
+            }
+
+            void target(Expression target) {
+                Expression t = AstJson.strip(target);
+                if (!(t instanceof SimpleName n && n.resolveBinding() instanceof IVariableBinding vb && !vb.isField())) {
+                    fields();
+                }
+            }
+
+            @Override
+            public boolean visit(LambdaExpression n) {
+                unknown();
+                return false;
+            }
+
+            @Override
+            public boolean visit(AnonymousClassDeclaration n) {
+                unknown();
+                return false;
+            }
+
+            @Override
+            public boolean visit(TypeDeclarationStatement n) {
+                unknown();
+                return false;
+            }
+
+            @Override
+            public boolean visit(Assignment n) {
+                target(n.getLeftHandSide());
+                return true;
+            }
+
+            @Override
+            public boolean visit(PostfixExpression n) {
+                target(n.getOperand());
+                return true;
+            }
+
+            @Override
+            public boolean visit(PrefixExpression n) {
+                if (n.getOperator() == PrefixExpression.Operator.INCREMENT || n.getOperator() == PrefixExpression.Operator.DECREMENT) {
+                    target(n.getOperand());
+                }
+                return true;
+            }
+
+            @Override
+            public boolean visit(ClassInstanceCreation n) {
+                ITypeBinding t = n.resolveTypeBinding();
+                String name = t == null ? "" : t.getErasure().getQualifiedName();
+                boolean jdk = name.startsWith("java.lang.") || name.startsWith("java.util.") || name.startsWith("java.math.");
+                if (!jdk && !ConstructorPurity.isTrivial(n, loaded.jsons().stream().map(AstJson::unit).toList())) {
+                    unknown();
+                }
+                return true;
+            }
+
+            @Override
+            public boolean visit(MethodInvocation mi) {
+                IMethodBinding cb = mi.resolveMethodBinding();
+                if (cb == null) {
+                    unknown();
+                    return true;
+                }
+                String owner = cb.getDeclaringClass().getErasure().getQualifiedName();
+                String name = cb.getName();
+                if (Set.of("java.lang.Math", "java.lang.StrictMath", "java.lang.Integer", "java.lang.Long", "java.lang.Double",
+                        "java.lang.Boolean", "java.lang.Character", "java.util.Objects", "java.lang.String").contains(owner)
+                        || owner.equals("java.io.PrintStream") && Set.of("println", "print", "printf", "format").contains(name)
+                        || owner.startsWith("java.lang.") && owner.endsWith("StringBuilder")
+                        || isTrivialAccessor(loaded, cb)) {
+                    return true;
+                }
+                if (owner.startsWith("java.util.")) {
+                    if (!Set.of("get", "getOrDefault", "size", "isEmpty", "contains", "containsKey", "containsValue", "indexOf",
+                            "equals", "hashCode", "toString").contains(name)) {
+                        unknown();
+                    }
+                    return true;
+                }
+                if (isTrivialSetter(loaded, cb)) {
+                    fields();
+                    return true;
+                }
+                Writes inner = calleeWrites(loaded, cb, depth + 1, seen);
+                if (inner == Writes.UNKNOWN) {
+                    unknown();
+                } else if (inner == Writes.FIELDS) {
+                    fields();
+                }
+                return true;
+            }
+        });
+        return result[0];
     }
 
     // ---------- control flow of the matched body ----------
@@ -751,6 +884,7 @@ final class Optimizer {
         final IVariableBinding collection;
         final EnhancedForStatement inner;
         final MethodDeclaration method;
+        final Set<String> writingCallees = new LinkedHashSet<>();
         String problem;
 
         Effects(ProjectAnalyzer.Loaded loaded, IVariableBinding collection, EnhancedForStatement inner, MethodDeclaration method) {
@@ -852,8 +986,14 @@ final class Optimizer {
                 }
             }
             if (!isBenign(mi, b)) {
-                problem("The enclosing loop calls '" + mi.getName().getIdentifier()
-                        + "()', which is not known to leave the scanned collection and keys unchanged.");
+                Writes writes = b.getDeclaringClass().isFromSource()
+                        ? calleeWrites(loaded, b, 0, new HashSet<>()) : Writes.UNKNOWN;
+                if (writes == Writes.FIELDS) {
+                    writingCallees.add(mi.getName().getIdentifier() + "()");
+                } else if (writes == Writes.UNKNOWN) {
+                    problem("The enclosing loop calls '" + mi.getName().getIdentifier()
+                            + "()', which is not known to leave the scanned collection and keys unchanged.");
+                }
             }
             return true;
         }
@@ -990,6 +1130,11 @@ final class Optimizer {
             list.add(assumption(A_OUTER_KEY, "The key '" + AstJson.normalize(c.json.text(c.outerKey)) + "' is never null when "
                     + "'" + c.collectionName + "' is scanned: the original calls equals() on it and would throw a "
                     + "NullPointerException, while the index lookup treats null as a plain miss."));
+        }
+        if (!c.writingCallees.isEmpty()) {
+            list.add(assumption(A_CALLEE_KEYS, String.join(", ", c.writingCallees) + " called in the loop change fields of objects but "
+                    + "never the fields the key is read from, and never '" + c.collectionName + "' itself: the index is built "
+                    + "once, so a key changed later would not be found."));
         }
         list.add(assumption(A_THREADS, "No other thread modifies '" + c.collectionName
                 + "' or the element keys while the enclosing loop runs."));

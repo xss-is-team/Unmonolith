@@ -429,16 +429,48 @@ class OptimizerTest {
     }
 
     @Test
-    void setterOnAnExistingElementOfTheScannedCollectionIsStillRefused(@TempDir Path root) throws IOException {
+    void setterOnAnExistingElementNeedsTheKeysUnchangedAssumption(@TempDir Path root) throws IOException {
         String source = MERGE.replace("Box c = new Box(a.id(), 0);", "Box c = a;");
         JsonNode p = mergeProposal(root, source);
-        assertEquals("not_applicable", p.get("applicability").asText(), p.toString());
-        assertTrue(p.get("not_applicable_reasons").toString().contains("setQty"), p.toString());
+        assertEquals("applicable", p.get("applicability").asText(), p.toString());
+        assertTrue(p.get("assumptions").toString().contains("callees_keep_keys"), p.toString());
+    }
+
+    /** The example of case slide 5, verbatim: merge() only prints, so nothing it does can change items or the keys. */
+    private static final String SLIDE5 = "import java.util.*;\n"
+            + "class Main { record Item(String id, int qty) {}\n"
+            + "  static void merge(Item a, Item b) { System.out.println(a.id() + \"+\" + b.id()); }\n"
+            + "  static void process(List<Item> items) {\n"
+            + "    for (Item a : items) { for (Item b : items) { if (a.id().equals(b.id())) { merge(a, b); } } } } }\n";
+
+    @Test
+    void theSlideFiveExampleIsApplicableWhenMergeOnlyPrints(@TempDir Path root) throws IOException {
+        write(root, "Main.java", SLIDE5);
+        JsonNode p = proposals(root, "Main.java").get(0);
+        assertEquals("applicable", p.get("applicability").asText(), p.toString());
+        assertFalse(p.get("assumptions").toString().contains("callees_keep_keys"), p.toString());
     }
 
     @Test
-    void setterThatDoesMoreThanStoreIsStillRefused(@TempDir Path root) throws IOException {
+    void aMergeThatWritesFieldsNeedsAnAssumptionAndOneThatChangesACollectionIsRefused(@TempDir Path root) throws IOException {
+        String fields = SLIDE5.replace("record Item(String id, int qty) {}", "static class Item { String id; int qty; Item(String id, int qty) { this.id = id; this.qty = qty; } String id() { return id; } }")
+                .replace("System.out.println(a.id() + \"+\" + b.id());", "a.qty += b.qty;");
+        write(root, "Main.java", fields);
+        JsonNode p = proposals(root, "Main.java").get(0);
+        assertEquals("applicable", p.get("applicability").asText(), p.toString());
+        assertTrue(p.get("assumptions").toString().contains("callees_keep_keys"), p.toString());
+
+        String list = SLIDE5.replace("static void merge(Item a, Item b) { System.out.println(a.id() + \"+\" + b.id()); }",
+                "static List<Item> seen = new ArrayList<>(); static void merge(Item a, Item b) { seen.add(b); }");
+        write(root, "Main.java", list);
+        JsonNode refused = proposals(root, "Main.java").get(0);
+        assertEquals("not_applicable", refused.get("applicability").asText(), refused.toString());
+    }
+
+    @Test
+    void setterThatAlsoPrintsNeedsTheKeysUnchangedAssumption(@TempDir Path root) throws IOException {
         JsonNode p = mergeProposal(root, MERGE.replace("void setQty(int q) { this.qty = q; }", "void setQty(int q) { this.qty = q; System.out.println(q); }"));
-        assertEquals("not_applicable", p.get("applicability").asText(), p.toString());
+        assertEquals("applicable", p.get("applicability").asText(), p.toString());
+        assertTrue(p.get("assumptions").toString().contains("callees_keep_keys"), p.toString());
     }
 }
