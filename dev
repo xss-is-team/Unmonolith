@@ -45,6 +45,22 @@ require_tools() {
   fi
 }
 
+ensure_runner() {
+  local image="java-blueprints-runner:java21"
+  if [[ -n "${BLUEPRINTS_RUNNER_IMAGE:-}" ]]; then
+    return 0
+  fi
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+      printf 'Building isolated Java runner image (%s)...\n' "$image"
+      docker build -t "$image" "$ROOT/apps/runner"
+    fi
+    export BLUEPRINTS_RUNNER_IMAGE="$image"
+  else
+    printf 'Docker is not available or daemon is not running; behavioral verification will be disabled.\n' >&2
+  fi
+}
+
 command="${1:-help}"
 case "$command" in
   api)
@@ -54,6 +70,7 @@ case "$command" in
     elif [[ -z "${BLUEPRINTS_ANALYZER_JAR:-}" ]]; then
       printf 'Parser JAR not built; analysis will be unavailable. Run ./dev parser-build first.\n' >&2
     fi
+    ensure_runner
     run_in apps/api cargo run
     ;;
   web-install)
@@ -85,6 +102,8 @@ case "$command" in
     if [[ -z "${BLUEPRINTS_ANALYZER_JAR:-}" ]]; then
       export BLUEPRINTS_ANALYZER_JAR="$parser_jar"
     fi
+
+    ensure_runner
 
     printf '\nAPI: http://localhost:3000\nWeb: http://localhost:3001\nPress Ctrl+C to stop both.\n\n'
     cd "$ROOT/apps/web"
