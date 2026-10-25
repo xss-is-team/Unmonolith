@@ -1,5 +1,10 @@
 # Java Blueprints — end-to-end architecture
 
+> **Что это.** Веб-инструмент для кейса Axenix «Java Blueprints»: Java-монолит → AST/CFG/граф проекта → диагностика Big O →
+> правка и оптимизация → регенерация Java → проверка сохранения поведения в Docker. Описание решения: [`docs/SOLUTION.md`](docs/SOLUTION.md),
+> соответствие кейсу: [`docs/CASE_COMPLIANCE.md`](docs/CASE_COMPLIANCE.md), сохранённый реальный прогон: [`docs/evidence/demo/SUMMARY.md`](docs/evidence/demo/SUMMARY.md)
+> (повтор: `./dev demo`). Бэкенд готов; интерфейс догоняет API (см. список расхождений в compliance).
+
 ## Current application
 
 The web client lives in `apps/web/` and uses Next.js App Router. It provides source-linked diagnostics, per-method CFG and Big O views, a Project Overview UI, revision diff, `replace_condition`, and behavioral verification. Project Overview reads the revisioned graph endpoint for the current single-file project; its explicitly labeled multi-file fixture is only for `/demo`. The Rust/Axum service in `apps/api/` remains the API and owns guest sessions, project storage, revisions, analysis and runner reports. Next proxies `/api/v1/*` to Axum so browser requests and the session cookie stay same-origin.
