@@ -1,0 +1,46 @@
+# One-command local or public run:  docker compose up --build
+#   web  http://localhost:3001      (the UI; proxies /api/v1/* to the API)
+#   api  http://localhost:3000      (REST + /swagger-ui)
+#
+# The API starts one throw-away runner container per verify/benchmark call through the host Docker socket
+# (mounted below). That socket gives the API control of the host's Docker: run this on a dedicated machine,
+# never on a host with other workloads, and keep the ports behind HTTPS if the instance is public.
+services:
+  runner-image:
+    build: apps/runner
+    image: java-blueprints-runner:java21
+    entrypoint: ["true"]
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/api.Dockerfile
+    image: java-blueprints-api:local
+    depends_on:
+      runner-image:
+        condition: service_completed_successfully
+    environment:
+      BLUEPRINTS_SECURE_COOKIES: ${BLUEPRINTS_SECURE_COOKIES:-false}
+    volumes:
+      - blueprints-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/web.Dockerfile
+      args:
+        BLUEPRINTS_API_ORIGIN: http://api:3000
+    image: java-blueprints-web:local
+    depends_on:
+      - api
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+
+volumes:
+  blueprints-data:

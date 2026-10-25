@@ -60,6 +60,14 @@ After installing the host tools listed above, run one command from the repositor
 
 It installs frontend packages, builds the parser and API, then starts both services. Open <http://localhost:3001>; the API is at <http://localhost:3000>. Press Ctrl+C to stop both. To include behavioral verification, first run `./dev runner-build`, then start with `BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21 ./dev up`. `./dev` lists individual build and check commands. Frontend details are in `apps/web/README.md`.
 
+Or run everything in containers (needs only Docker, builds the parser, API, web and the runner image):
+
+```sh
+docker compose up --build
+```
+
+Open <http://localhost:3001>. The API container uses the host Docker socket to start throw-away runner containers; run it on a dedicated machine (see `compose.yaml`).
+
 ## Parser integration
 
 `./dev parser-build` creates an executable JAR. `./dev api` points the API at that JAR automatically; `BLUEPRINTS_ANALYZER_JAR` can override it. The API invokes the parser for each analysis request and stores its JSON result with the project revision. If the JAR has not been built, analysis returns `analyzer_unavailable`. The parser provides AST data, semantic diagnostics, per-method CFGs, and the restricted `replace_condition` rewrite.
@@ -77,8 +85,8 @@ Changes happen through a separate editable BPMN-style process diagram. Its suppo
 ## Current scope
 
 - The API accepts a single `.java` file or a ZIP project (multi-file, packages, source levels Java 8–21); Maven/Gradle import and external dependencies are not supported (unresolved calls are reported honestly).
-- The parser produces AST data, per-method CFGs, Big O estimates with findings, a project graph, `replace_condition` and `move_statement` edits, lookup-loop optimization proposals and the decomposition of a monolith's static member types into files. The Rust API exposes these through the revisioned endpoints in `apps/api/openapi.yaml`, plus rollback, export and a runtime benchmark.
-- The web app currently covers source editing, method CFG/Big O findings, Project Overview (project graph), `replace_condition`, revision diff and behavioral verification. Optimizations, decomposition, `move_statement`, benchmark, rollback, export and ZIP upload exist in the API but are not wired into the UI yet (see `docs/CASE_COMPLIANCE.md`).
+- The parser produces AST data, per-method CFGs, Big O estimates with findings, a project graph, `replace_condition` and `move_statement` edits, three optimization rules (nested lookup → `HashMap`, `list.contains` in a loop → `HashSet`, `String +=` in a loop → `StringBuilder`) and the decomposition of a monolith (static member types → files, groups of static methods → classes). The Rust API exposes these through the revisioned endpoints in `apps/api/openapi.yaml`, plus rollback, export, a Markdown report and a runtime benchmark.
+- The web app covers source editing, per-method CFG and Big O, the project overview and Big O summary, `replace_condition`, `move_statement`, optimization preview/apply with assumptions, behavioural verification (repeats, expectations, warnings), the runtime benchmark, monolith decomposition, revision diff, ZIP upload, project export and the Markdown report. Not in the UI: rollback screen, block drag-and-drop, debugger.
 - The `/demo` route and its synthetic fixtures described in earlier versions are not present in `apps/web`; every view reads real API data.
 - See `docs/SOLUTION.md` for architecture, supported Java scope and limitations.
 

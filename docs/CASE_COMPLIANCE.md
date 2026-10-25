@@ -95,6 +95,7 @@ Not consumed: `POST /rollback` has a client function but no screen; `GET /graph`
 ## Priorities
 
 **Done:** UI for warnings, optimizations, benchmark, export, ZIP upload, decomposition; verify repeats/expectations; `StringBuilder` rule; method-group decomposition.
-**Next:** `List.contains` → `HashSet` rule; Markdown report (`GET /report.md`); demo monolith with the new patterns; the case technical document (R21); one-command public deployment; block insert/extract method (high risk).
+**Done too:** `List.contains` → `HashSet` rule (`ContainsToSetRule`), Markdown report (`GET /projects/{id}/report`, «Отчёт» button), demo monolith whose scenarios reach every rule (saved run: three optimizations, verify 8/8, decomposition), `compose.yaml` (`docker compose up --build`).
+**Next:** block insert and extract method in the UI (high risk); verify a deployed public instance; R21 (the case technical document) is an organizers' artifact and is not in the repo.
 
 Do not hardcode «5.2x» or any speedup: it is a number from the case mockup, and results must come from `/benchmark`.
