@@ -53,3 +53,7 @@ Findings (`repeated_collection_scan`, `nested_collection_iteration`) содер�
 
 См. `README.md` и `./dev`. Основные команды: `./dev parser-build`, `./dev runner-build`, `./dev up`,
 `./dev api-test`, `./dev api-e2e`, `./dev api-e2e-docker`; подробности и переменные — `docs/E2E_TESTS.md`.
+
+Скриптованный сквозной прогон на демо-монолите (загрузка → диагноз → оптимизация → verify → benchmark): `./dev demo`
+(`scripts/demo.py`). Реальные ответы и сводка сохраняются в `docs/evidence/demo/` (`SUMMARY.md`, `run.json`, `01`–`08` JSON);
+при отсутствии JAR, Docker или образа раннера скрипт останавливается и ничего не пишет.

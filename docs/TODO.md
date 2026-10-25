@@ -21,12 +21,12 @@
   * **Файлы:** [`apps/parser/src/main/java/org/example/ComplexityAnalyzer.java`](apps/parser/src/main/java/org/example/ComplexityAnalyzer.java), [`apps/web/src/components/cfg-viewer.tsx`](apps/web/src/components/cfg-viewer.tsx).
   * **Критерий приемки:** При выборе проблемного узла отображается бейдж с ожидаемым ускорением по слайду 5.
 
-- [ ] **3. Сохранение эталонного верификационного отчета (Слайд 11 — Deliverable 3)**
+- [x] **3. Сохранение эталонного верификационного отчета (Слайд 11 — Deliverable 3)** — сделано: `./dev demo` → `docs/evidence/demo/` (на демо-монолите `tests/fixtures/demo/Main.java`, не на `Organizer.java`)
   * **Проблема:** Бриф требует предоставить в комплекте сдачи артефакт: *«результат запуска автотестов, подтверждающий сохранение поведения»*.
   * **Что сделать:** Выполнить один прогон верификации `Organizer.java` (baseline vs candidate с оптимизацией) в Docker и зафиксировать финальный JSON-отчет в [`docs/verification-evidence.json`](docs).
   * **Критерий приемки:** В папке `docs/` лежит реальный JSON-отчет со статусом `passed` для всех тестов.
 
-- [ ] **4. Итоговый документ решения docs/SOLUTION.md (Слайд 11 — Deliverable 4)**
+- [x] **4. Итоговый документ решения docs/SOLUTION.md (Слайд 11 — Deliverable 4)** — сделано
   * **Проблема:** Требование слайда 11: *«04 Описание решения: архитектура, поддержанный scope и ограничения»*.
   * **Что сделать:** Сформировать чистый итоговый `docs/SOLUTION.md` на основе аудита: архитектурная схема, поддержанные разделы Java, работа Quality Gate и зафиксированные границы.
   * **Файлы:** Создать [`docs/SOLUTION.md`](docs).

@@ -19,6 +19,7 @@ Java Blueprints commands (run from the repository root):
   ./dev up            Install project deps, build, and start the app
   ./dev api-check     Run Rust format and compile checks
   ./dev api-test      Run Rust tests
+  ./dev demo          Scripted end-to-end run (needs parser JAR, Docker, runner image); writes docs/evidence/demo/
   ./dev web-fast-check Run frontend typecheck and lint
   ./dev web-check     Run frontend lint and production build
 EOF
@@ -121,6 +122,11 @@ case "$command" in
   api-e2e)
     # needs the parser JAR (./dev parser-build); no Docker
     run_in apps/api cargo test --test e2e_import --test e2e_analysis --test e2e_edit
+    ;;
+  demo)
+    # scripted end-to-end run against the real parser, API and Docker runner; writes docs/evidence/demo/
+    shift
+    exec python3 "$ROOT/scripts/demo.py" "$@"
     ;;
   api-e2e-docker)
     # needs the parser JAR, a running Docker daemon and the runner image (./dev runner-build)

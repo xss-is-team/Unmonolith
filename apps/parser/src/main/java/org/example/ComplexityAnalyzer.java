@@ -1905,6 +1905,18 @@ final class ComplexityAnalyzer {
     }
 
     /** Known standard-library cost models; {@code null} when the call is not modelled. */
+    /** {@code computeIfAbsent(key, k -> new ArrayList<>())}: the mapping function is a JDK constructor without arguments. */
+    private static boolean createsEmptyJdkCollection(MethodInvocation mi) {
+        if (mi.arguments().size() != 2 || !(strip((Expression) mi.arguments().get(1)) instanceof LambdaExpression lambda)
+                || lambda.parameters().size() != 1
+                || !(lambda.getBody() instanceof ClassInstanceCreation created)
+                || !created.arguments().isEmpty() || created.getAnonymousClassDeclaration() != null) {
+            return false;
+        }
+        ITypeBinding type = created.resolveTypeBinding();
+        return type != null && type.getErasure().getQualifiedName().startsWith("java.util.");
+    }
+
     private Cost model(String recv, String decl, String name, int argc, String recvText, MethodInvocation mi) {
         switch (decl) {
             case "java.lang.Math", "java.lang.StrictMath", "java.lang.Integer", "java.lang.Long", "java.lang.Double",
@@ -2004,7 +2016,8 @@ final class ComplexityAnalyzer {
                 return Set.of("add", "contains", "remove", "first", "last").contains(name) ? logIn(recvText) : null;
             }
             case "HASH_MAP" -> {
-                if (Set.of("get", "put", "containsKey", "remove", "getOrDefault", "putIfAbsent").contains(name)) {
+                if (Set.of("get", "put", "containsKey", "remove", "getOrDefault", "putIfAbsent").contains(name)
+                        || name.equals("computeIfAbsent") && createsEmptyJdkCollection(mi)) {
                     return Cost.constant(ASSUME_HASH);
                 }
                 return name.equals("containsValue") ? linearIn(recvText) : null;

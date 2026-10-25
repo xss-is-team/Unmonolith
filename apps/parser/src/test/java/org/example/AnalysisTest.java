@@ -484,4 +484,14 @@ class AnalysisTest {
         assertEquals("unknown", time(analyze(dir, "static int g(int a, int b) { while (b != 0) { int t = a % b; a = b; b = t + 1; } return a; }")));
         assertEquals("unknown", time(analyze(dir, "static int g(int a, int b) { while (b != 0) { int t = a / b; a = b; b = t; } return a; }")));
     }
+
+    @Test
+    void groupingIntoAMapWithAnEmptyCollectionFactoryIsConstantPerElement(@TempDir Path dir) throws IOException {
+        JsonNode a = analyze(dir, "Map<String, List<String>> group(List<String> l) { Map<String, List<String>> m = new HashMap<>();"
+                + " for (String x : l) { m.computeIfAbsent(x, k -> new ArrayList<>()).add(x); } return m; }");
+        assertEquals("O(n)", time(a), a.toString());
+        JsonNode custom = analyze(dir, "Map<String, Object> f(List<String> l) { Map<String, Object> m = new HashMap<>();"
+                + " for (String x : l) { m.computeIfAbsent(x, k -> expensive(k)); } return m; }\nstatic Object expensive(String k) { return k; }");
+        assertEquals("unknown", time(custom), "an arbitrary mapping function is not priced");
+    }
 }

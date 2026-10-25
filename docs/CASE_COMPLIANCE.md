@@ -46,8 +46,8 @@ Mandatory = case slides 2, 3, 5, 6 (gate), 7, 10, 11. Optional = slide 6 decompo
 | R21 | 7 | Case technical document | ❌ | n/a | — | not in repo; organizers' artifact |
 | R22 | 8 | Bonus: record, **enum**, generics, lambda, `java.util.function`, Stream | 🟡 | n/a | parsed/compiled in acceptance fixtures; CFG loss for enum-constant bodies / anonymous classes claimed in `docs/CASE_AUDIT.md`, not re-verified | no per-item test |
 | R23 | 8 | Out-of-scope list | n/a | n/a | — | — |
-| R24 | 10 | Demo: monolith → graph → diagnosis → improvement → tests | 🟡 | 🟡 | see R11 | no scripted demo, no saved report |
-| R25 | 11 | Deliverables 01–04 | 🟡 | n/a | 01 `README.md`, `./dev`; 02 `./dev up` (not run); 03 tests exist, no saved run report; 04 `docs/SOLUTION.md` | see priorities |
+| R24 | 10 | Demo: monolith → graph → diagnosis → improvement → tests | 🟡 | 🟡 | `scripts/demo.py` (`./dev demo`) runs the whole path through the HTTP API and stores real responses in `docs/evidence/demo/` | UI cannot yet drive the optimize/benchmark steps; the demo monolith is our own, not the organizers' |
+| R25 | 11 | Deliverables 01–04 | 🟡 | n/a | 01 `README.md`, `./dev`; 02 `./dev up` (not run); 03 tests exist and `docs/evidence/demo/` holds a saved real run (verify + benchmark); 04 `docs/SOLUTION.md` | see priorities |
 
 Percentages (mandatory only, counting R1–R11, R13–R17, R19, R20, R24, R25 = 20): backend 14 ✅ / 6 🟡 / 0 ❌;
 frontend (18 applicable, R20/R25 are not UI items) 9 ✅ / 8 🟡 / 1 ❌ (R16). UI never executed in this audit.
@@ -97,8 +97,8 @@ The text brief only had a title; the slide is a full mockup.
 
 ## Priorities
 
-**P0** — saved demo report (scripted upload → optimize → verify → benchmark); show `warnings[]`, optimizations and benchmark in the UI.
-Done: stdin-driven demo monolith with mutant tests, user constructors / `String +=` / Euclid in the analyzer, verify warnings, `docs/SOLUTION.md`.
+**P0** — show `warnings[]`, optimizations and benchmark in the UI.
+Done: stdin-driven demo monolith with mutant tests, user constructors / `String +=` / Euclid / `computeIfAbsent` in the analyzer, verify warnings, scripted demo with saved evidence (`./dev demo`), `docs/SOLUTION.md`.
 **P1** — UI: optimizations (preview/apply with assumptions), benchmark result, export, ZIP upload, `Project.kind`;
 per-item Java-scope checklist test.
 **P2** — `move_statement` and rollback in UI; decomposition of nested static classes into files (slide 6, optional).
