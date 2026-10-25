@@ -24,11 +24,85 @@ final class AstJson {
     private final Map<MethodDeclaration, ProjectGraph.Link> methodLinks = new java.util.IdentityHashMap<>();
     private int cfgCount;
 
+    /** Project mode: project-relative path stamped on every source range; null for a single file. */
+    private String file;
+    /** Project mode: {@code "pkg."} prefix of every type path, so method ids are unique across packages. */
+    private String idPrefix = "";
+    /** Project mode: keeps CFG node ids unique across files (e.g. {@code "f3"} gives {@code f3m0.n0}). */
+    private String cfgPrefix = "";
+    private boolean ownGraph = true;
+    /** Every file analysed together with this one (itself in single-file mode); callee lookup spans them. */
+    private List<AstJson> peers = List.of(this);
+
     /** @param bindings whether the unit was parsed with resolved bindings (semantic information) */
     AstJson(CompilationUnit cu, String src, boolean bindings) {
         this.cu = cu;
         this.src = src;
         this.bindings = bindings;
+    }
+
+    /**
+     * One file of a multi-file project. The project graph is built once over all files by
+     * {@link ProjectAnalyzer}, not per file.
+     */
+    static AstJson forProjectFile(CompilationUnit cu, String src, boolean bindings, String file, int index) {
+        AstJson json = new AstJson(cu, src, bindings);
+        json.file = file;
+        json.cfgPrefix = "f" + index;
+        json.ownGraph = false;
+        if (cu.getPackage() != null) {
+            json.idPrefix = cu.getPackage().getName().getFullyQualifiedName() + ".";
+        }
+        return json;
+    }
+
+    CompilationUnit unit() {
+        return cu;
+    }
+
+    String sourceText() {
+        return src;
+    }
+
+    static Expression strip(Expression e) {
+        while (e instanceof ParenthesizedExpression p) {
+            e = p.getExpression();
+        }
+        return e;
+    }
+
+    /** Whitespace-free source text, the form used in ids and messages. */
+    static String normalize(String s) {
+        return s.replaceAll("\\s+", "");
+    }
+
+    /** {@code contact.id()} -> {@code Id}, {@code t.name} -> {@code Name}, {@code key} -> {@code Key}. */
+    static String keyNameFor(Expression key) {
+        Expression e = strip(key);
+        String name = switch (e) {
+            case MethodInvocation mi -> mi.getName().getIdentifier().replaceFirst("^(get|is)(?=[A-Z])", "");
+            case QualifiedName q -> q.getName().getIdentifier();
+            case FieldAccess fa -> fa.getName().getIdentifier();
+            case SimpleName n -> n.getIdentifier();
+            default -> "Key";
+        };
+        return name.isEmpty() ? "Key" : Character.toUpperCase(name.charAt(0)) + name.substring(1);
+    }
+
+    List<AstJson> peers() {
+        return peers;
+    }
+
+    void setPeers(List<AstJson> peers) {
+        this.peers = peers;
+    }
+
+    String file() {
+        return file;
+    }
+
+    Map<MethodDeclaration, ProjectGraph.Link> methodLinks() {
+        return methodLinks;
     }
 
     Map<String, Object> convert() {
@@ -54,11 +128,11 @@ final class AstJson {
 
         List<Object> types = new ArrayList<>();
         for (Object o : cu.types()) {
-            types.add(typeDecl((AbstractTypeDeclaration) o, ""));
+            types.add(typeDecl((AbstractTypeDeclaration) o, idPrefix));
         }
         out.put("types", types);
         out.put("methods", methods);
-        out.put("project_graph", projectGraph());
+        out.put("project_graph", ownGraph ? projectGraph() : null);
         List<Object> diagnostics = diagnostics(problems);
         diagnostics.addAll(cfgFailures);
         out.put("diagnostics", diagnostics);
@@ -95,6 +169,9 @@ final class AstJson {
             r.put("start", p.getSourceStart());
             r.put("length", Math.max(0, p.getSourceEnd() - p.getSourceStart() + 1));
             r.put("line", p.getSourceLineNumber());
+            if (file != null) {
+                r.put("file", file);
+            }
             m.put("source_range", r);
             list.add(m);
         }
@@ -225,7 +302,7 @@ final class AstJson {
     /** A CFG failure must not invalidate the AST: report it as a warning and emit `cfg: null`. */
     private Map<String, Object> cfg(MethodDeclaration md, String methodId) {
         try {
-            return new CfgBuilder(this, "m" + cfgCount++, methodId, md).build();
+            return new CfgBuilder(this, cfgPrefix + "m" + cfgCount++, methodId, md).build();
         } catch (RuntimeException | StackOverflowError e) {
             Map<String, Object> d = new LinkedHashMap<>();
             d.put("code", "cfg_build_failed");
@@ -624,6 +701,9 @@ final class AstJson {
 
     Map<String, Object> range(int start, int length) {
         Map<String, Object> r = new LinkedHashMap<>();
+        if (file != null) {
+            r.put("file", file);
+        }
         r.put("start", start);
         r.put("length", length);
         r.put("line", cu.getLineNumber(start));

@@ -169,6 +169,8 @@ final class ComplexityAnalyzer {
             "List.get/set/add are treated as O(1), assuming a random-access list such as ArrayList.";
     private static final String ASSUME_HASH =
             "Hash-based Map/Set operations are treated as O(1) on average.";
+    private static final String ASSUME_BINARY_SEARCH =
+            "A midpoint search loop halves the interval [lo, hi] each iteration (assuming no int overflow of lo + hi).";
     private static final String ASSUME_STRING = "String/StringBuilder operations are treated as O(1) (short strings).";
 
     private final AstJson json;
@@ -185,10 +187,14 @@ final class ComplexityAnalyzer {
     private final Set<String> writes = new LinkedHashSet<>();
     /** The summarized callee may change state reachable from its arguments, so its cost is not trusted. */
     private boolean impure;
+    /** Only the analyzer of the requested method detects direct recursion; callee summaries stay conservative. */
+    private boolean root;
+    private final List<MethodInvocation> recursiveCalls = new ArrayList<>();
 
     ComplexityAnalyzer(AstJson json, CompilationUnit cu, MethodDeclaration method, Map<String, Object> cfg) {
         this(json, cu, method, cfg, new LinkedHashSet<>());
         active.add(method);
+        root = true;
     }
 
     private ComplexityAnalyzer(AstJson json, CompilationUnit cu, MethodDeclaration method, Map<String, Object> cfg,
@@ -208,11 +214,22 @@ final class ComplexityAnalyzer {
                     + "', which a loop bound of this method depends on."));
         }
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("complexity", render(total));
+        Map<String, Object> complexity = recursiveCalls.isEmpty() ? render(total) : recursion(total);
+        complexity.put("engine", ENGINE);
+        complexity.put("limitations", LIMITATIONS);
+        out.put("complexity", complexity);
         out.put("fragments", fragments);
         out.put("findings", findings);
         return out;
     }
+
+    static final String ENGINE = "jdt-static-cost-model/2";
+    static final List<String> LIMITATIONS = List.of(
+            "Static upper-bound estimate from the source; no execution, no profiling.",
+            "Loop bounds come from recognised counter, collection-size and midpoint-search patterns; anything else is unknown.",
+            "A callee is trusted only when it is proven O(1); a callee's cost as a function of its arguments is not tracked.",
+            "Standard-library costs assume typical implementations (see assumptions); user-defined generics and streams are unknown.",
+            "Space complexity is not estimated.");
 
     // ---------- statements ----------
 
@@ -307,6 +324,7 @@ final class ComplexityAnalyzer {
         Set<String> derived = new LinkedHashSet<>();
         String cfgKind;
         int cfgStart;
+        String loopNote = null;
 
         switch (s) {
             case EnhancedForStatement st -> {
@@ -341,6 +359,13 @@ final class ComplexityAnalyzer {
                 cfgKind = "while";
                 cfgStart = st.getExpression().getStartPosition();
                 factor = counterFactor(st.getExpression(), st, env);
+                if (factor.kind() == Kind.UNKNOWN) {
+                    Factor halving = binarySearchFactor(st, env);
+                    if (halving != null) {
+                        factor = halving;
+                        loopNote = ASSUME_BINARY_SEARCH;
+                    }
+                }
                 perIteration = expr(st.getExpression());
                 if (factor.counter() != null) {
                     derived.add(factor.counter().getKey());
@@ -380,6 +405,9 @@ final class ComplexityAnalyzer {
         stack.remove(stack.size() - 1);
 
         Cost total = init.plus(perIteration.times(factor));
+        if (loopNote != null) {
+            total.notes.add(loopNote);
+        }
         if (stack.isEmpty()) {
             fragments.add(fragment(info, total));
         }
@@ -670,6 +698,475 @@ final class ComplexityAnalyzer {
         return strip(e) instanceof SimpleName n && v.isEqualTo(n.resolveBinding());
     }
 
+
+    // ---------- binary search ----------
+
+    /**
+     * {@code while (lo <= hi)} (or {@code <}) over two local ints where every iteration computes a midpoint of
+     * [lo, hi] and every path through the body either leaves the loop or sets {@code lo = mid + 1} /
+     * {@code hi = mid - 1}. The interval then at least halves, so the loop runs O(log(hi - lo + 1)) times, bounded
+     * by the size {@code hi} starts from. Returns {@code null} when any of this cannot be shown.
+     */
+    private Factor binarySearchFactor(WhileStatement st, Map<String, String> env) {
+        if (!(strip(st.getExpression()) instanceof InfixExpression cond) || cond.hasExtendedOperands()
+                || cond.getOperator() != InfixExpression.Operator.LESS_EQUALS
+                        && cond.getOperator() != InfixExpression.Operator.LESS) {
+            return null;
+        }
+        IVariableBinding lo = counterVar(strip(cond.getLeftOperand()));
+        IVariableBinding hi = counterVar(strip(cond.getRightOperand()));
+        if (lo == null || hi == null || lo.isEqualTo(hi) || !isIntegral(lo.getType()) || !isIntegral(hi.getType())
+                || hasContinue(st.getBody())) {
+            return null;
+        }
+        // lo starts at a constant >= 0 and hi at a recognised size; neither changes before the loop
+        Expression loInit = declaredInit(lo);
+        Expression hiInit = declaredInit(hi);
+        if (loInit == null || hiInit == null || !(constLong(strip(loInit)) instanceof Long start) || start < 0
+                || countMods(method.getBody(), lo) != countMods(st, lo)
+                || countMods(method.getBody(), hi) != countMods(st, hi)) {
+            return null;
+        }
+        Bound bound = classify(hiInit, env);
+        if (bound.kind() != Kind.LINEAR) {
+            return null;
+        }
+        List<?> statements = st.getBody() instanceof Block b ? b.statements() : List.of(st.getBody());
+        IVariableBinding mid = null;
+        for (Object o : statements) {
+            if (o instanceof VariableDeclarationStatement vds && vds.fragments().size() == 1) {
+                VariableDeclarationFragment f = (VariableDeclarationFragment) vds.fragments().get(0);
+                if (f.getInitializer() != null && f.resolveBinding() != null
+                        && isMidpoint(f.getInitializer(), lo, hi)) {
+                    mid = f.resolveBinding();
+                    break;
+                }
+            }
+        }
+        if (mid == null || countMods(st.getBody(), mid) != 0 || !onlyMidpointUpdates(st.getBody(), lo, hi, mid)
+                || !progresses(st.getBody(), lo, hi)) {
+            return null;
+        }
+        return new Factor(Kind.LOG, bound.key(), bound.collection(), bound.viaEnv(), true, null, null);
+    }
+
+    private Expression declaredInit(IVariableBinding v) {
+        Expression[] init = {null};
+        method.getBody().accept(new ASTVisitor() {
+            @Override
+            public boolean visit(VariableDeclarationFragment f) {
+                if (v.isEqualTo(f.resolveBinding())) {
+                    init[0] = f.getInitializer();
+                }
+                return true;
+            }
+        });
+        return init[0];
+    }
+
+    /** {@code (lo + hi) / 2}, {@code (lo + hi) >>> 1}, {@code lo + (hi - lo) / 2}, {@code lo + ((hi - lo) >> 1)}. */
+    private static boolean isMidpoint(Expression raw, IVariableBinding lo, IVariableBinding hi) {
+        Expression e = strip(raw);
+        if (!(e instanceof InfixExpression ie) || ie.hasExtendedOperands()) {
+            return false;
+        }
+        InfixExpression.Operator op = ie.getOperator();
+        Expression l = strip(ie.getLeftOperand());
+        Expression r = strip(ie.getRightOperand());
+        boolean half = op == InfixExpression.Operator.DIVIDE && Long.valueOf(2).equals(constLong(r))
+                || (op == InfixExpression.Operator.RIGHT_SHIFT_SIGNED || op == InfixExpression.Operator.RIGHT_SHIFT_UNSIGNED)
+                && Long.valueOf(1).equals(constLong(r));
+        if (half && l instanceof InfixExpression sum && !sum.hasExtendedOperands()
+                && sum.getOperator() == InfixExpression.Operator.PLUS) {
+            Expression a = strip(sum.getLeftOperand());
+            Expression b = strip(sum.getRightOperand());
+            return isVar(a, lo) && isVar(b, hi) || isVar(a, hi) && isVar(b, lo);
+        }
+        if (op == InfixExpression.Operator.PLUS && isVar(l, lo) && strip(r) instanceof InfixExpression tail
+                && !tail.hasExtendedOperands()) {
+            InfixExpression.Operator top = tail.getOperator();
+            boolean tailHalf = top == InfixExpression.Operator.DIVIDE && Long.valueOf(2).equals(constLong(strip(tail.getRightOperand())))
+                    || (top == InfixExpression.Operator.RIGHT_SHIFT_SIGNED || top == InfixExpression.Operator.RIGHT_SHIFT_UNSIGNED)
+                    && Long.valueOf(1).equals(constLong(strip(tail.getRightOperand())));
+            if (tailHalf && strip(tail.getLeftOperand()) instanceof InfixExpression diff && !diff.hasExtendedOperands()
+                    && diff.getOperator() == InfixExpression.Operator.MINUS) {
+                return isVar(diff.getLeftOperand(), hi) && isVar(diff.getRightOperand(), lo);
+            }
+        }
+        return false;
+    }
+
+    /** Every write to lo/hi in the body is {@code lo = mid + 1} or {@code hi = mid - 1}; no ++/-- or compound writes. */
+    private static boolean onlyMidpointUpdates(Statement body, IVariableBinding lo, IVariableBinding hi, IVariableBinding mid) {
+        boolean[] ok = {true};
+        body.accept(new ASTVisitor() {
+            @Override
+            public boolean visit(Assignment a) {
+                boolean toLo = isVar(a.getLeftHandSide(), lo);
+                boolean toHi = isVar(a.getLeftHandSide(), hi);
+                if (toLo || toHi) {
+                    ok[0] &= a.getOperator() == Assignment.Operator.ASSIGN && midStep(a.getRightHandSide(), mid, toLo);
+                }
+                return true;
+            }
+
+            @Override
+            public boolean visit(PostfixExpression p) {
+                ok[0] &= !isVar(p.getOperand(), lo) && !isVar(p.getOperand(), hi);
+                return true;
+            }
+
+            @Override
+            public boolean visit(PrefixExpression p) {
+                ok[0] &= !isVar(p.getOperand(), lo) && !isVar(p.getOperand(), hi);
+                return true;
+            }
+        });
+        return ok[0];
+    }
+
+    /** {@code mid + 1} when raising lo, {@code mid - 1} when lowering hi. */
+    private static boolean midStep(Expression raw, IVariableBinding mid, boolean raising) {
+        Expression e = strip(raw);
+        if (!(e instanceof InfixExpression ie) || ie.hasExtendedOperands()) {
+            return false;
+        }
+        Expression l = strip(ie.getLeftOperand());
+        Expression r = strip(ie.getRightOperand());
+        if (raising) {
+            return ie.getOperator() == InfixExpression.Operator.PLUS
+                    && (isVar(l, mid) && Long.valueOf(1).equals(constLong(r)) || isVar(r, mid) && Long.valueOf(1).equals(constLong(l)));
+        }
+        return ie.getOperator() == InfixExpression.Operator.MINUS && isVar(l, mid) && Long.valueOf(1).equals(constLong(r));
+    }
+
+    /** Every path leaves the loop or moves lo/hi (an {@code if} without {@code else} does not count). */
+    private static boolean progresses(Statement s, IVariableBinding lo, IVariableBinding hi) {
+        switch (s) {
+            case ReturnStatement ignored -> {
+                return true;
+            }
+            case BreakStatement ignored -> {
+                return true;
+            }
+            case ThrowStatement ignored -> {
+                return true;
+            }
+            case ExpressionStatement es -> {
+                return strip(es.getExpression()) instanceof Assignment a
+                        && (isVar(a.getLeftHandSide(), lo) || isVar(a.getLeftHandSide(), hi));
+            }
+            case Block b -> {
+                for (Object o : b.statements()) {
+                    if (progresses((Statement) o, lo, hi)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            case IfStatement is -> {
+                return is.getElseStatement() != null && progresses(is.getThenStatement(), lo, hi)
+                        && progresses(is.getElseStatement(), lo, hi);
+            }
+            default -> {
+                return false;
+            }
+        }
+    }
+
+
+    // ---------- direct recursion ----------
+
+    /**
+     * Prices a directly recursive method from its recurrence. Supported: constant work per call, one integer
+     * parameter that every recursive call decreases by a constant ({@code n - c}) or divides by a constant
+     * ({@code n / d}, {@code n >> k}), no recursive call inside a loop, and a base-case guard before the first
+     * recursive call. Anything else is reported as unknown with the reason.
+     */
+    private Map<String, Object> recursion(Cost work) {
+        if (!work.unknown.isEmpty()) {
+            work.unknown.add("The method is also recursive.");
+            return render(work);
+        }
+        if (work.monos.stream().anyMatch(m -> !m.vars().isEmpty())) {
+            return render(Cost.unknown("Recursive method whose work per call depends on input size: the recurrence is not modelled."));
+        }
+        Shape shape = recursionShape();
+        if (shape.reason != null) {
+            return render(Cost.unknown("Recursive method not modelled: " + shape.reason));
+        }
+        int calls = 0;
+        for (Object o : method.getBody().statements()) {
+            int c = pathCalls((Statement) o);
+            if (c < 0) {
+                return render(Cost.unknown("Recursive method not modelled: a recursive call sits in a loop, lambda or unsupported statement."));
+            }
+            calls += c;
+        }
+        String p = shape.parameter.getName();
+        String time;
+        String why;
+        if (shape.halving) {
+            if (calls == 1) {
+                time = "O(log n)";
+                why = "each call halves '" + p + "' and recurses once";
+            } else if (calls <= shape.amount) {
+                time = "O(n)";
+                why = calls + " recursive calls on 1/" + shape.amount + " of '" + p + "' each (upper bound)";
+            } else {
+                return render(Cost.unknown("Recursive method not modelled: more recursive calls per level than the divisor."));
+            }
+        } else if (calls == 1) {
+            time = "O(n)";
+            why = "each call decreases '" + p + "' by " + shape.amount + " and recurses once";
+        } else {
+            time = "O(" + calls + "^n)";
+            why = calls + " recursive calls per level, each decreasing '" + p + "'";
+        }
+        List<String> assumptions = new ArrayList<>();
+        assumptions.add("n = value of parameter '" + p + "' (assumed non-negative)");
+        assumptions.add("Recursion stops at the base-case guard '" + shape.guard + "' before the first recursive call.");
+        assumptions.add("Each call does O(1) work outside the recursive calls.");
+        if (calls > 1 && !shape.halving) {
+            assumptions.add("The exponential bound is an upper bound: the true growth may be smaller (Fibonacci is Theta(1.618^n), within O(2^n)).");
+        }
+        assumptions.addAll(work.notes);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("time", time);
+        out.put("confidence", "medium");
+        out.put("reason", "Direct recursion: " + why + "; solved as a recurrence over '" + p + "'.");
+        out.put("assumptions", assumptions);
+        return out;
+    }
+
+    private static final class Shape {
+        IVariableBinding parameter;
+        boolean halving;
+        long amount;
+        String guard;
+        String reason;
+    }
+
+    private Shape recursionShape() {
+        Shape shape = new Shape();
+        List<?> params = method.parameters();
+        for (int i = 0; i < params.size(); i++) {
+            SingleVariableDeclaration spd = (SingleVariableDeclaration) params.get(i);
+            IVariableBinding pv = spd.resolveBinding();
+            if (pv == null || !isIntegral(pv.getType()) || countMods(method.getBody(), pv) != 0) {
+                continue;
+            }
+            boolean dec = true;
+            boolean half = true;
+            long decAmount = Long.MAX_VALUE;
+            long halfAmount = -1;
+            for (MethodInvocation call : recursiveCalls) {
+                if (call.arguments().size() <= i) {
+                    dec = false;
+                    half = false;
+                    break;
+                }
+                Expression arg = strip((Expression) call.arguments().get(i));
+                long[] step = argumentStep(arg, pv);
+                dec &= step != null && step[0] == 0;
+                half &= step != null && step[0] == 1 && (halfAmount < 0 || halfAmount == step[1]);
+                if (step != null && step[0] == 0) {
+                    decAmount = Math.min(decAmount, step[1]);
+                }
+                if (step != null && step[0] == 1) {
+                    halfAmount = step[1];
+                }
+            }
+            if (!dec && !half) {
+                continue;
+            }
+            shape.parameter = pv;
+            shape.halving = half;
+            shape.amount = half ? halfAmount : decAmount;
+            shape.guard = guardBefore(pv, half, shape.amount);
+            if (shape.guard == null) {
+                shape.parameter = null;
+                shape.reason = "no base-case guard ('" + pv.getName() + " <= c' / '" + pv.getName()
+                        + " < c', returning or throwing) precedes the first recursive call.";
+                continue;
+            }
+            return shape;
+        }
+        if (shape.reason == null) {
+            shape.reason = "no integer parameter is decreased by a constant or divided by a constant in every recursive call.";
+        }
+        return shape;
+    }
+
+    /** {kind, amount}: kind 0 for {@code v - c}, 1 for {@code v / d} or {@code v >> k}; null otherwise. */
+    private static long[] argumentStep(Expression arg, IVariableBinding v) {
+        if (!(arg instanceof InfixExpression ie) || ie.hasExtendedOperands() || !isVar(ie.getLeftOperand(), v)) {
+            return null;
+        }
+        Long c = constLong(strip(ie.getRightOperand()));
+        if (c == null) {
+            return null;
+        }
+        InfixExpression.Operator op = ie.getOperator();
+        if (op == InfixExpression.Operator.MINUS && c >= 1) {
+            return new long[] {0, c};
+        }
+        if (op == InfixExpression.Operator.DIVIDE && c >= 2) {
+            return new long[] {1, c};
+        }
+        if ((op == InfixExpression.Operator.RIGHT_SHIFT_SIGNED || op == InfixExpression.Operator.RIGHT_SHIFT_UNSIGNED)
+                && c >= 1 && c < 31) {
+            return new long[] {1, 1L << c};
+        }
+        return null;
+    }
+
+    /** Text of the guard {@code if (v <= c) return ...;} that precedes the first statement with a recursive call. */
+    private String guardBefore(IVariableBinding v, boolean halving, long amount) {
+        List<?> statements = method.getBody().statements();
+        for (Object o : statements) {
+            Statement st = (Statement) o;
+            if (containsRecursiveCall(st)) {
+                return null;
+            }
+            if (st instanceof IfStatement is && alwaysExits(is.getThenStatement())
+                    && strip(is.getExpression()) instanceof InfixExpression ie && !ie.hasExtendedOperands()) {
+                Expression l = strip(ie.getLeftOperand());
+                Expression r = strip(ie.getRightOperand());
+                InfixExpression.Operator op = ie.getOperator();
+                boolean varLeft = isVar(l, v) && constLong(r) != null;
+                boolean varRight = isVar(r, v) && constLong(l) != null;
+                if (!varLeft && !varRight) {
+                    continue;
+                }
+                boolean upper = varLeft ? op == InfixExpression.Operator.LESS || op == InfixExpression.Operator.LESS_EQUALS
+                        : op == InfixExpression.Operator.GREATER || op == InfixExpression.Operator.GREATER_EQUALS;
+                // `v == c` ends the recursion only if v steps onto c: exact for a decrement of 1, or a halving onto 0/1
+                long limit = varLeft ? constLong(r) : constLong(l);
+                boolean exact = op == InfixExpression.Operator.EQUALS && (halving ? limit == 0 || limit == 1 : amount == 1);
+                if (upper || exact) {
+                    return norm(json.text(is.getExpression()));
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean alwaysExits(Statement s) {
+        if (s instanceof Block b) {
+            return !b.statements().isEmpty() && alwaysExits((Statement) b.statements().get(b.statements().size() - 1));
+        }
+        return s instanceof ReturnStatement || s instanceof ThrowStatement;
+    }
+
+    private boolean containsRecursiveCall(ASTNode node) {
+        boolean[] found = {false};
+        node.accept(new ASTVisitor() {
+            @Override
+            public boolean visit(MethodInvocation mi) {
+                found[0] |= recursiveCalls.contains(mi);
+                return true;
+            }
+        });
+        return found[0];
+    }
+
+    /** Most recursive calls any single execution path of {@code s} makes; -1 when a call sits somewhere unsupported. */
+    private int pathCalls(ASTNode s) {
+        if (!containsRecursiveCall(s)) {
+            return 0;
+        }
+        switch (s) {
+            case Block b -> {
+                int sum = 0;
+                for (Object o : b.statements()) {
+                    int c = pathCalls((Statement) o);
+                    if (c < 0) {
+                        return -1;
+                    }
+                    sum += c;
+                }
+                return sum;
+            }
+            case IfStatement is -> {
+                int cond = pathCalls(is.getExpression());
+                int then = pathCalls(is.getThenStatement());
+                int other = is.getElseStatement() == null ? 0 : pathCalls(is.getElseStatement());
+                return cond < 0 || then < 0 || other < 0 ? -1 : cond + Math.max(then, other);
+            }
+            case ConditionalExpression ce -> {
+                int cond = pathCalls(ce.getExpression());
+                int then = pathCalls(ce.getThenExpression());
+                int other = pathCalls(ce.getElseExpression());
+                return cond < 0 || then < 0 || other < 0 ? -1 : cond + Math.max(then, other);
+            }
+            case ReturnStatement rs -> {
+                return rs.getExpression() == null ? 0 : pathCalls(rs.getExpression());
+            }
+            case ExpressionStatement es -> {
+                return pathCalls(es.getExpression());
+            }
+            case VariableDeclarationStatement vds -> {
+                int sum = 0;
+                for (Object f : vds.fragments()) {
+                    Expression init = ((VariableDeclarationFragment) f).getInitializer();
+                    int c = init == null ? 0 : pathCalls(init);
+                    if (c < 0) {
+                        return -1;
+                    }
+                    sum += c;
+                }
+                return sum;
+            }
+            case MethodInvocation mi -> {
+                int sum = recursiveCalls.contains(mi) ? 1 : 0;
+                if (mi.getExpression() != null) {
+                    int c = pathCalls(mi.getExpression());
+                    if (c < 0) {
+                        return -1;
+                    }
+                    sum += c;
+                }
+                for (Object a : mi.arguments()) {
+                    int c = pathCalls((Expression) a);
+                    if (c < 0) {
+                        return -1;
+                    }
+                    sum += c;
+                }
+                return sum;
+            }
+            case InfixExpression ie -> {
+                int sum = pathCalls(ie.getLeftOperand());
+                if (sum < 0) {
+                    return -1;
+                }
+                int c = pathCalls(ie.getRightOperand());
+                if (c < 0) {
+                    return -1;
+                }
+                sum += c;
+                for (Object o : ie.extendedOperands()) {
+                    c = pathCalls((Expression) o);
+                    if (c < 0) {
+                        return -1;
+                    }
+                    sum += c;
+                }
+                return sum;
+            }
+            case ParenthesizedExpression pe -> {
+                return pathCalls(pe.getExpression());
+            }
+            case Assignment a -> {
+                return pathCalls(a.getRightHandSide());
+            }
+            default -> {
+                return -1;
+            }
+        }
+    }
+
     // ---------- bounds ----------
 
     private Bound classify(Expression raw, Map<String, String> env) {
@@ -952,6 +1449,11 @@ final class ComplexityAnalyzer {
         String recvText = recvExpr == null ? "this" : norm(json.text(recvExpr));
         int argc = mi.arguments().size();
 
+        if (root && method.resolveBinding() != null
+                && method.resolveBinding().getKey().equals(b.getMethodDeclaration().getKey())) {
+            recursiveCalls.add(mi);
+            return Cost.constant(); // priced by recursion(), never as O(1)
+        }
         Cost modeled = model(recv, decl, name, argc, recvText, mi);
         if (modeled != null) {
             return modeled;
@@ -960,7 +1462,7 @@ final class ComplexityAnalyzer {
             return Cost.constant();
         }
         String shown = decl.substring(decl.lastIndexOf('.') + 1) + "." + name + "()";
-        Cost user = userMethodCost(b, shown);
+        Cost user = userMethodCost(b, shown, mi.arguments(), Map.of());
         return user != null ? user : Cost.unknown("Call to " + shown + " has no known cost model.");
     }
 
@@ -972,13 +1474,14 @@ final class ComplexityAnalyzer {
      * unknown call), the callee is not recursive and cannot be overridden, and it does not mutate its arguments.
      * Anything else stays {@code unknown}: a callee's cost depends on its arguments, which are not tracked.
      */
-    private Cost userMethodCost(IMethodBinding b, String shown) {
-        if (!(cu.findDeclaringNode(b.getMethodDeclaration()) instanceof MethodDeclaration callee)
-                || callee.getBody() == null || callee.isConstructor()
+    private Cost userMethodCost(IMethodBinding b, String shown, List<?> arguments, Map<String, String> env) {
+        MethodDeclaration callee = declarationOf(b);
+        if (callee == null || callee.getBody() == null || callee.isConstructor()
                 || active.contains(callee) || active.size() >= MAX_CALL_DEPTH || isOverridden(b)) {
             return null;
         }
-        ComplexityAnalyzer sub = new ComplexityAnalyzer(json, cu, callee, null, active);
+        AstJson owner = ownerOf(callee);
+        ComplexityAnalyzer sub = new ComplexityAnalyzer(owner, owner.unit(), callee, null, active);
         active.add(callee);
         Cost cost;
         try {
@@ -987,34 +1490,121 @@ final class ComplexityAnalyzer {
         } finally {
             active.remove(callee);
         }
-        if (sub.impure || !cost.unknown.isEmpty() || cost.monos.stream().anyMatch(m -> !m.vars().isEmpty())) {
+        if (sub.impure || !cost.unknown.isEmpty() || !sub.recursiveCalls.isEmpty()) {
             return null;
         }
         writes.addAll(sub.writes);
-        Cost result = Cost.constant();
-        result.notes.addAll(cost.notes);
-        result.notes.add("Call to " + shown + " is O(1): the method is declared in this file and was analyzed.");
-        result.weak = cost.weak;
+        Cost result;
+        if (cost.monos.stream().anyMatch(m -> !m.vars().isEmpty())) {
+            result = substitute(cost, sub, callee, arguments, env);
+            if (result == null) {
+                return null;
+            }
+            result.notes.add("Call to " + shown + " costs the callee's analyzed bound, expressed in the argument sizes.");
+            result.weak = true;
+        } else {
+            result = Cost.constant();
+            result.notes.addAll(cost.notes);
+            result.notes.add("Call to " + shown + " is O(1): the method is declared in this "
+                    + (owner == json ? "file" : "project (" + owner.file() + ")") + " and was analyzed.");
+            result.weak = cost.weak;
+        }
         return result;
     }
 
-    /** True when another method of this file overrides {@code b}, so the call target may differ at run time. */
+    /**
+     * Rewrites a callee cost over its own parameters into this method's variables: {@code coll:<param>} becomes the
+     * size of the argument passed for it, {@code var:<param>} the classified bound of that argument. Null when the
+     * callee's cost mentions anything else (fields, locals) or an argument size is not recognisable.
+     */
+    private Cost substitute(Cost cost, ComplexityAnalyzer sub, MethodDeclaration callee, List<?> arguments,
+                            Map<String, String> env) {
+        Map<String, Bound> mapping = new HashMap<>();
+        List<?> params = callee.parameters();
+        if (params.size() != arguments.size()) {
+            return null;
+        }
+        for (int i = 0; i < params.size(); i++) {
+            SingleVariableDeclaration p = (SingleVariableDeclaration) params.get(i);
+            IVariableBinding pb = p.resolveBinding();
+            Expression arg = strip((Expression) arguments.get(i));
+            if (pb == null) {
+                return null;
+            }
+            ITypeBinding at = arg.resolveTypeBinding();
+            if (at != null && (at.isArray() || isSized(at.getErasure().getQualifiedName()))
+                    && (arg instanceof Name || arg instanceof FieldAccess)) {
+                String text = norm(json.text(arg));
+                mapping.put("coll:" + p.getName().getIdentifier(),
+                        collectionBound(text, at.isArray() ? "length of " : "number of elements in "));
+            } else if (isIntegral(pb.getType())) {
+                mapping.put("var:" + pb.getKey(), classify(arg, env));
+            }
+        }
+        Cost out = new Cost();
+        out.unknown.addAll(cost.unknown);
+        out.notes.addAll(cost.notes);
+        out.weak = cost.weak;
+        for (Mono m : cost.monos) {
+            TreeMap<String, int[]> vars = new TreeMap<>();
+            for (Map.Entry<String, int[]> e : m.vars().entrySet()) {
+                Bound target = mapping.get(e.getKey());
+                if (target == null || target.kind() == Kind.UNKNOWN) {
+                    return null;
+                }
+                if (target.kind() == Kind.CONST) {
+                    continue; // a constant argument removes the variable from the bound
+                }
+                int[] merged = vars.computeIfAbsent(target.key(), k -> new int[2]);
+                merged[0] += e.getValue()[0];
+                merged[1] += e.getValue()[1];
+            }
+            out.monos.add(new Mono(vars));
+        }
+        return out.monos.isEmpty() ? null : out;
+    }
+
+    /** The declaration of {@code b} in this file or, in project mode, in any analyzed file. */
+    private MethodDeclaration declarationOf(IMethodBinding b) {
+        for (AstJson peer : json.peers()) {
+            if (peer.unit().findDeclaringNode(b.getMethodDeclaration()) instanceof MethodDeclaration md) {
+                return md;
+            }
+        }
+        return null;
+    }
+
+    private AstJson ownerOf(MethodDeclaration md) {
+        for (AstJson peer : json.peers()) {
+            if (peer.unit() == md.getRoot()) {
+                return peer;
+            }
+        }
+        return json;
+    }
+
+    /**
+     * True when another analyzed method overrides {@code b}, so the call target may differ at run time.
+     * Only the analyzed files are searched: a subclass outside the project cannot be seen.
+     */
     private boolean isOverridden(IMethodBinding b) {
         if (Modifier.isPrivate(b.getModifiers()) || Modifier.isStatic(b.getModifiers())
                 || Modifier.isFinal(b.getModifiers())) {
             return false;
         }
         boolean[] found = {false};
-        cu.accept(new ASTVisitor() {
-            @Override
-            public boolean visit(MethodDeclaration md) {
-                IMethodBinding mb = md.resolveBinding();
-                if (mb != null && mb != b.getMethodDeclaration() && mb.overrides(b.getMethodDeclaration())) {
-                    found[0] = true;
+        for (AstJson peer : json.peers()) {
+            peer.unit().accept(new ASTVisitor() {
+                @Override
+                public boolean visit(MethodDeclaration md) {
+                    IMethodBinding mb = md.resolveBinding();
+                    if (mb != null && mb != b.getMethodDeclaration() && mb.overrides(b.getMethodDeclaration())) {
+                        found[0] = true;
+                    }
+                    return !found[0];
                 }
-                return !found[0];
-            }
-        });
+            });
+        }
         return found[0];
     }
 
@@ -1161,7 +1751,7 @@ final class ComplexityAnalyzer {
 
     /** {@code return field;}, {@code this.f = x;} and record accessors cost O(1). */
     private boolean isTrivialAccessor(IMethodBinding b) {
-        ASTNode decl = cu.findDeclaringNode(b.getMethodDeclaration());
+        ASTNode decl = declarationOf(b);
         if (decl == null) {
             return b.getDeclaringClass().isRecord() && b.getParameterTypes().length == 0;
         }
@@ -1250,6 +1840,7 @@ final class ComplexityAnalyzer {
                     case "asList" -> Cost.constant();
                     case "sort" -> nLogN(arg0);
                     case "fill", "copyOf", "copyOfRange", "toString", "equals", "stream" -> linearIn(arg0);
+                    case "binarySearch" -> logIn(arg0);
                     default -> null;
                 };
             }
@@ -1258,6 +1849,8 @@ final class ComplexityAnalyzer {
                 return switch (name) {
                     case "sort" -> nLogN(arg0);
                     case "reverse", "shuffle", "max", "min" -> linearIn(arg0);
+                    case "binarySearch" -> logIn(arg0);
+                    case "swap" -> Cost.constant(ASSUME_RANDOM_ACCESS);
                     case "emptyList", "emptyMap", "emptySet", "unmodifiableList", "unmodifiableMap", "unmodifiableSet" -> Cost.constant();
                     default -> null;
                 };

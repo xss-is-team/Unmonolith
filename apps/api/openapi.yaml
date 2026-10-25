@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
   title: Java Blueprints MVP API
-  version: 0.5.0
+  version: 0.7.0
   description: |
-    Guest sessions, revisioned single-file Java projects, JDT analysis, compilation-unit project graph and nested per-method CFG access,
+    Guest sessions, revisioned single-file and ZIP (multi-file) Java projects, JDT analysis, compilation-unit project graph and nested per-method CFG access,
     revision history, SSE analysis lifecycle, restricted replace_condition transformations,
     and isolated Java 21 behavioral verification.
 servers:
@@ -13,6 +13,7 @@ tags:
   - name: Projects
   - name: Analysis
   - name: Transformations
+  - name: Optimization
   - name: Verification
   - name: Planned M2+
   - name: System
@@ -66,7 +67,12 @@ paths:
                 file:
                   type: string
                   format: binary
-                  description: One .java UTF-8 source file (M1). No ZIP support in M1.
+                  description: |
+                    Either one .java UTF-8 source file (single-file project) or a .zip archive
+                    (archive project; routed by the .zip filename and validated as a ZIP).
+                    Archive entries must be .java files or inert text/build files; anything else,
+                    unsafe paths, symlinks, duplicate (case-folded) paths and oversize or
+                    bomb-like entries reject the whole import. Build scripts are stored, never run.
       responses:
         '201':
           description: Project created
@@ -76,6 +82,14 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '413': {$ref: '#/components/responses/TooLarge'}
+        '422':
+          description: |
+            Archive rejected. Error codes: invalid_archive, unsafe_archive_path, archive_symlink,
+            duplicate_archive_path, unsupported_archive_entry, no_java_sources, archive_bomb,
+            invalid_encoding.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
   /projects/{project_id}:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -125,6 +139,64 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /projects/{project_id}/files:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: listProjectFiles
+      tags: [Projects]
+      security: [{guestSession: []}]
+      summary: Revisioned file manifest (works for single-file and archive projects)
+      parameters:
+        - {name: revision, in: query, required: false, schema: {type: integer, minimum: 1}}
+      responses:
+        '200':
+          description: Manifest of the requested (default current) revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Manifest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/files/{path}:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - {name: path, in: path, required: true, schema: {type: string}, description: Archive-relative path; slashes are literal path separators, e.g. src/main/java/app/Main.java}
+    get:
+      operationId: getProjectFile
+      tags: [Projects]
+      security: [{guestSession: []}]
+      parameters:
+        - {name: revision, in: query, required: false, schema: {type: integer, minimum: 1}}
+      responses:
+        '200':
+          description: File contents at the revision
+          headers:
+            X-Source-Revision:
+              schema: {type: integer, minimum: 1}
+          content:
+            text/plain:
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    put:
+      operationId: updateProjectFile
+      tags: [Projects]
+      security: [{guestSession: []}]
+      summary: Replace one existing file, creating a new project revision (full snapshot)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateFileRequest'}
+      responses:
+        '200':
+          description: New project revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Project'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/TooLarge'}
   /projects/{project_id}/analyze:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -134,13 +206,22 @@ paths:
       description: |
         M1 synchronous analysis adapter with timeout. Invokes Java worker if configured.
         If worker is missing, returns 503; NEVER fabricate successful analysis.
+        Archive projects are analysed as a whole (all .java files bound in one JDT environment,
+        cross-file calls resolved); methods then carry `source_range.file` and package-qualified ids.
       security: [{guestSession: []}]
+      parameters:
+        - name: source_level
+          in: query
+          required: false
+          schema: {type: string, enum: ['8', '11', '17', '21'], default: '21'}
+          description: Java language level. Archive projects only. 1.2-1.7 are rejected because the bundled Eclipse JDT cannot parse below Java 8.
       responses:
         '200':
           description: Validated result from a real Java worker
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AnalysisResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/Unavailable'}
         '504': {$ref: '#/components/responses/Timeout'}
@@ -152,6 +233,8 @@ paths:
       tags: [Analysis]
       description: Streams the lifecycle of the same real analyzer invocation used by the synchronous endpoint.
       security: [{guestSession: []}]
+      parameters:
+        - {name: source_level, in: query, required: false, schema: {type: string, enum: ['8', '11', '17', '21'], default: '21'}}
       responses:
         '200':
           description: Server-sent `started`, `progress`, and `completed` or `failed` events.
@@ -235,6 +318,38 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ApiError'}
+  /projects/{project_id}/complexity:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: getProjectComplexity
+      tags: [Analysis]
+      security: [{guestSession: []}]
+      summary: Machine-readable complexity estimates of every method with a body (no findings, no transformations)
+      responses:
+        '200':
+          description: One entry per method; `time_complexity` is `unknown` when no bound can be justified. Space complexity is not estimated (always null).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ComplexityReport'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /projects/{project_id}/findings:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: getProjectFindings
+      tags: [Analysis]
+      security: [{guestSession: []}]
+      summary: Code smells and optimization findings, separate from complexity estimates
+      responses:
+        '200':
+          description: Findings with method id, file and evidence
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FindingsReport'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /projects/{project_id}/methods/{method_selector}/cfg:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -320,6 +435,8 @@ paths:
         Compiles two existing revisions in isolated Java 21 containers, runs the same named stdin
         fixtures, and compares stdout bytes, stderr bytes, exit codes, timeout and overflow states.
         A passing result applies only to the supplied fixtures and is not proof of equivalence.
+        Archive projects compile all `.java` files of each revision together (`javac --release <source_level>`)
+        and run `main_class` (see the request fields).
       security: [{guestSession: []}]
       requestBody:
         required: true
@@ -356,6 +473,227 @@ paths:
               schema: {$ref: '#/components/schemas/PersistedVerificationReport'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/optimizations:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: listOptimizations
+      tags: [Optimization]
+      security: [{guestSession: []}]
+      summary: Detect optimization candidates (rule nested_scan_to_hashmap) in the current revision
+      description: |
+        Every nested scan that looks like a keyed lookup becomes a proposal, applicable or not. Each lists its
+        preconditions (`satisfied`/`violated`, with the reason), the assumptions the caller must acknowledge to apply it,
+        the affected files and the estimated complexity impact. Detection never changes anything.
+      parameters:
+        - {name: source_level, in: query, required: false, schema: {type: string, enum: ['8', '11', '17', '21'], default: '21'}}
+      responses:
+        '200':
+          description: Proposals of the current revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OptimizationList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        '504': {$ref: '#/components/responses/Timeout'}
+  /projects/{project_id}/optimizations/{proposal_id}/preview:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - {name: proposal_id, in: path, required: true, schema: {type: string, pattern: '^opt_[0-9a-f]{16}$'}}
+    post:
+      operationId: previewOptimization
+      tags: [Optimization]
+      security: [{guestSession: []}]
+      summary: Exact unified diff of the rewrite (ASTRewrite), re-parsed and validated; nothing is stored
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OptimizationPreviewRequest'}
+      responses:
+        '200':
+          description: Diff, fingerprint and complexity before/after
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OptimizationPreview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        '504': {$ref: '#/components/responses/Timeout'}
+  /projects/{project_id}/optimizations/{proposal_id}/apply:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - {name: proposal_id, in: path, required: true, schema: {type: string, pattern: '^opt_[0-9a-f]{16}$'}}
+    post:
+      operationId: applyOptimization
+      tags: [Optimization]
+      security: [{guestSession: []}]
+      summary: Explicit user action - commit the previewed rewrite as a new, re-analysed revision
+      description: |
+        Requires the current `base_revision` (409 revision_conflict otherwise), the `preview_sha256` of the confirmed
+        preview (409 preview_mismatch if the rewrite would differ) and the ids of every assumption of the proposal
+        (422 assumptions_not_acknowledged). A not-applicable proposal is refused (422 optimization_not_applicable).
+        Roll back with `POST /rollback`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OptimizationApplyRequest'}
+      responses:
+        '200':
+          description: New revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OptimizationApplyResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        '504': {$ref: '#/components/responses/Timeout'}
+  /projects/{project_id}/cfg-edits/preview:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      operationId: previewCfgEdit
+      tags: [Transformations]
+      security: [{guestSession: []}]
+      summary: Preview moving a statement (from a CFG drag) as a real Java diff, or the structured reasons it is unsafe
+      description: |
+        Moving nodes in the browser changes layout only. This route changes Java: `move_statement` places a statement
+        before/after another statement of the same block, over every statement in between, and only if it is
+        independent of all of them (data dependencies, abrupt completion, I/O and unknown calls, exception order,
+        synchronization). Rejections are 422 `move_rejected` with `details.reasons[]` ({code, message, statements[]}).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CfgEditRequest'}
+      responses:
+        '200':
+          description: Diff, independence evidence and old->new CFG node mapping
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CfgEditPreview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        '504': {$ref: '#/components/responses/Timeout'}
+  /projects/{project_id}/cfg-edits/apply:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      operationId: applyCfgEdit
+      tags: [Transformations]
+      security: [{guestSession: []}]
+      summary: Commit a previewed CFG edit as a new revision; the CFG and source mappings are recomputed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CfgEditApplyRequest'}
+      responses:
+        '200':
+          description: New revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CfgEditApplyResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        '504': {$ref: '#/components/responses/Timeout'}
+  /projects/{project_id}/rollback:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      operationId: rollbackProject
+      tags: [Optimization]
+      security: [{guestSession: []}]
+      summary: Restore an earlier revision as a new revision (history is kept)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RollbackRequest'}
+      responses:
+        '200':
+          description: New current revision whose files (and analysis) are those of `to_revision`
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Project'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /projects/{project_id}/revisions/{from}/diff/{to}:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - {name: from, in: path, required: true, schema: {type: integer, minimum: 1}}
+      - {name: to, in: path, required: true, schema: {type: integer, minimum: 1}}
+    get:
+      operationId: compareRevisions
+      tags: [Projects]
+      security: [{guestSession: []}]
+      summary: Unified diff of every file that differs between two revisions
+      responses:
+        '200':
+          description: Per-file unified diffs
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RevisionDiff'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/benchmark:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      operationId: runBenchmark
+      tags: [Verification]
+      security: [{guestSession: []}]
+      summary: Reproducible runtime comparison of two revisions in the isolated runner
+      description: |
+        Compiles both revisions in separate containers (1 CPU, 512 MB, no network) and calls `main` in a benchmark
+        JVM warmup+measured times per workload with a monotonic clock. The report keeps three results apart:
+        `static_complexity` (Big O before/after), `functional` (identical stdout/outcome on the workloads) and
+        `runtime` (samples, median, spread, significance test). A `speedup` is present only when at least 10
+        measured iterations, a significant Mann-Whitney test, a bootstrap interval excluding 1 and separated
+        interquartile ranges agree; differing behaviour is reported as `not_equivalent`, never as an optimization.
+        Compile/setup/startup times are reported separately under `timings`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BenchmarkRequest'}
+      responses:
+        '200':
+          description: Benchmark report (also stored; fetch again with GET /benchmark/{report_id})
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BenchmarkReport'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /projects/{project_id}/benchmark/{report_id}:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - {name: report_id, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: getBenchmarkReport
+      tags: [Verification]
+      security: [{guestSession: []}]
+      responses:
+        '200':
+          description: Stored benchmark report
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BenchmarkReport'}
+        '400': {$ref: '#/components/responses/BadRequest'}
         '404': {$ref: '#/components/responses/NotFound'}
   /projects/{project_id}/export:
     parameters:
@@ -431,14 +769,52 @@ components:
       properties:
         code: {type: string, example: analyzer_unavailable}
         message: {type: string}
+        details:
+          type: object
+          description: 'Structured context for some errors, e.g. {reasons: [...]} for move_rejected'
     Project:
       type: object
-      required: [id, filename, revision, created_at]
+      required: [id, filename, kind, file_count, revision, created_at]
       properties:
         id: {type: string, format: uuid}
-        filename: {type: string, example: Main.java}
+        filename: {type: string, example: Main.java, description: Java file name (single_file) or archive name (archive)}
+        kind: {type: string, enum: [single_file, archive], description: "Archive projects reject the single-file /source, /transform and /verify routes with 409 multi_file_project"}
+        file_count: {type: integer, minimum: 1}
         revision: {type: integer, minimum: 1}
         created_at: {type: string, format: date-time}
+    UpdateFileRequest:
+      type: object
+      required: [source, expected_revision]
+      properties:
+        source: {type: string}
+        expected_revision: {type: integer, minimum: 1}
+    FileEntry:
+      type: object
+      required: [path, kind, role, size, sha256]
+      properties:
+        path: {type: string, example: src/main/java/com/acme/Main.java}
+        kind: {type: string, enum: [java, resource]}
+        role: {type: string, enum: [main, test, resource]}
+        source_root: {type: string, nullable: true, example: src/main/java/}
+        size: {type: integer}
+        sha256: {type: string}
+    SkippedEntry:
+      type: object
+      required: [path, reason]
+      properties:
+        path: {type: string}
+        reason: {type: string}
+    Manifest:
+      type: object
+      required: [revision, files, skipped]
+      properties:
+        revision: {type: integer, minimum: 1}
+        files:
+          type: array
+          items: {$ref: '#/components/schemas/FileEntry'}
+        skipped:
+          type: array
+          items: {$ref: '#/components/schemas/SkippedEntry'}
     UpdateSourceRequest:
       type: object
       required: [source, expected_revision]
@@ -538,6 +914,7 @@ components:
         qualified_name: {type: string, nullable: true}
         method_id: {type: string, nullable: true}
         cfg_entry: {type: string, nullable: true}
+        file: {type: string, nullable: true, description: Project-relative path; present for archive projects}
         source_range: {$ref: '#/components/schemas/SourceRange'}
         external_supertypes:
           type: array
@@ -581,7 +958,7 @@ components:
       type: object
       required: [selector, id, name, kind, source_range]
       properties:
-        selector: {type: string, example: m1, description: 'Opaque and valid only for this analyzed revision'}
+        selector: {type: string, example: f2m1, description: 'Opaque and valid only for this analyzed revision (m<N> for single files, f<F>m<N> for archive projects). Use `id` as the stable cross-revision reference.'}
         id: {type: string, example: 'Example.process(int)'}
         name: {type: string, example: process}
         kind: {type: string, enum: [method, constructor]}
@@ -653,6 +1030,263 @@ components:
         node_ids:
           type: array
           items: {type: string, example: m1.n2}
+    MethodComplexity:
+      type: object
+      required: [method_id, time_complexity, space_complexity, confidence, analysis_engine, reason, assumptions, limitations, source_range, cfg_node_ids]
+      properties:
+        method_id: {type: string, example: 'com.acme.service.Repo.find(int)', description: 'Stable reference: package.Type.method(ParamTypes)'}
+        file: {type: string, nullable: true}
+        time_complexity: {type: string, example: 'O(n)', description: 'O(...) or the literal unknown'}
+        space_complexity: {type: string, nullable: true, description: 'Always null: not estimated'}
+        confidence: {type: string, enum: [high, medium, low]}
+        analysis_engine: {type: string, example: jdt-static-cost-model/2}
+        reason: {type: string}
+        assumptions: {type: array, items: {type: string}}
+        limitations: {type: array, items: {type: string}}
+        source_range: {$ref: '#/components/schemas/SourceRange'}
+        cfg_node_ids: {type: array, items: {type: string}}
+    ComplexityReport:
+      type: object
+      required: [revision, methods]
+      properties:
+        revision: {type: integer, minimum: 1}
+        methods:
+          type: array
+          items: {$ref: '#/components/schemas/MethodComplexity'}
+    MethodFinding:
+      type: object
+      required: [method_id, finding]
+      properties:
+        method_id: {type: string}
+        file: {type: string, nullable: true}
+        finding: {$ref: '#/components/schemas/AnalysisFinding'}
+    FindingsReport:
+      type: object
+      required: [revision, findings]
+      properties:
+        revision: {type: integer, minimum: 1}
+        findings:
+          type: array
+          items: {$ref: '#/components/schemas/MethodFinding'}
+    OptimizationList:
+      type: object
+      required: [revision, rule, proposals]
+      properties:
+        revision: {type: integer, minimum: 1}
+        rule: {type: string, example: nested_scan_to_hashmap}
+        proposals:
+          type: array
+          items: {$ref: '#/components/schemas/OptimizationProposal'}
+    OptimizationProposal:
+      type: object
+      required: [id, rule, applicability, preconditions, assumptions, method_id, file, affected_files, complexity]
+      properties:
+        id: {type: string, example: opt_b02408650a81707d, description: Valid for the revision it was detected in}
+        rule: {type: string}
+        title: {type: string}
+        summary: {type: string}
+        applicability: {type: string, enum: [applicable, not_applicable]}
+        not_applicable_reasons: {type: array, items: {type: string}}
+        method_id: {type: string, nullable: true}
+        file: {type: string}
+        affected_files: {type: array, items: {type: string}}
+        shape: {type: string, enum: [first_match, all_matches]}
+        outer_loop: {$ref: '#/components/schemas/SourceRange'}
+        inner_loop: {$ref: '#/components/schemas/SourceRange'}
+        key:
+          type: object
+          properties:
+            element_expression: {type: string, example: 'contact.id()'}
+            lookup_expression: {type: string, example: 'task.getContactId()'}
+            type: {type: string, example: int}
+            equality: {type: string, example: '=='}
+        preconditions:
+          type: array
+          items:
+            type: object
+            required: [id, status, detail]
+            properties:
+              id: {type: string, enum: [lookup_shape, key_equality, key_purity, control_flow, collection_reference, collection_not_modified, insertion_point]}
+              status: {type: string, enum: [satisfied, violated]}
+              detail: {type: string}
+        assumptions:
+          type: array
+          description: Empty for not-applicable proposals. Every id must be acknowledged on apply.
+          items:
+            type: object
+            required: [id, text]
+            properties:
+              id: {type: string, enum: [null_and_exception_timing, single_threaded]}
+              text: {type: string}
+        complexity:
+          type: object
+          properties:
+            method_before: {type: string, description: Static estimate of the whole method now (may be unknown)}
+            scan_before: {type: string, example: 'O(n*m)'}
+            scan_after: {type: string, example: 'O(n + m)'}
+            note: {type: string}
+    FileDiff:
+      type: object
+      required: [path, status, additions, deletions, unified_diff]
+      properties:
+        path: {type: string}
+        status: {type: string, enum: [added, removed, modified]}
+        additions: {type: integer}
+        deletions: {type: integer}
+        unified_diff: {type: string, description: 'Standard unified diff with 3 lines of context'}
+    OptimizationPreviewRequest:
+      type: object
+      required: [base_revision]
+      properties:
+        base_revision: {type: integer, minimum: 1}
+        source_level: {type: string, enum: ['8', '11', '17', '21']}
+    OptimizationPreview:
+      type: object
+      required: [base_revision, proposal, diff, preview_sha256, method_complexity_before, method_complexity_after, validation]
+      properties:
+        base_revision: {type: integer}
+        proposal: {$ref: '#/components/schemas/OptimizationProposal'}
+        diff: {type: array, items: {$ref: '#/components/schemas/FileDiff'}}
+        preview_sha256: {type: string}
+        method_complexity_before: {type: string, nullable: true}
+        method_complexity_after: {type: string, nullable: true}
+        validation: {type: string, enum: [valid]}
+    OptimizationApplyRequest:
+      type: object
+      required: [base_revision, preview_sha256, acknowledged_assumptions]
+      properties:
+        base_revision: {type: integer, minimum: 1}
+        source_level: {type: string, enum: ['8', '11', '17', '21']}
+        preview_sha256: {type: string}
+        acknowledged_assumptions: {type: array, items: {type: string}}
+    OptimizationApplyResponse:
+      type: object
+      required: [revision, base_revision, proposal, diff, analysis_status]
+      properties:
+        revision: {type: integer, minimum: 2}
+        base_revision: {type: integer}
+        proposal: {$ref: '#/components/schemas/OptimizationProposal'}
+        diff: {type: array, items: {$ref: '#/components/schemas/FileDiff'}}
+        method_complexity_before: {type: string, nullable: true}
+        method_complexity_after: {type: string, nullable: true}
+        analysis_status: {type: string, enum: [completed, partial]}
+    RollbackRequest:
+      type: object
+      required: [base_revision, to_revision]
+      properties:
+        base_revision: {type: integer, minimum: 1, description: The current revision}
+        to_revision: {type: integer, minimum: 1, description: An earlier revision to restore}
+    RevisionDiff:
+      type: object
+      required: [from_revision, to_revision, files]
+      properties:
+        from_revision: {type: integer}
+        to_revision: {type: integer}
+        files: {type: array, items: {$ref: '#/components/schemas/FileDiff'}}
+    CfgEditRequest:
+      type: object
+      required: [base_revision, method_id, operation]
+      properties:
+        base_revision: {type: integer, minimum: 1}
+        source_level: {type: string, enum: ['8', '11', '17', '21']}
+        method_id: {type: string, example: 'com.acme.Calc.run(int,int)'}
+        operation: {$ref: '#/components/schemas/CfgEditOperation'}
+    CfgEditOperation:
+      type: object
+      required: [type, node_id, target_node_id, position]
+      properties:
+        type: {type: string, enum: [move_statement]}
+        node_id: {type: string, example: 'f1m0.n3', description: 'CFG node of the statement to move (a statement node, or the condition node of an if/loop to move the whole compound statement)'}
+        target_node_id: {type: string, example: 'f1m0.n2'}
+        position: {type: string, enum: [before, after]}
+    CfgEditApplyRequest:
+      allOf:
+        - {$ref: '#/components/schemas/CfgEditRequest'}
+        - type: object
+          required: [preview_sha256]
+          properties:
+            preview_sha256: {type: string}
+    CfgEditPreview:
+      type: object
+      required: [base_revision, method_id, operation, diff, preview_sha256, node_mapping]
+      properties:
+        base_revision: {type: integer}
+        method_id: {type: string}
+        operation:
+          type: object
+          description: What moves, where, and for every statement it jumps over whether it is independent (with the read/write sets used)
+        diff: {type: array, items: {$ref: '#/components/schemas/FileDiff'}}
+        preview_sha256: {type: string}
+        node_mapping:
+          type: array
+          items:
+            type: object
+            required: [old_id, new_id]
+            properties:
+              old_id: {type: string}
+              new_id: {type: string, nullable: true}
+    CfgEditApplyResponse:
+      type: object
+      required: [revision, base_revision, method_id, operation, diff, node_mapping, analysis_status]
+      properties:
+        revision: {type: integer, minimum: 2}
+        base_revision: {type: integer}
+        method_id: {type: string}
+        operation: {type: object}
+        diff: {type: array, items: {$ref: '#/components/schemas/FileDiff'}}
+        node_mapping: {type: array, items: {type: object}}
+        analysis_status: {type: string, enum: [completed, partial]}
+    BenchmarkRequest:
+      type: object
+      additionalProperties: false
+      required: [baseline_revision, candidate_revision, workloads]
+      properties:
+        baseline_revision: {type: integer, minimum: 1}
+        candidate_revision: {type: integer, minimum: 1}
+        workloads:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, stdin]
+            properties:
+              name: {type: string, minLength: 1, maxLength: 64}
+              size: {type: integer, minimum: 0, description: 'The input size you used to build stdin (reported back)'}
+              stdin: {type: string, description: 'Deterministic stdin, at most 65536 bytes'}
+        warmup_iterations: {type: integer, minimum: 0, maximum: 50, default: 5}
+        measured_iterations: {type: integer, minimum: 1, maximum: 100, default: 15}
+        class_loading: {type: string, enum: [fresh, shared], default: fresh}
+        iteration_timeout_ms: {type: integer, minimum: 1, maximum: 60000, default: 10000}
+        main_class: {type: string, nullable: true, description: 'Archive projects: class with main(String[])'}
+        source_level: {type: string, enum: ['8', '11', '17', '21'], default: '21'}
+    BenchmarkReport:
+      type: object
+      required: [report_id, created_at, status, baseline_revision, candidate_revision, settings, environment, timings, static_complexity, functional, runtime, limitations]
+      properties:
+        report_id: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+        status: {type: string, enum: [completed, compilation_failed, incomplete]}
+        baseline_revision: {type: integer}
+        candidate_revision: {type: integer}
+        settings: {type: object}
+        environment: {type: object, description: 'Runner image, CPU/memory limits, network, and the JVM facts reported inside the container'}
+        timings:
+          type: object
+          description: 'Per revision: compile_and_setup_ms, harness_setup_ms, benchmark_process_ms - none of these is algorithm time'
+        static_complexity:
+          type: object
+          description: '1. Static Big O before/after: changes[] {method_id, before, after, confidence_before, confidence_after}'
+        functional:
+          type: object
+          description: '2. Functional outcome: equivalent_on_all_workloads, non_equivalent_workloads[]'
+        runtime:
+          type: object
+          description: '3. Measured runtime: workloads[] {samples, median/min/max/quartiles/MAD/stddev, verdict, speedup, speedup_ci95, p_value, notes} and overall {verdict, summary}'
+        baseline_compilation: {type: object}
+        candidate_compilation: {type: object}
+        limitations: {type: array, items: {type: string}}
     MethodAnalysis:
       type: object
       required: [complexity, fragments, findings]
@@ -695,6 +1329,8 @@ components:
       additionalProperties: false
       required: [baseline_revision, candidate_revision, test_cases]
       properties:
+        main_class: {type: string, nullable: true, description: 'Archive projects: fully qualified class with main(String[]). Optional when exactly one analysed class has a main method (400 main_class_required otherwise)'}
+        source_level: {type: string, enum: ['8', '11', '17', '21'], description: 'Archive projects: javac --release'}
         baseline_revision: {type: integer, minimum: 1}
         candidate_revision: {type: integer, minimum: 1}
         test_cases:

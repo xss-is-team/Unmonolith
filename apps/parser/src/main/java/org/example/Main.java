@@ -18,6 +18,7 @@ import org.eclipse.jdt.core.dom.CompilationUnit;
 /**
  * Usage: {@code java -jar parser.jar <file.java>}.
  * Exactly one JSON document goes to stdout; human-readable errors go to stderr.
+ * {@code java -jar parser.jar project --root DIR --input request.json} analyses a multi-file project (see {@link ProjectAnalyzer}).
  * {@code java -jar parser.jar transform --input F --operation OP.json --output OUT} edits a source (see {@link Transform}).
  * Exit codes: 0 parsed (possibly with diagnostics), 1 input/internal failure, 2 usage error.
  */
@@ -30,6 +31,15 @@ public class Main {
     static int run(String[] args, PrintStream out, PrintStream err) {
         if (args.length > 1 && args[0].equals("transform")) {
             return Transform.run(args, out, err);
+        }
+        if (args.length > 1 && args[0].equals("edit")) {
+            return StatementMove.run(args, out, err);
+        }
+        if (args.length > 1 && args[0].equals("optimize")) {
+            return Optimizer.run(args, out, err);
+        }
+        if (args.length > 1 && args[0].equals("project")) {
+            return ProjectAnalyzer.run(args, out, err);
         }
         if (args.length != 1) {
             err.println("usage: java -jar parser.jar <file.java>");

@@ -262,13 +262,20 @@ class AnalysisTest {
 
     @Test
     void userMethodCostIsOnlyTrustedWhenProvenConstant(@TempDir Path dir) throws IOException {
-        // recursion, mutual recursion, a loop over the argument and an override stay unknown
+        // recursion, mutual recursion and an override stay unknown
         assertEquals("unknown", time(analyze(dir, "int f(List<Integer> l) { int s = 0; for (int x : l) { s += g(x); } return s; }\n"
                 + "int g(int n) { return n < 2 ? n : g(n - 1) + g(n - 2); }")));
         assertEquals("unknown", time(analyze(dir, "void f(List<Integer> l) { for (int x : l) { a(x); } }\n"
                 + "void a(int n) { b(n); }\nvoid b(int n) { a(n); }")));
+        // a callee whose cost depends only on its parameters is priced in the argument sizes (medium confidence)
+        JsonNode substituted = analyze(dir, "void f(List<Integer> l) { for (int x : l) { h(x); } }\n"
+                + "void h(int n) { for (int i = 0; i < n; i++) { } }");
+        assertEquals("O(n*m)", time(substituted));
+        assertEquals("medium", substituted.at("/complexity/confidence").asText());
+        assertTrue(substituted.at("/complexity/assumptions").toString().contains("argument sizes"));
+        // ... but not when the cost depends on something the call site cannot name (a field)
         assertEquals("unknown", time(analyze(dir, "void f(List<Integer> l) { for (int x : l) { h(x); } }\n"
-                + "void h(int n) { for (int i = 0; i < n; i++) { } }")));
+                + "int[] data = new int[3];\nvoid h(int n) { for (int i = 0; i < data.length * n; i++) { } }")));
         JsonNode over = analyze(dir, "void f(List<Integer> l, Example e) { for (int x : l) { e.h(x); } }\n"
                 + "void h(int n) { }\nstatic class Sub extends Example { @Override void h(int n) { for (int i = 0; i < n; i++) { } } }");
         assertEquals("unknown", time(over));
@@ -294,7 +301,7 @@ class AnalysisTest {
     @Test
     void unknownCallCostIsNotAssumedConstant(@TempDir Path dir) throws IOException {
         JsonNode a = analyze(dir, "int f(List<Integer> items) { int s = 0; for (int x : items) { s += helper(x); } return s; }\n"
-                + "int helper(int x) { for (int i = 0; i < x; i++) { } return x; }");
+                + "int helper(int x) { return new java.util.Random().nextInt(x + 1); }");
         assertEquals("unknown", time(a));
         assertTrue(a.at("/complexity/reason").asText().contains("Call to Example.helper() has no known cost model"));
         // a trivial getter is O(1)

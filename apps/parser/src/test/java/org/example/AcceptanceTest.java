@@ -375,7 +375,7 @@ class AcceptanceTest {
         expected.put("Organizer.linkTasksIndexed(", "O(n + m)");
         expected.put("Organizer.linkTasksToContacts(", "O(n*m)");
         expected.put("Organizer.gcd(", "unknown");
-        expected.put("Organizer.binarySearch(", "unknown");
+        expected.put("Organizer.binarySearch(", "O(log n)");
         expected.put("Organizer.countWhere(", "unknown");
         expected.put("Organizer.clamp(", "O(1)");
         expected.forEach((id, time) -> assertEquals(time, method(root, id).at("/analysis/complexity/time").asText(), id));
