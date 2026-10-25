@@ -121,6 +121,50 @@ const CfgFlowNode = memo(function CfgFlowNode({ data, selected }: NodeProps<Flow
 
 const nodeTypes = { cfg: CfgFlowNode };
 
+/**
+ * ELK ends a route on the bounding box of a node, but the visible shape is smaller (a diamond, an inset block, a
+ * circle). Moves an end point along its last segment onto the outline the user sees, so lines touch the blocks.
+ */
+function toOutline(point: Point, toward: Point, kind: string, box: Point): Point {
+  const local = { x: point.x - box.x, y: point.y - box.y };
+  const vertical = Math.abs(toward.x - point.x) < Math.abs(toward.y - point.y);
+  const cx = NODE_WIDTH / 2;
+  const cy = NODE_HEIGHT / 2;
+  if (kind === "branch") {
+    // diamond |x - cx| / cx + |y - cy| / cy = 1
+    if (vertical) {
+      const dy = cy * (1 - Math.min(1, Math.abs(local.x - cx) / cx));
+      return { x: point.x, y: box.y + (local.y < cy ? cy - dy : cy + dy) };
+    }
+    const dx = cx * (1 - Math.min(1, Math.abs(local.y - cy) / cy));
+    return { x: box.x + (local.x < cx ? cx - dx : cx + dx), y: point.y };
+  }
+  if (kind === "merge") {
+    const r = 36;
+    const center = { x: 124, y: 62 };
+    if (vertical) {
+      const dx = Math.min(r, Math.abs(local.x - center.x));
+      const dy = Math.sqrt(r * r - dx * dx);
+      return { x: point.x, y: box.y + (local.y < center.y ? center.y - dy : center.y + dy) };
+    }
+    const dy = Math.min(r, Math.abs(local.y - center.y));
+    const dx = Math.sqrt(r * r - dy * dy);
+    return { x: box.x + (local.x < center.x ? center.x - dx : center.x + dx), y: point.y };
+  }
+  // blocks and entry/exit pills: inset 16px from top and bottom, 4px from the sides
+  if (vertical) return { x: point.x, y: box.y + (local.y < cy ? 16 : NODE_HEIGHT - 16) };
+  return { x: box.x + (local.x < cx ? 4 : NODE_WIDTH - 4), y: point.y };
+}
+
+function attach(points: Point[] | undefined, from: { kind: string; at: Point } | null, to: { kind: string; at: Point } | null) {
+  if (!points || points.length < 2 || !from || !to) return points ?? null;
+  const copy = points.map((point) => ({ ...point }));
+  copy[0] = toOutline(copy[0], copy[1], from.kind, from.at);
+  const last = copy.length - 1;
+  copy[last] = toOutline(copy[last], copy[last - 1], to.kind, to.at);
+  return copy;
+}
+
 const edgeTypes = { routed: RoutedEdge };
 
 export function CfgViewer({
@@ -297,6 +341,11 @@ export function CfgViewer({
       return { hits: hits ?? null, iterations: iterations ?? null };
     };
   }, [trace, revision, method?.source_range.file]);
+  const endpoint = useCallback((id: string) => {
+    const node = cfg?.nodes.find((item) => item.id === id);
+    const at = positions.get(id);
+    return node && at ? { kind: node.kind, at } : null;
+  }, [cfg, positions]);
   const flow = useMemo(() => ({
     nodes: cfg?.nodes.map((node) => ({
       id: node.id,
@@ -322,7 +371,13 @@ export function CfgViewer({
         target: edge.to,
         type: "routed" as const,
         // a dragged node leaves its routed lines behind, so they fall back to a plain path while it moves
-        data: { points: drag && (drag.id === edge.from || drag.id === edge.to) ? null : routes.get(index) ?? null },
+        data: {
+          points: drag && (drag.id === edge.from || drag.id === edge.to) ? null : attach(
+            routes.get(index),
+            endpoint(edge.from),
+            endpoint(edge.to),
+          ),
+        },
         label: edge.label || formatEdgeKind(edge.kind),
         markerEnd: { type: MarkerType.ArrowClosed, color: active ? "#bb613e" : "#69786d" },
         className: active ? "cfg-edge--active" : undefined,
@@ -337,7 +392,7 @@ export function CfgViewer({
         labelBgBorderRadius: 2,
       };
     }) ?? [],
-  }), [activeEdges, cfg, drag, highlighted, positions, routes, selectedNode?.id, traceOf]);
+  }), [activeEdges, cfg, drag, endpoint, highlighted, positions, routes, selectedNode?.id, traceOf]);
 
   /** The statement node under a screen point, other than `except`. */
   function statementUnder(clientX: number, clientY: number, except = "") {
