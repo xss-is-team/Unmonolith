@@ -396,18 +396,18 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
         <span className={`text-[12px] ${isDirty ? "text-amber-300" : "text-emerald-300"}`} role="status">{isDirty ? "Не сохранено" : "Сохранено"}</span>
         <Button variant="outline" size="sm" onClick={() => void saveFile()} disabled={!isDirty || busy}>{busy ? <LoaderCircle className="spin" /> : <Save />} Сохранить</Button>
         <div className="ml-auto flex items-center gap-1.5">
-          <Link className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded border border-slate-700 px-2.5 text-[13px] text-slate-200 hover:border-cyan-700" href="/"><Upload size={15} /> Импорт Java</Link>
-          <Button variant="outline" size="sm" aria-label="Экспортировать проект" onClick={() => void downloadProject()}><Download /> Экспорт Java</Button>
+          <Link title="Импорт Java: загрузить другой проект" aria-label="Импорт Java" className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded border border-slate-700 px-2.5 text-[13px] text-slate-200 hover:border-cyan-700" href="/"><Upload size={15} /><span className="hidden min-[1700px]:inline">Импорт Java</span></Link>
+          <Button variant="outline" size="sm" aria-label="Экспортировать проект" title="Экспорт Java: скачать проект" onClick={() => void downloadProject()}><Download /><span className="hidden min-[1700px]:inline"> Экспорт Java</span></Button>
           <Button size="sm" className="bg-cyan-600 text-white hover:bg-cyan-500" disabled={loading || !firstApplicable} title={firstApplicable ? "Открыть применимую оптимизацию" : "Применимых оптимизаций нет"} onClick={() => { setAnalysisTab("recommendations"); if (firstApplicable) { setSelectedProposal(firstApplicable.id); setPreview(null); setAcknowledged([]); } }}><Sparkles /> Оптимизировать</Button>
           <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-500" onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}><Play /> Запуск</Button>
         </div>
         <div className="ml-2 flex items-center gap-1 border-l border-slate-800 pl-2" aria-label="Инструменты">
           <Button variant="ghost" size="sm" aria-label="Проверка" title="Проверка поведения" onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}><ShieldCheck /></Button>
           <Button variant="ghost" size="sm" aria-label="Бенчмарк" title="Измерение времени выполнения" onClick={() => { setWorkbench("benchmark"); void getProjectRevisions(project.id).then(setRevisions); }}><Gauge /></Button>
-          <Button variant="ghost" size="sm" onClick={() => setWorkbench("decompose")}><Scissors /> Разбор монолита</Button>
+          <Button variant="ghost" size="sm" aria-label="Разбор монолита" title="Разбор монолита на файлы и классы" onClick={() => setWorkbench("decompose")}><Scissors /><span className="hidden min-[1700px]:inline"> Разбор монолита</span></Button>
           <Button variant="ghost" size="sm" aria-label="История" title="История ревизий и откат" onClick={() => setWorkbench("history")}><History /></Button>
           <Button variant="ghost" size="sm" aria-label="Diff ревизий" title="Сравнение ревизий" onClick={() => { setWorkbench("diff"); void getProjectRevisions(project.id).then(setRevisions); }}><GitCompareArrows /></Button>
-          <Button variant="ghost" size="sm" onClick={() => void downloadReport()} disabled={loading}><FileText /> Отчёт</Button>
+          <Button variant="ghost" size="sm" aria-label="Отчёт" title="Скачать отчёт (Markdown)" onClick={() => void downloadReport()} disabled={loading}><FileText /><span className="hidden min-[1700px]:inline"> Отчёт</span></Button>
         </div>
       </header>
 
