@@ -376,7 +376,7 @@ export function CfgViewer({
         </div>
       </header>
 
-      <div className="min-h-[200px] flex-1">
+      <div className="relative min-h-[200px] flex-1 overflow-hidden">
         {cfgState === "loading" ? (
           <div className="flex min-h-full flex-col items-center justify-center gap-2 p-7 text-center text-slate-500" role="status"><LoaderCircle className="spin text-cyan-400" /><strong className="text-slate-300">Загружаем CFG</strong><span>Селектор {selector} · ревизия {revision}</span></div>
         ) : null}

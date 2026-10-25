@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertCircle, ArrowLeft, ChevronRight, Code2, Download, FileCode2, FolderOpen,
+  AlertCircle, ArrowLeft, Check, ChevronRight, Code2, Download, FileCode2, FolderOpen,
   GitCompareArrows, LoaderCircle, Network, Save, Scissors, ShieldCheck, Waypoints,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -368,6 +368,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
           <div className="flex items-center justify-between border-b border-slate-800 px-3 text-[13px] font-semibold text-slate-300"><span>Анализ</span><span className="font-mono text-[11px] text-slate-500">REV {analysis?.revision ?? revision}</span></div>
           <div className="min-h-0 overflow-auto p-2.5">
             {loading ? <p className="flex items-center gap-2 text-[13px] text-slate-400" role="status"><LoaderCircle className="spin" size={14} /> Анализ проекта…</p> : null}
+            {!loading && analysis ? <p className="mb-2 flex items-center gap-2 text-[12px] text-emerald-300" role="status"><Check size={14} /> Анализ завершён · {methods.length} методов · диагностик: {analysis.diagnostics.length}</p> : null}
             <ComplexityOverview report={loading ? null : complexity} onOpen={(row, sourceRange) => { const found = methods.find((method) => method.id === row.method_id); if (found) { setSelector(found.selector); setView("cfg"); } void openRange({ ...sourceRange, file: sourceRange.file ?? row.file ?? activeFile }); }} />
             <section className="grid gap-1.5" aria-label="Найденные проблемы"><h2 className="m-0 text-[12px] font-semibold text-slate-400">Findings · {findings?.findings.length ?? 0}</h2>{findings?.findings.map(({ method_id, file, finding }) => <article className="rounded border border-slate-800 bg-slate-900/60 p-2" key={`${file}-${finding.id}-${finding.source_range.start}`}><strong className="block text-[12px] leading-5 text-slate-200">{finding.message}</strong><p className="m-0 mt-1 text-[12px] leading-5 text-slate-400">{finding.explanation}</p><small className="mt-1 block truncate font-mono text-[11px] text-slate-500" title={method_id}>{file ?? activeFile} · стр. {finding.source_range.line ?? "—"}</small><button className="mt-1 text-[12px] text-cyan-300 hover:text-cyan-100" type="button" onClick={() => void openRange({ ...finding.source_range, file: finding.source_range.file ?? file ?? activeFile })}>К исходнику</button></article>)}</section>
             <OptimizationPanel
