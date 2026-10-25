@@ -844,7 +844,7 @@ fn invalid_transform_output() -> ApiError {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use std::{os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
+    use std::{path::PathBuf, time::Duration};
 
     use serde_json::Value;
     use tokio::fs;
@@ -919,10 +919,7 @@ esac
             let jar = root.join("parser.jar");
             fs::write(&jar, format!("{mode}\n")).await.unwrap();
             let java = root.join("fake-java");
-            fs::write(&java, FAKE_JAVA).await.unwrap();
-            let mut permissions = fs::metadata(&java).await.unwrap().permissions();
-            permissions.set_mode(0o700);
-            fs::set_permissions(&java, permissions).await.unwrap();
+            crate::test_util::install_executable(&java, FAKE_JAVA);
 
             Self {
                 root,

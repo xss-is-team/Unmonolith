@@ -10,6 +10,45 @@ mod session;
 
 use std::{env, io, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
+#[cfg(all(test, unix))]
+pub(crate) mod test_util {
+    use std::{
+        io::Write,
+        os::unix::fs::OpenOptionsExt,
+        path::Path,
+        process::Command,
+        time::{Duration, Instant},
+    };
+
+    /// Writes an executable stub and returns only once it can really be executed.
+    ///
+    /// Tests run in parallel inside one process. A `fork` by another test between our `open(O_WRONLY)`
+    /// and `close` lets the child inherit the write descriptor, and `exec` of the stub then fails with
+    /// ETXTBSY ("text file busy") until that child has exec'ed. Probing until `exec` stops failing
+    /// with ETXTBSY removes the race without touching production code.
+    pub(crate) fn install_executable(path: &Path, content: &str) {
+        {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o700)
+                .open(path)
+                .expect("create stub");
+            file.write_all(content.as_bytes()).expect("write stub");
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match Command::new(path).output() {
+                Err(error) if error.raw_os_error() == Some(26) && Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                _ => return,
+            }
+        }
+    }
+}
+
 pub use api::{app, AppState};
 pub use archive::ImportLimits;
 

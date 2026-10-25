@@ -22,4 +22,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "cookies", "multipart", "rustls-tls"] }
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }

@@ -69,6 +69,8 @@ public final class Bench {
         }
     }
 
+    /** Set by the harness itself right before Runtime.halt, which also consults the security manager. */
+    private static volatile boolean harnessExit;
     private static volatile long deadline = Long.MAX_VALUE;
     private static volatile String currentWorkload = "";
 
@@ -84,7 +86,9 @@ public final class Bench {
         System.setSecurityManager(new SecurityManager() {
             @Override
             public void checkExit(int status) {
-                throw new ExitTrap(status);
+                if (!harnessExit) {
+                    throw new ExitTrap(status);
+                }
             }
 
             @Override
@@ -102,6 +106,7 @@ public final class Bench {
                 if (System.nanoTime() > deadline) {
                     report.println("{\"workload\":" + currentWorkload + ",\"status\":\"timed_out\"}");
                     report.flush();
+                    harnessExit = true;
                     Runtime.getRuntime().halt(3);
                 }
             }
@@ -168,6 +173,7 @@ public final class Bench {
             report.flush();
         }
         report.flush();
+        harnessExit = true;
         Runtime.getRuntime().halt(0);
     }
 

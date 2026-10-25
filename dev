@@ -99,6 +99,14 @@ case "$command" in
   api-test)
     run_in apps/api cargo test
     ;;
+  api-e2e)
+    # needs the parser JAR (./dev parser-build); no Docker
+    run_in apps/api cargo test --test e2e_import --test e2e_analysis --test e2e_edit
+    ;;
+  api-e2e-docker)
+    # needs the parser JAR, a running Docker daemon and the runner image (./dev runner-build)
+    run_in apps/api cargo test --test docker_e2e -- --ignored
+    ;;
   web-fast-check)
     cd "$ROOT/apps/web"
     pnpm exec tsc --noEmit

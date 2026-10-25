@@ -3566,16 +3566,11 @@ esac
         mode: &str,
         analyzer_timeout: Duration,
     ) -> axum::Router {
-        use std::os::unix::fs::PermissionsExt;
-
         fs::create_dir_all(&data.0).await.unwrap();
         let jar = data.0.join("parser.jar");
         fs::write(&jar, format!("{mode}\n")).await.unwrap();
         let java = data.0.join("fake-java");
-        fs::write(&java, FAKE_TRANSFORM_JAVA).await.unwrap();
-        let mut permissions = fs::metadata(&java).await.unwrap().permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&java, permissions).await.unwrap();
+        crate::test_util::install_executable(&java, FAKE_TRANSFORM_JAVA);
 
         let state = AppState::new(Config {
             bind: "127.0.0.1:0".parse().unwrap(),
@@ -3635,19 +3630,12 @@ esac
         case_timeout: Duration,
         output_bytes: u64,
     ) -> axum::Router {
-        use std::os::unix::fs::PermissionsExt;
-
         fs::create_dir_all(&data.0).await.unwrap();
         let container_bin = data.0.join("fake-docker");
-        fs::write(&container_bin, FAKE_DOCKER).await.unwrap();
         fs::write(data.0.join("fake-docker.mode"), mode)
             .await
             .unwrap();
-        let mut permissions = fs::metadata(&container_bin).await.unwrap().permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&container_bin, permissions)
-            .await
-            .unwrap();
+        crate::test_util::install_executable(&container_bin, FAKE_DOCKER);
 
         let state = AppState::new(Config {
             bind: "127.0.0.1:0".parse().unwrap(),
