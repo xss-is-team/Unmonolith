@@ -135,7 +135,32 @@ final class AstJson {
         out.put("project_graph", ownGraph ? projectGraph() : null);
         List<Object> diagnostics = diagnostics(problems);
         diagnostics.addAll(cfgFailures);
+        diagnostics.addAll(unanalyzedBodies());
         out.put("diagnostics", diagnostics);
+        return out;
+    }
+
+    /**
+     * Methods inside anonymous classes and enum-constant bodies are neither listed in {@code methods} nor given a CFG
+     * or analysis (their code stays in the statement text). Say so instead of dropping them silently.
+     */
+    private List<Object> unanalyzedBodies() {
+        List<Object> out = new ArrayList<>();
+        cu.accept(new ASTVisitor() {
+            @Override
+            public boolean visit(AnonymousClassDeclaration n) {
+                boolean constant = n.getParent() instanceof EnumConstantDeclaration;
+                Map<String, Object> d = new LinkedHashMap<>();
+                d.put("code", "unanalyzed_anonymous_body");
+                d.put("category", "analysis");
+                d.put("severity", "info");
+                d.put("message", "Methods declared in this " + (constant ? "enum constant body" : "anonymous class")
+                        + " are not listed and have no CFG or complexity analysis; their code is kept only as text.");
+                d.put("source_range", range(n));
+                out.add(d);
+                return true;
+            }
+        });
         return out;
     }
 

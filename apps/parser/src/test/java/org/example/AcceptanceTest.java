@@ -54,6 +54,17 @@ class AcceptanceTest {
         return JSON.valueToTree(Main.parse(text, "Organizer.java"));
     }
 
+    /** Errors and warnings; the informational notices about unanalyzed anonymous bodies are not problems. */
+    private static List<JsonNode> problems(JsonNode doc) {
+        List<JsonNode> out = new ArrayList<>();
+        doc.get("diagnostics").forEach(d -> {
+            if (!d.get("severity").asText().equals("info")) {
+                out.add(d);
+            }
+        });
+        return out;
+    }
+
     private static List<JsonNode> methods(JsonNode doc) {
         List<JsonNode> out = new ArrayList<>();
         for (JsonNode t : doc.get("types")) {
@@ -164,7 +175,9 @@ class AcceptanceTest {
         assertEquals(1, root.get("protocol_version").asInt());
         assertEquals("completed", root.get("status").asText());
         assertTrue(root.at("/semantic/bindings").asBoolean());
-        assertEquals(0, root.get("diagnostics").size(), root.get("diagnostics").toString());
+        assertEquals(0, problems(root).size(), root.get("diagnostics").toString());
+        // the fixture's anonymous classes are reported as not analyzed, as information only
+        assertTrue(root.get("diagnostics").toString().contains("unanalyzed_anonymous_body"));
         assertEquals(1, root.get("types").size());
         assertEquals("Organizer", root.at("/types/0/name").asText());
         assertTrue(root.get("imports").size() >= 15);
@@ -450,7 +463,7 @@ class AcceptanceTest {
 
         JsonNode again = analyze(out);
         assertEquals("completed", again.get("status").asText());
-        assertEquals(0, again.get("diagnostics").size(), again.get("diagnostics").toString());
+        assertEquals(0, problems(again).size(), again.get("diagnostics").toString());
         assertNotNull(conditionNode(again, methodPrefix, kind, newCondition));
         assertEquals(methods(root).size(), methods(again).size());
         Files.delete(dir.resolve("Out.java"));
