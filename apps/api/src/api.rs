@@ -1000,6 +1000,8 @@ struct ComplexityFragment {
 struct AnalysisFinding {
     id: String,
     severity: String,
+    /// `complexity` (running time) or `maintainability` (long method, deep nesting, many parameters, duplicated code).
+    category: String,
     message: String,
     explanation: String,
     recommendation: String,

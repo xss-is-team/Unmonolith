@@ -1126,8 +1126,9 @@ components:
       type: object
       required: [id, severity, message, explanation, recommendation, source_range, node_ids]
       properties:
-        id: {type: string, example: repeated_collection_scan}
+        id: {type: string, example: repeated_collection_scan, description: 'complexity: repeated_collection_scan, nested_collection_iteration, string_concat_in_loop; maintainability: long_method, deep_nesting, too_many_parameters, duplicate_code'}
         severity: {type: string, enum: [warning, info]}
+        category: {type: string, enum: [complexity, maintainability], description: 'complexity findings concern running time; maintainability findings are size and shape measurements of the source'}
         message: {type: string}
         explanation: {type: string}
         recommendation: {type: string}

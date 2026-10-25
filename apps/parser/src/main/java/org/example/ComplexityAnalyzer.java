@@ -175,6 +175,9 @@ final class ComplexityAnalyzer {
     private static final String ASSUME_EUCLID =
             "Euclid's algorithm: the remainder at least halves every two iterations, so the loop runs O(log(min(a, b))) times.";
     private static final String ASSUME_STRING = "String/StringBuilder operations are treated as O(1) (short strings).";
+    private static final String ASSUME_INPUT = "A loop that reads standard input on every iteration runs once per input token or line; "
+            + "the input size is the bound, and reading one token or line is treated as O(1) (short lines).";
+    private static final String INPUT_KEY = "input";
 
     private final AstJson json;
     private final CompilationUnit cu;
@@ -222,6 +225,9 @@ final class ComplexityAnalyzer {
         complexity.put("limitations", LIMITATIONS);
         out.put("complexity", complexity);
         out.put("fragments", fragments);
+        if (root) {
+            new CodeSmells(json, cu, method, findings).detect();
+        }
         out.put("findings", findings);
         return out;
     }
@@ -372,6 +378,9 @@ final class ComplexityAnalyzer {
                         if (euclid != null) {
                             factor = euclid;
                             loopNote = ASSUME_EUCLID;
+                        } else if (readsInput(st.getExpression(), st.getBody())) {
+                            factor = inputFactor();
+                            loopNote = ASSUME_INPUT;
                         }
                     }
                 }
@@ -386,6 +395,10 @@ final class ComplexityAnalyzer {
                 cfgKind = "do_while";
                 cfgStart = st.getExpression().getStartPosition();
                 factor = counterFactor(st.getExpression(), st, env);
+                if (factor.kind() == Kind.UNKNOWN && readsInput(st.getExpression(), st.getBody())) {
+                    factor = inputFactor();
+                    loopNote = ASSUME_INPUT;
+                }
                 perIteration = expr(st.getExpression());
                 if (factor.counter() != null) {
                     derived.add(factor.counter().getKey());
@@ -767,6 +780,104 @@ final class ComplexityAnalyzer {
      * {@code while (b != 0) { t = a % b; a = b; b = t; }} (or {@code t = b; b = a % b; a = t;}): Euclid's algorithm on two
      * integral locals. Nothing else may touch them in the loop, so the shape is exactly the textbook one.
      */
+    private Factor inputFactor() {
+        descriptions.putIfAbsent(INPUT_KEY, "number of input tokens or lines read from standard input");
+        return new Factor(Kind.LINEAR, INPUT_KEY, false, false, true, null, null);
+    }
+
+    /**
+     * The loop consumes input on every iteration: its condition asks a Scanner for more input
+     * ({@code while (in.hasNext...())}), compares {@code readLine()} with null, or (for {@code while (true)}) the
+     * body reads a token or line as one of its own top-level statements.
+     */
+    private static boolean readsInput(Expression condition, Statement body) {
+        Expression c = strip(condition);
+        if (c instanceof MethodInvocation mi && isInputRead(mi, "hasNext")) {
+            return true;
+        }
+        if (c instanceof InfixExpression ie && ie.getOperator() == InfixExpression.Operator.NOT_EQUALS
+                && strip(ie.getRightOperand()) instanceof NullLiteral) {
+            Expression left = strip(ie.getLeftOperand());
+            if (left instanceof Assignment a) {
+                left = strip(a.getRightHandSide());
+            }
+            return left instanceof MethodInvocation mi && isInputRead(mi, "readLine");
+        }
+        // any other condition (while (true), while (running)): every iteration must read before it can 'continue'
+        List<?> top = body instanceof Block blk ? blk.statements() : List.of(body);
+        for (Object o : top) {
+            boolean[] reads = {false};
+            boolean[] skips = {false};
+            ((Statement) o).accept(new ASTVisitor() {
+                @Override
+                public boolean visit(MethodInvocation mi) {
+                    reads[0] |= isInputRead(mi, "next") || isInputRead(mi, "readLine");
+                    return true;
+                }
+
+                @Override
+                public boolean visit(Block nested) {
+                    return false;
+                }
+
+                @Override
+                public boolean visit(IfStatement nested) {
+                    nested.getExpression().accept(this);
+                    return false;
+                }
+
+                @Override
+                public boolean visit(SwitchStatement nested) {
+                    nested.getExpression().accept(this);
+                    return false;
+                }
+            });
+            ((Statement) o).accept(new ASTVisitor() {
+                @Override
+                public boolean visit(ContinueStatement n) {
+                    skips[0] |= n.getLabel() == null;
+                    return false;
+                }
+
+                @Override
+                public boolean visit(ForStatement n) {
+                    return false;
+                }
+
+                @Override
+                public boolean visit(EnhancedForStatement n) {
+                    return false;
+                }
+
+                @Override
+                public boolean visit(WhileStatement n) {
+                    return false;
+                }
+
+                @Override
+                public boolean visit(DoStatement n) {
+                    return false;
+                }
+            });
+            if (reads[0] && !skips[0]) {
+                return true;
+            }
+            if (skips[0] || o instanceof ReturnStatement || o instanceof BreakStatement) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isInputRead(MethodInvocation mi, String prefix) {
+        IMethodBinding b = mi.resolveMethodBinding();
+        if (b == null || !b.getName().startsWith(prefix)) {
+            return false;
+        }
+        String owner = b.getDeclaringClass().getErasure().getQualifiedName();
+        return owner.equals("java.util.Scanner") || owner.equals("java.io.BufferedReader");
+    }
+
     private Factor euclidFactor(WhileStatement st) {
         if (!(strip(st.getExpression()) instanceof InfixExpression cond) || cond.hasExtendedOperands()
                 || cond.getOperator() != InfixExpression.Operator.NOT_EQUALS
@@ -1550,7 +1661,126 @@ final class ComplexityAnalyzer {
         }
         String shown = decl.substring(decl.lastIndexOf('.') + 1) + "." + name + "()";
         Cost user = userMethodCost(b, shown, mi.arguments(), Map.of());
+        if (user == null) {
+            user = dispatchCost(b, shown);
+        }
         return user != null ? user : Cost.unknown("Call to " + shown + " has no known cost model.");
+    }
+
+    /**
+     * A call through an interface or an overridable method: O(1) when every implementation the project declares
+     * (methods, implicit record accessors) is O(1) on its own. Null when an implementation is not, when the type is
+     * a functional interface (a lambda could implement it), or when the project declares no implementation.
+     */
+    /** A lambda or method reference somewhere in the project has this (functional interface) type. */
+    private boolean implementedByLambda(ITypeBinding type) {
+        boolean[] found = {false};
+        for (AstJson peer : json.peers()) {
+            peer.unit().accept(new ASTVisitor() {
+                private void check(Expression e) {
+                    ITypeBinding t = e.resolveTypeBinding();
+                    found[0] |= t == null || t.getErasure().isEqualTo(type.getErasure());
+                }
+
+                @Override
+                public boolean visit(LambdaExpression e) {
+                    check(e);
+                    return !found[0];
+                }
+
+                @Override
+                public boolean visit(ExpressionMethodReference e) {
+                    check(e);
+                    return !found[0];
+                }
+
+                @Override
+                public boolean visit(TypeMethodReference e) {
+                    check(e);
+                    return !found[0];
+                }
+
+                @Override
+                public boolean visit(SuperMethodReference e) {
+                    check(e);
+                    return !found[0];
+                }
+
+                @Override
+                public boolean visit(CreationReference e) {
+                    check(e);
+                    return !found[0];
+                }
+            });
+        }
+        return found[0];
+    }
+
+    private Cost dispatchCost(IMethodBinding b, String shown) {
+        IMethodBinding target = b.getMethodDeclaration();
+        ITypeBinding owner = target.getDeclaringClass();
+        if (Modifier.isStatic(target.getModifiers()) || Modifier.isPrivate(target.getModifiers()) || !owner.isFromSource()
+                || owner.getFunctionalInterfaceMethod() != null && implementedByLambda(owner)) {
+            return null;
+        }
+        List<MethodDeclaration> implementations = new ArrayList<>();
+        int[] recordAccessors = {0};
+        for (AstJson peer : json.peers()) {
+            peer.unit().accept(new ASTVisitor() {
+                @Override
+                public boolean visit(MethodDeclaration md) {
+                    IMethodBinding mb = md.resolveBinding();
+                    if (mb != null && md.getBody() != null && (mb == target || mb.overrides(target))) {
+                        implementations.add(md);
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(RecordDeclaration rd) {
+                    ITypeBinding rb = rd.resolveBinding();
+                    if (rb != null && target.getParameterTypes().length == 0 && rb.isSubTypeCompatible(owner.getErasure())
+                            && java.util.Arrays.stream(rb.getDeclaredFields()).anyMatch(f -> f.getName().equals(target.getName()))
+                            && java.util.Arrays.stream(rb.getDeclaredMethods()).noneMatch(m -> m.getName().equals(target.getName())
+                                    && m.getParameterTypes().length == 0 && !m.isSynthetic() && !m.isDefaultConstructor()
+                                    && m.getJavaElement() != null && rd.bodyDeclarations().stream().anyMatch(d -> d instanceof MethodDeclaration
+                                            && ((MethodDeclaration) d).getName().getIdentifier().equals(target.getName())))) {
+                        recordAccessors[0]++;
+                    }
+                    return true;
+                }
+            });
+        }
+        if (implementations.isEmpty() && recordAccessors[0] == 0) {
+            return null;
+        }
+        Cost result = Cost.constant();
+        for (MethodDeclaration md : implementations) {
+            if (active.contains(md) || active.size() >= MAX_CALL_DEPTH) {
+                return null;
+            }
+            AstJson implOwner = ownerOf(md);
+            ComplexityAnalyzer sub = new ComplexityAnalyzer(implOwner, implOwner.unit(), md, null, active);
+            active.add(md);
+            Cost cost;
+            try {
+                cost = sub.block(md.getBody().statements(), Map.of());
+                sub.scanEffects(md.getBody());
+            } finally {
+                active.remove(md);
+            }
+            if (sub.impure || !cost.unknown.isEmpty() || !sub.recursiveCalls.isEmpty()
+                    || cost.monos.stream().anyMatch(m -> !m.vars().isEmpty())) {
+                return null;
+            }
+            writes.addAll(sub.writes);
+            result.notes.addAll(cost.notes);
+        }
+        int count = implementations.size() + recordAccessors[0];
+        result.notes.add("Call to " + shown + " is O(1): each of its " + count + " implementation" + (count == 1 ? "" : "s")
+                + " in the project was analyzed as O(1) (dynamic dispatch; classes outside the project are not seen).");
+        result.weak = true;
+        return result;
     }
 
     private static final int MAX_CALL_DEPTH = 8;
@@ -1833,13 +2063,76 @@ final class ComplexityAnalyzer {
             }
             return Cost.constant();
         }
+        if (Set.of("java.util.Scanner", "java.io.PrintStream", "java.io.InputStreamReader", "java.io.BufferedReader",
+                "java.io.OutputStreamWriter", "java.io.PrintWriter", "java.io.BufferedWriter", "java.util.Random",
+                "java.util.Formatter").contains(name)) {
+            return Cost.constant("Constructors of console readers and writers are treated as O(1).");
+        }
         if (ConstructorPurity.isTrivial(n, json.peers().stream().map(AstJson::unit).toList())) {
             Cost trivial = Cost.constant();
             trivial.notes.add("Constructor of " + name.substring(name.lastIndexOf('.') + 1)
                     + " only stores its arguments into fields, so it is O(1).");
             return trivial;
         }
+        Cost analyzed = analyzedConstructorCost(n, t);
+        if (analyzed != null) {
+            return analyzed;
+        }
         return Cost.unknown("Constructor of " + name.substring(name.lastIndexOf('.') + 1) + " has no known cost model.");
+    }
+
+    /**
+     * A project constructor whose body analyzes as O(1), in a class whose field initializers only create objects or
+     * hold constants and whose superclass is not a project class (its constructor would run too). Null otherwise.
+     */
+    private Cost analyzedConstructorCost(ClassInstanceCreation n, ITypeBinding type) {
+        IMethodBinding ctor = n.resolveConstructorBinding();
+        if (ctor == null || n.getAnonymousClassDeclaration() != null) {
+            return null;
+        }
+        ITypeBinding superclass = type.getSuperclass();
+        if (superclass != null && superclass.isFromSource()) {
+            return null;
+        }
+        MethodDeclaration md = declarationOf(ctor);
+        if (md == null || md.getBody() == null || !(md.getParent() instanceof AbstractTypeDeclaration holder)) {
+            return null;
+        }
+        for (Object d : holder.bodyDeclarations()) {
+            if (d instanceof FieldDeclaration fd && !Modifier.isStatic(fd.getModifiers())) {
+                for (Object f : fd.fragments()) {
+                    Expression init = ((VariableDeclarationFragment) f).getInitializer();
+                    if (init != null && !(init instanceof ClassInstanceCreation c && c.arguments().isEmpty()
+                            && c.getAnonymousClassDeclaration() == null) && !(init instanceof NumberLiteral)
+                            && !(init instanceof StringLiteral) && !(init instanceof BooleanLiteral) && !(init instanceof NullLiteral)) {
+                        return null;
+                    }
+                }
+            } else if (d instanceof Initializer i && !Modifier.isStatic(i.getModifiers())) {
+                return null;
+            }
+        }
+        if (active.contains(md) || active.size() >= MAX_CALL_DEPTH) {
+            return null;
+        }
+        AstJson owner = ownerOf(md);
+        ComplexityAnalyzer sub = new ComplexityAnalyzer(owner, owner.unit(), md, null, active);
+        active.add(md);
+        Cost cost;
+        try {
+            cost = sub.block(md.getBody().statements(), Map.of());
+            sub.scanEffects(md.getBody());
+        } finally {
+            active.remove(md);
+        }
+        if (!cost.unknown.isEmpty() || !sub.recursiveCalls.isEmpty() || cost.monos.stream().anyMatch(m -> !m.vars().isEmpty())) {
+            return null;
+        }
+        Cost result = Cost.constant();
+        result.notes.addAll(cost.notes);
+        result.notes.add("Constructor of " + type.getName() + " was analyzed: its body is O(1).");
+        result.weak = cost.weak;
+        return result;
     }
 
     /** {@code return field;}, {@code this.f = x;} and record accessors cost O(1). */
@@ -1925,6 +2218,16 @@ final class ComplexityAnalyzer {
             }
             case "java.io.PrintStream" -> {
                 return Set.of("println", "print", "printf", "format").contains(name) ? Cost.constant() : null;
+            }
+            case "java.util.Map.Entry", "java.util.AbstractMap.SimpleEntry", "java.util.AbstractMap.SimpleImmutableEntry" -> {
+                return Set.of("getKey", "getValue", "setValue").contains(name) ? Cost.constant() : null;
+            }
+            case "java.util.Scanner" -> {
+                return name.startsWith("next") || name.startsWith("hasNext") || name.equals("close")
+                        ? Cost.constant(ASSUME_INPUT) : null;
+            }
+            case "java.io.BufferedReader" -> {
+                return Set.of("readLine", "read", "ready", "close").contains(name) ? Cost.constant(ASSUME_INPUT) : null;
             }
             case "java.lang.String" -> {
                 return Set.of("length", "charAt", "isEmpty", "isBlank", "equals", "equalsIgnoreCase", "compareTo",
@@ -2161,6 +2464,7 @@ final class ComplexityAnalyzer {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", id);
         m.put("severity", severity);
+        m.put("category", "complexity");
         m.put("message", message);
         m.put("explanation", explanation);
         m.put("recommendation", recommendation);

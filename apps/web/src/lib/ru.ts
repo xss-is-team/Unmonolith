@@ -32,6 +32,36 @@ export function ruFinding(finding: { id: string; message: string; explanation: s
         explanation: `Строки неизменяемы: каждая склейка${row ? ` на строке ${row}` : ""} копирует все накопленные символы, поэтому построение результата занимает время, квадратичное по его длине.`,
         recommendation: "Собирайте результат в StringBuilder и превращайте в строку один раз после цикла.",
       };
+    case "long_method": {
+      const lines = /(\d+) lines/.exec(finding.explanation)?.[1] ?? "";
+      return {
+        title: `Длинный метод: ${lines} строк`,
+        explanation: `В «${name}» ${lines} строк (порог 60). Длинный метод смешивает несколько обязанностей, его трудно читать и тестировать, и в нём легко спрятать дефект вроде вложенного перебора.`,
+        recommendation: "Разбейте его на методы по обязанностям: выделите операторы на графе и нажмите «Извлечь метод».",
+      };
+    }
+    case "deep_nesting": {
+      const levels = /nested (\d+) levels/.exec(finding.explanation)?.[1] ?? "";
+      return {
+        title: `Глубокая вложенность: ${levels} уровня`,
+        explanation: `Условия и циклы в «${name}» вложены на ${levels} уровня (порог 4). Каждый уровень умножает число путей, которые нужно прочитать и покрыть тестами.`,
+        recommendation: "Обработайте простые случаи ранним выходом (guard clause), а внутренние уровни вынесите в отдельный метод.",
+      };
+    }
+    case "too_many_parameters": {
+      const count = /takes (\d+) parameters/.exec(finding.explanation)?.[1] ?? "";
+      return {
+        title: `Много параметров: ${count}`,
+        explanation: `«${name}» принимает ${count} параметров (порог 5): вызов легко перепутать, а метод, вероятно, делает несколько дел.`,
+        recommendation: "Объедините параметры, которые всегда передаются вместе, в record или небольшой класс.",
+      };
+    }
+    case "duplicate_code":
+      return {
+        title: "Дублирование логики",
+        explanation: `Одни и те же 4 и более операторов из «${name}» повторяются в «${names[1] ?? name}»${row ? ` (строка ${row})` : ""}. Исправление в одной копии легко забыть в другой.`,
+        recommendation: "Вынесите повторяющиеся операторы в один метод и вызывайте его из обоих мест: выделите их на графе и нажмите «Извлечь метод».",
+      };
     default:
       return { title: finding.message, explanation: finding.explanation, recommendation: finding.recommendation };
   }
@@ -160,6 +190,14 @@ const PATTERNS: [RegExp, (match: RegExpExecArray) => string][] = [
   [/^the (baseline|candidate) revision produced different observations across (\d+) runs of the same input.*$/, (m) => `Версия «${m[1] === "baseline" ? "до" : "после"}» давала разный результат на одном и том же вводе (${m[2]} запуска): сравнивать нечего. Скорее всего вывод зависит от времени или случайных чисел.`],
   [/^stdout of the baseline run differs from expected_stdout$/, () => "stdout исходной версии не совпал с ожидаемым"],
   [/^Dominant term (.+?): (\d+) nested loops over (.+?); sequential loops are additive, the largest wins\.$/, (m) => `Доминирующий член ${m[1]}: ${m[2]} вложенных цикла по «${m[3]}»; последовательные циклы складываются, побеждает наибольший.`],
+  [/^([a-z]) = number of input tokens or lines read from standard input$/, (m) => `${m[1]} — число токенов или строк, прочитанных со стандартного ввода`],
+  [/^A loop that reads standard input on every iteration.*$/, () => "Цикл, читающий стандартный ввод на каждой итерации, выполняется по разу на токен или строку ввода: граница — размер ввода, чтение одной строки считается O(1) (короткие строки)."],
+  [/^Call to (.+) is O\(1\): each of its (\d+) implementations? in the project was analyzed as O\(1\).*$/, (m) => `Вызов ${m[1]} — O(1): каждая из его реализаций в проекте (${m[2]}) проанализирована как O(1) (динамическая диспетчеризация; классы вне проекта не видны).`],
+  [/^Call to (.+) is O\(1\): the method is declared in this (file|project.*) and was analyzed\.$/, (m) => `Вызов ${m[1]} — O(1): метод объявлен в этом ${m[2] === "file" ? "файле" : "проекте"} и проанализирован.`],
+  [/^Constructor of (.+) was analyzed: its body is O\(1\)\.$/, (m) => `Конструктор ${m[1]} проанализирован: его тело O(1).`],
+  [/^Constructors of console readers and writers are treated as O\(1\)\.$/, () => "Конструкторы консольного ввода-вывода считаются O(1)."],
+  [/^(.+) has no known cost model\.$/, (m) => `${m[1].replace(/^Call to /, "Вызов ").replace(/^Constructor of /, "Конструктор ")}: стоимость неизвестна.`],
+  [/^Complexity cannot be determined: (.+)$/, (m) => `Сложность не определена: ${m[1].split(/(?<=\.) /).map((part) => ruText(part)).join(" ")}`],
   [/^n = number of elements in (.+)$/, (m) => `n — число элементов в «${m[1]}»`],
   [/^m = number of elements in (.+)$/, (m) => `m — число элементов в «${m[1]}»`],
   [/^Constructor of (.+) only stores its arguments into fields, so it is O\(1\)\.$/, (m) => `Конструктор ${m[1]} только сохраняет аргументы в поля, поэтому он O(1).`],

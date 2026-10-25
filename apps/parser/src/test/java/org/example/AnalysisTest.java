@@ -436,11 +436,15 @@ class AnalysisTest {
     }
 
     @Test
-    void constructorWithValidationOrCallsStaysUnknown(@TempDir Path dir) throws IOException {
+    void constructorWithConstantValidationOrCallsIsAnalyzedButAnInitializerCallStaysUnknown(@TempDir Path dir) throws IOException {
         String validating = "static class Box { final String id; Box(String id) { if (id == null) { throw new IllegalArgumentException(); } this.id = id; } }\n";
-        assertEquals("unknown", time(analyze(dir, "void f(List<String> l) { for (String s : l) { new Box(s); } }\n" + validating)));
+        JsonNode checked = analyze(dir, "void f(List<String> l) { for (String s : l) { new Box(s); } }\n" + validating);
+        assertEquals("O(n)", time(checked));
+        assertTrue(checked.toString().contains("Constructor of Box was analyzed"), checked.toString());
         String calling = "static class Box { final String id; Box(String id) { this.id = id.trim(); } }\n";
-        assertEquals("unknown", time(analyze(dir, "void f(List<String> l) { for (String s : l) { new Box(s); } }\n" + calling)));
+        assertEquals("O(n)", time(analyze(dir, "void f(List<String> l) { for (String s : l) { new Box(s); } }\n" + calling)));
+        String looping = "static class Box { int total; Box(List<String> parts) { for (String p : parts) { total += p.length(); } } }\n";
+        assertEquals("unknown", time(analyze(dir, "void f(List<String> l) { for (String s : l) { new Box(l); } }\n" + looping)));
         String initializer = "static class Box { final long t = System.nanoTime(); Box(String id) { } }\n";
         assertEquals("unknown", time(analyze(dir, "void f(List<String> l) { for (String s : l) { new Box(s); } }\n" + initializer)));
         String subclass = "static class Base { Base() { System.out.println(); } } static class Box extends Base { Box(String id) { } }\n";
@@ -493,5 +497,19 @@ class AnalysisTest {
         JsonNode custom = analyze(dir, "Map<String, Object> f(List<String> l) { Map<String, Object> m = new HashMap<>();"
                 + " for (String x : l) { m.computeIfAbsent(x, k -> expensive(k)); } return m; }\nstatic Object expensive(String k) { return k; }");
         assertEquals("unknown", time(custom), "an arbitrary mapping function is not priced");
+    }
+
+    @Test
+    void aCallThroughAnInterfaceIsConstantWhenEveryImplementationIs(@TempDir Path dir) throws IOException {
+        String types = "interface Named { String name(); }\n"
+                + "static class Person implements Named { final String n; Person(String n) { this.n = n; } public String name() { return n; } }\n"
+                + "record Pet(String name) implements Named {}\n";
+        JsonNode a = analyze(dir, "int f(List<Named> l) { int t = 0; for (Named x : l) { t += x.name().length(); } return t; }\n" + types);
+        assertEquals("O(n)", time(a), a.toString());
+        assertTrue(a.toString().contains("2 implementations"), a.toString());
+
+        String slow = types.replace("public String name() { return n; }",
+                "public String name() { String r = \"\"; for (char c : n.toCharArray()) { r = r + c; } return r; }");
+        assertEquals("unknown", time(analyze(dir, "int f(List<Named> l) { int t = 0; for (Named x : l) { t += x.name().length(); } return t; }\n" + slow)));
     }
 }
