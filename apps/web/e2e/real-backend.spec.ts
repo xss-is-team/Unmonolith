@@ -149,6 +149,7 @@ test("real ZIP workflow: tree, graph/CFG, optimization, verification and measure
   await expect(page.getByLabel("Граф потока управления")).toBeVisible();
   await expect(page.locator(".cm-content")).toContainText("public int link");
 
+  await page.getByRole("tab", { name: /Рекомендации/ }).click();
   const optimization = page.getByRole("region", { name: "Оптимизации" });
   const unsupported = optimization.getByRole("button").filter({ hasText: "risk.Rules.matchByCodeIdentity" });
   await expect(unsupported).toBeVisible();

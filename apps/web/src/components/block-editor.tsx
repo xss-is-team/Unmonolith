@@ -29,16 +29,17 @@ function message(cause: unknown) {
 }
 
 /** Insert a block next to the selected statement or delete the selected statement; every edit is previewed and validated. */
-export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, statements, onApplied }: {
+export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, statements, initialCode, onApplied }: {
   projectId: string;
   revision: number;
   methodId: string;
   nodeId: string;
   nodeLabel: string;
   statements: { id: string; text: string }[];
+  initialCode?: string;
   onApplied: () => Promise<void>;
 }) {
-  const [code, setCode] = useState<string>(PALETTE[0].code);
+  const [code, setCode] = useState<string>(initialCode ?? PALETTE[0].code);
   const [position, setPosition] = useState<"before" | "after">("after");
   const [operation, setOperation] = useState<CfgEditOperation | null>(null);
   const [preview, setPreview] = useState<CfgEditPreview | null>(null);

@@ -4,12 +4,13 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertCircle, ArrowLeft, Check, ChevronRight, Code2, Download, FileCode2, FolderOpen,
-  FileText, GitCompareArrows, LoaderCircle, Network, Save, Scissors, ShieldCheck, Waypoints,
+  AlertCircle, Bug, ChevronRight, Code2, Download, FileCode2, FileText, FolderOpen, Gauge, GitCompareArrows, LayoutGrid,
+  LoaderCircle, Network, Play, Save, Scissors, ShieldCheck, Sparkles, Upload, Waypoints,
 } from "lucide-react";
+import { AnalysisPane } from "@/components/analysis-pane";
+import { BlockPalette, type BlockTemplate } from "@/components/block-palette";
+import { ConsolePane, TestsPane, logTime, type LogLine } from "@/components/bottom-panes";
 import { Button } from "@/components/ui/button";
-import { Brand } from "@/components/brand";
-import { ComplexityOverview } from "@/components/complexity-overview";
 import { DecompositionPanel } from "@/components/decomposition-panel";
 import { DiffView } from "@/components/diff-view";
 import {
@@ -67,6 +68,10 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   const [loading, setLoading] = useState(true);
   const [workbench, setWorkbench] = useState<"code" | "verify" | "benchmark" | "diff" | "decompose">("code");
   const [repeats, setRepeats] = useState(2);
+  const [analysisTab, setAnalysisTab] = useState<"problems" | "recommendations" | "metrics">("problems");
+  const [blockTemplate, setBlockTemplate] = useState<BlockTemplate | null>(null);
+  const [openTabs, setOpenTabs] = useState<string[]>([initialFilePath]);
+  const [logLines, setLogLines] = useState<LogLine[]>([]);
   const [revisions, setRevisions] = useState<{ revision: number; has_analysis: boolean }[]>([]);
   const [baselineRevision, setBaselineRevision] = useState(1);
   const [candidateRevision, setCandidateRevision] = useState(initialRevision);
@@ -101,13 +106,14 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
       throw new ApiError("Результаты анализа относятся к другой ревизии.", 409, "revision_conflict");
     }
     setAnalysis(result);
+    setLogLines((lines) => [...lines, { time: logTime(), kind: "ok", text: `Проанализирован REV ${expectedRevision}: методов ${methodResult.methods.length}, проблем ${findingResult.findings.length}` }]);
     setMethods(methodResult.methods);
     setFindings(findingResult);
     setComplexity(complexityResult);
     setOptimizations(optimizationResult);
     setSelector((current) => methodResult.methods.some((method) => method.selector === current) ? current : methodResult.methods[0]?.selector ?? "");
     setSelectedProposal((current) => optimizationResult.proposals.some((proposal) => proposal.id === current) ? current : "");
-  }, [project.id, sourceLevel, setSelector, setSelectedProposal]);
+  }, [project.id, sourceLevel, setSelector, setSelectedProposal, setLogLines]);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,6 +146,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
       const opened = await getProjectFile(project.id, path, revisionRef.current);
       if (opened.revision !== revisionRef.current) throw new ApiError("Файл относится к другой ревизии.", 409, "revision_conflict");
       setActiveFile(path);
+      setOpenTabs((tabs) => (tabs.includes(path) ? tabs : [...tabs, path]));
       setSource(opened.source);
       setSavedSource(opened.source);
       setRange(nextRange);
@@ -212,6 +219,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
       setDiffTo(updated.revision);
       setFiles(manifest.files);
       setActiveFile(path);
+      setOpenTabs((tabs) => (tabs.includes(path) ? tabs : [...tabs, path]));
       setSource(opened.source);
       setSavedSource(opened.source);
       dirtyRef.current = false;
@@ -249,6 +257,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
     setOptimizationError("");
     try {
       await applyOptimization(project.id, selectedProposalData.id, revision, preview.preview_sha256, acknowledged, sourceLevel);
+      setLogLines((lines) => [...lines, { time: logTime(), kind: "ok", text: `Оптимизация применена: ${ruleTitle(selectedProposalData.rule, selectedProposalData.title)} → REV ${revision + 1}` }]);
       await reloadCurrentRevision();
       setPreview(null);
     } catch (cause) {
@@ -263,7 +272,13 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
     setVerifyError("");
     setVerifyReport(null);
     try {
-      setVerifyReport(await verifyRevisions(project.id, baselineRevision, candidateRevision, cases, { main_class: mainClass || null, source_level: sourceLevel, repeats }));
+      setLogLines((lines) => [...lines, { time: logTime(), kind: "info", text: `Проверка: REV ${baselineRevision} → REV ${candidateRevision}, сценариев ${cases.length}, запусков ${repeats}…` }]);
+      const report = await verifyRevisions(project.id, baselineRevision, candidateRevision, cases, { main_class: mainClass || null, source_level: sourceLevel, repeats });
+      setVerifyReport(report);
+      const passedCount = report.test_cases.filter((item) => item.passed).length;
+      setLogLines((lines) => [...lines, report.status === "compilation_failed"
+        ? { time: logTime(), kind: "error", text: "Компиляция не прошла" }
+        : { time: logTime(), kind: report.behaviorally_verified ? "ok" : "error", text: report.behaviorally_verified ? `Поведение совпадает (${passedCount} из ${report.test_cases.length})` : report.status === "unstable" ? "Результат неопределён: вывод нестабилен" : `Есть различия (${passedCount} из ${report.test_cases.length} совпало)` }]);
     } catch (cause) {
       setVerifyError(errorMessage(cause));
     } finally {
@@ -334,58 +349,84 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   const isDirty = dirty;
   const activeDiagnostics = analysis?.diagnostics.filter((diagnostic) => !diagnostic.source_range.file || diagnostic.source_range.file === activeFile) ?? [];
 
+  const speedup = (() => {
+    const items = benchmarkReport?.runtime.workloads.filter((item) => item.verdict === "faster" && item.speedup !== null) ?? [];
+    if (!items.length) return null;
+    const best = items.reduce((a, b) => ((b.speedup ?? 0) > (a.speedup ?? 0) ? b : a));
+    return { value: best.speedup ?? 0, note: `Измерено на нагрузке «${best.name}» (REV ${benchmarkReport?.baseline_revision} → REV ${benchmarkReport?.candidate_revision}); не прогноз.` };
+  })();
+  const firstApplicable = optimizations?.proposals.find((proposal) => proposal.applicability === "applicable") ?? null;
+  const overlayTitle = workbench === "verify" ? "Проверка поведения" : workbench === "benchmark" ? "Бенчмарк" : workbench === "diff" ? "Diff ревизий" : workbench === "decompose" ? "Разбор монолита" : "";
+
   return (
-    <main className={`grid h-svh min-w-[960px] overflow-hidden bg-[#070b14] ${workbench === "code" ? "grid-rows-[48px_minmax(0,1fr)_minmax(170px,24vh)]" : "grid-rows-[48px_minmax(0,1fr)_minmax(260px,58vh)]"}`}>
-      <header className="flex min-w-0 items-center gap-3 border-b border-slate-800 bg-[#0b1220] px-3">
-        <Brand compact />
-        <strong className="max-w-64 truncate text-[14px] text-slate-200" title={project.filename}>{project.filename}</strong>
-        <span className="rounded bg-slate-800 px-2 py-1 font-mono text-[11px] text-slate-400" data-testid="revision">REV {revision}</span>
-        <nav className="ml-auto flex h-full items-center gap-1" aria-label="Представление проекта">
-          <button className={`inline-flex h-8 items-center gap-1.5 rounded px-2 text-[13px] ${view === "overview" ? "bg-slate-800 text-cyan-200" : "text-slate-400 hover:bg-slate-900"}`} type="button" onClick={() => setView("overview")}><Network size={15} /> Обзор</button>
-          <button className={`inline-flex h-8 items-center gap-1.5 rounded px-2 text-[13px] ${view === "cfg" ? "bg-slate-800 text-cyan-200" : "text-slate-400 hover:bg-slate-900"}`} type="button" onClick={() => setView("cfg")}><Waypoints size={15} /> CFG</button>
-        </nav>
+    <main className="grid h-svh min-w-[1100px] grid-rows-[52px_minmax(0,1fr)_minmax(210px,30vh)] overflow-hidden bg-[#070b14]">
+      <header className="flex min-w-0 items-center gap-2 border-b border-slate-800 bg-[#0b1220] px-3">
+        <LayoutGrid size={20} className="shrink-0 text-cyan-400" />
+        <strong className="whitespace-nowrap text-[15px] text-slate-100">Визуальная среда программирования</strong>
+        
+        <span className="whitespace-nowrap rounded bg-slate-800 px-2 py-1 font-mono text-[11px] text-slate-400" data-testid="revision">REV {revision}</span>
         <span className={`text-[12px] ${isDirty ? "text-amber-300" : "text-emerald-300"}`} role="status">{isDirty ? "Не сохранено" : "Сохранено"}</span>
         <Button variant="outline" size="sm" onClick={() => void saveFile()} disabled={!isDirty || busy}>{busy ? <LoaderCircle className="spin" /> : <Save />} Сохранить</Button>
-        <Button variant="outline" size="sm" onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}><ShieldCheck /> Проверка</Button>
-        <Button variant="outline" size="sm" onClick={() => { setWorkbench("benchmark"); void getProjectRevisions(project.id).then(setRevisions); }}>Бенчмарк</Button>
-        <Button variant="outline" size="sm" onClick={() => setWorkbench("decompose")}><Scissors /> Разбор монолита</Button>
-        <Button variant="outline" size="sm" onClick={() => void downloadReport()} disabled={loading}><FileText /> Отчёт</Button>
-        <Button variant="ghost" size="sm" aria-label="Экспортировать проект" onClick={() => void downloadProject()}><Download /></Button>
-        <Link className="inline-flex items-center gap-1 whitespace-nowrap text-[13px] text-slate-400 hover:text-cyan-300" href="/"><ArrowLeft size={15} /> Другой проект</Link>
+        <div className="ml-auto flex items-center gap-1.5">
+          <Link className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded border border-slate-700 px-2.5 text-[13px] text-slate-200 hover:border-cyan-700" href="/"><Upload size={15} /> Импорт Java</Link>
+          <Button variant="outline" size="sm" aria-label="Экспортировать проект" onClick={() => void downloadProject()}><Download /> Экспорт Java</Button>
+          <Button size="sm" className="bg-cyan-600 text-white hover:bg-cyan-500" disabled={loading || !firstApplicable} title={firstApplicable ? "Открыть применимую оптимизацию" : "Применимых оптимизаций нет"} onClick={() => { setAnalysisTab("recommendations"); if (firstApplicable) { setSelectedProposal(firstApplicable.id); setPreview(null); setAcknowledged([]); } }}><Sparkles /> Оптимизировать</Button>
+          <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-500" onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}><Play /> Запуск</Button>
+          <Button variant="outline" size="sm" disabled title="Пошаговая отладка не реализована"><Bug /> Дебаг</Button>
+        </div>
+        <div className="ml-2 flex items-center gap-1 border-l border-slate-800 pl-2" aria-label="Инструменты">
+          <Button variant="ghost" size="sm" aria-label="Проверка" title="Проверка поведения" onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}><ShieldCheck /></Button>
+          <Button variant="ghost" size="sm" aria-label="Бенчмарк" title="Измерение времени выполнения" onClick={() => { setWorkbench("benchmark"); void getProjectRevisions(project.id).then(setRevisions); }}><Gauge /></Button>
+          <Button variant="ghost" size="sm" onClick={() => setWorkbench("decompose")}><Scissors /> Разбор монолита</Button>
+          <Button variant="ghost" size="sm" aria-label="Diff ревизий" title="Сравнение ревизий" onClick={() => { setWorkbench("diff"); void getProjectRevisions(project.id).then(setRevisions); }}><GitCompareArrows /></Button>
+          <Button variant="ghost" size="sm" onClick={() => void downloadReport()} disabled={loading}><FileText /> Отчёт</Button>
+        </div>
       </header>
 
-      {error ? <div className="absolute top-14 left-1/2 z-40 flex w-[min(720px,95vw)] -translate-x-1/2 items-center gap-2 rounded border border-rose-900 bg-rose-950 px-3 py-2 text-[13px] text-rose-200 shadow-xl" role="alert"><AlertCircle size={16} />{error}<button className="ml-auto bg-transparent text-slate-400" type="button" aria-label="Закрыть сообщение" onClick={() => setError("")}>×</button></div> : null}
+      {error ? <div className="absolute top-14 left-1/2 z-50 flex w-[min(720px,95vw)] -translate-x-1/2 items-center gap-2 rounded border border-rose-900 bg-rose-950 px-3 py-2 text-[13px] text-rose-200 shadow-xl" role="alert"><AlertCircle size={16} />{error}<button className="ml-auto bg-transparent text-slate-400" type="button" aria-label="Закрыть сообщение" onClick={() => setError("")}>×</button></div> : null}
 
-      <div className="grid min-h-0 min-w-0 grid-cols-[250px_minmax(380px,1fr)_340px]">
-        <aside className="min-h-0 overflow-auto border-r border-slate-800 bg-[#0b1120]" aria-label="Файлы проекта">
-          <div className="flex h-10 items-center justify-between border-b border-slate-800 px-3 text-[13px] font-semibold text-slate-300"><span>Файлы проекта</span><span className="font-mono text-[11px] text-slate-500">{javaFiles.length}</span></div>
-          <FileTree files={files} activeFile={activeFile} onOpen={(path) => void openFile(path)} />
-          <div className="mt-2 border-t border-slate-800 px-3 py-2 text-[12px] font-semibold text-slate-400">Методы · {methods.length}</div>
-          <div className="grid gap-0.5 px-1.5 pb-3">
-            {methods.map((method, index) => <button key={`${method.selector}:${index}`} type="button" title={method.id} className={`flex min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] ${selector === method.selector ? "bg-slate-800 text-slate-100" : "text-slate-400 hover:bg-slate-900"}`} onClick={() => { setSelector(method.selector); setView("cfg"); void openRange(method.source_range); }}><Code2 size={14} className="shrink-0 text-blue-400" /><span className="min-w-0 flex-1 truncate">{method.id}</span></button>)}
+      <div className="grid min-h-0 min-w-0 grid-cols-[270px_minmax(420px,1fr)_380px]">
+        <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] border-r border-slate-800 bg-[#0b1120]" aria-label="Файлы проекта">
+          <div className="min-h-0 overflow-auto">
+            <div className="flex h-10 items-center justify-between border-b border-slate-800 px-3 text-[13px] font-semibold text-slate-200"><span className="flex items-center gap-2"><FolderOpen size={15} /> Проект</span><span className="font-mono text-[11px] text-slate-500">{javaFiles.length}</span></div>
+            <FileTree files={files} activeFile={activeFile} onOpen={(path) => void openFile(path)} />
+            <details open className="border-t border-slate-800">
+              <summary className="cursor-pointer px-3 py-2 text-[12px] font-semibold text-slate-400">Методы · {methods.length}</summary>
+              <div className="grid gap-0.5 px-1.5 pb-3">
+                {methods.map((method, index) => <button key={`${method.selector}:${index}`} type="button" title={method.id} className={`flex min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] ${selector === method.selector ? "bg-slate-800 text-slate-100" : "text-slate-400 hover:bg-slate-900"}`} onClick={() => { setSelector(method.selector); setView("cfg"); void openRange(method.source_range); }}><Code2 size={14} className="shrink-0 text-blue-400" /><span className="min-w-0 flex-1 truncate">{method.id}</span></button>)}
+              </div>
+            </details>
           </div>
+          <BlockPalette onPick={(template) => { setBlockTemplate(template); setView("cfg"); }} />
         </aside>
 
-        <section className="grid min-h-0 min-w-0 grid-rows-[38px_minmax(0,1fr)] border-r border-slate-800 bg-[#080f1b]" aria-label="Граф проекта">
-          <header className="flex min-w-0 items-center gap-2 border-b border-slate-800 px-3 text-[13px] text-slate-400">
-            <button className="max-w-1/2 truncate bg-transparent text-left hover:text-cyan-200" type="button" onClick={() => setView("overview")}>{project.filename}</button>
-            {view === "cfg" && selectedMethod ? <><ChevronRight size={14} /><span className="truncate font-mono text-slate-300">{selectedMethod.id}</span></> : null}
-            <button className="ml-auto text-[12px] text-slate-400 hover:text-cyan-200" type="button" onClick={() => void openRange({ file: activeFile, start: 0, length: 0, line: 1 })}><FileCode2 size={14} className="inline" /> {activeFile.split("/").at(-1)}</button>
+        <section className="grid min-h-0 min-w-0 grid-rows-[40px_minmax(0,1fr)] border-r border-slate-800 bg-[#080f1b]" aria-label="Граф проекта">
+          <header className="flex min-w-0 items-end justify-between gap-2 border-b border-slate-800 bg-[#0b1120] px-2">
+            <div className="flex min-w-0 items-end gap-0.5" role="tablist" aria-label="Открытые файлы">
+              {openTabs.map((path) => (
+                <button key={path} type="button" role="tab" aria-selected={path === activeFile} className={`flex h-8 max-w-44 items-center gap-1.5 rounded-t border border-b-0 px-3 text-[12px] ${path === activeFile ? "border-slate-700 bg-[#080f1b] text-cyan-200" : "border-transparent text-slate-500 hover:text-slate-300"}`} title={path} onClick={() => void openFile(path)}><FileCode2 size={13} className="shrink-0" /><span className="truncate">{path.split("/").at(-1)}</span></button>
+              ))}
+            </div>
+            <nav className="mb-1 flex items-center gap-1" aria-label="Представление проекта">
+              <button className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[12px] ${view === "overview" ? "bg-slate-800 text-cyan-200" : "text-slate-400 hover:bg-slate-900"}`} type="button" onClick={() => setView("overview")}><Network size={14} /> Обзор</button>
+              <button className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[12px] ${view === "cfg" ? "bg-slate-800 text-cyan-200" : "text-slate-400 hover:bg-slate-900"}`} type="button" onClick={() => setView("cfg")}><Waypoints size={14} /> CFG</button>
+            </nav>
           </header>
           <div className="min-h-0 min-w-0 overflow-hidden">
             {view === "overview" ? <ProjectGraphViewer projectId={project.id} revision={revision} enabled={!loading && !isDirty} methods={methods} onOpenMethod={(next) => { setSelector(next); setView("cfg"); const found = methods.find((method) => method.selector === next); if (found) void openRange(found.source_range); }} onSourceRangeSelect={(next) => void openRange(next)} /> : (
-              <CfgViewer projectId={project.id} revision={revision} methods={loading || isDirty ? [] : methods} selectedSourceRange={range} selectedMethodSelector={selector} onSelectedMethodSelectorChange={setSelector} onSourceRangeSelect={(next) => { if (next) void openRange(next); }} onTransformed={reloadCurrentRevision} showAnalysisSummary />
+              <CfgViewer projectId={project.id} revision={revision} methods={loading || isDirty ? [] : methods} selectedSourceRange={range} selectedMethodSelector={selector} onSelectedMethodSelectorChange={setSelector} onSourceRangeSelect={(next) => { if (next) void openRange(next); }} onTransformed={reloadCurrentRevision} showAnalysisSummary blockTemplate={blockTemplate} />
             )}
           </div>
         </section>
 
-        <aside className="grid min-h-0 grid-rows-[38px_minmax(0,1fr)] bg-[#0b1120]">
-          <div className="flex items-center justify-between border-b border-slate-800 px-3 text-[13px] font-semibold text-slate-300"><span>Анализ</span><span className="font-mono text-[11px] text-slate-500">REV {analysis?.revision ?? revision}</span></div>
-          <div className="min-h-0 overflow-x-hidden overflow-y-auto p-2.5 [&_*]:min-w-0 [&_button]:break-words [&_small]:break-words [&_strong]:break-words [&_p]:break-words">
-            {loading ? <p className="flex items-center gap-2 text-[13px] text-slate-400" role="status"><LoaderCircle className="spin" size={14} /> Анализ проекта…</p> : null}
-            {!loading && analysis ? <p className="mb-2 flex items-center gap-2 text-[12px] text-emerald-300" role="status"><Check size={14} /> Анализ завершён · {methods.length} методов · диагностик: {analysis.diagnostics.length}</p> : null}
-            <ComplexityOverview report={loading ? null : complexity} onOpen={(row, sourceRange) => { const found = methods.find((method) => method.id === row.method_id); if (found) { setSelector(found.selector); setView("cfg"); } void openRange({ ...sourceRange, file: sourceRange.file ?? row.file ?? activeFile }); }} />
-            <section className="grid gap-1.5" aria-label="Найденные проблемы"><h2 className="m-0 text-[12px] font-semibold text-slate-400">Findings · {findings?.findings.length ?? 0}</h2>{findings?.findings.map(({ method_id, file, finding }) => <article className="rounded border border-slate-800 bg-slate-900/60 p-2" key={`${file}-${finding.id}-${finding.source_range.start}`}><strong className="block text-[12px] leading-5 text-slate-200">{findingTitle(finding.id, finding.message)}</strong><p className="m-0 mt-1 text-[12px] leading-5 text-slate-400">{finding.explanation}</p><small className="mt-1 block truncate font-mono text-[11px] text-slate-500" title={method_id}>{file ?? activeFile} · стр. {finding.source_range.line ?? "—"}</small><button className="mt-1 text-[12px] text-cyan-300 hover:text-cyan-100" type="button" onClick={() => void openRange({ ...finding.source_range, file: finding.source_range.file ?? file ?? activeFile })}>К исходнику</button></article>)}</section>
+        <AnalysisPane
+          loading={loading} analysis={analysis} methodCount={methods.length} findings={findings} complexity={complexity}
+          diagnostics={activeDiagnostics} proposals={optimizations?.proposals ?? []} selectedMethodId={selectedMethod?.id ?? null}
+          selectedProposal={selectedProposalData} speedup={speedup} tab={analysisTab} onTab={setAnalysisTab}
+          onOpenRange={(sourceRange, file) => void openRange({ ...sourceRange, file: sourceRange.file ?? file ?? activeFile })}
+          onOpenMethod={(methodId, sourceRange, file) => { const found = methods.find((method) => method.id === methodId); if (found) { setSelector(found.selector); setView("cfg"); } void openRange({ ...sourceRange, file: sourceRange.file ?? file ?? activeFile }); }}
+          onMeasure={() => { setWorkbench("benchmark"); void getProjectRevisions(project.id).then(setRevisions); }}
+          recommendations={
             <OptimizationPanel
               proposals={optimizations?.proposals ?? []} revision={revision} selectedId={selectedProposal} onSelect={(id) => { setSelectedProposal(id); setPreview(null); setOptimizationError(""); setAcknowledged([]); }}
               selected={selectedProposalData} preview={preview} acknowledged={acknowledged} busy={busy} error={optimizationError}
@@ -393,32 +434,30 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
               onPreview={() => void previewSelectedOptimization()} onApply={() => void applySelectedOptimization()}
               onOpenFile={(path, sourceRange) => void openRange({ ...sourceRange, file: path })}
             />
-            {!loading && activeDiagnostics.length ? <details className="mt-3 grid gap-1" aria-label="Диагностики файла"><summary className="cursor-pointer text-[12px] font-semibold text-slate-400">Диагностики файла · {activeDiagnostics.length}</summary><div className="mt-1 grid gap-1">{activeDiagnostics.map((item, index) => <button type="button" key={`${item.code}-${index}`} className="rounded border border-slate-800 bg-slate-900/60 p-2 text-left text-[12px] text-slate-300 hover:border-slate-600" onClick={() => void openRange(item.source_range)}><span>{item.message}</span><small className="mt-1 block font-mono text-[11px] text-slate-500">{item.code} · строка {item.source_range.line ?? "—"}</small></button>)}</div></details> : null}
-            {complexity && selectedMethod ? <div className="mt-3 rounded border border-slate-800 bg-slate-900/50 p-2 text-[12px]"><span className="text-slate-500">Статическая сложность</span><strong className="ml-2 font-mono text-violet-200">{complexity.methods.find((item) => item.method_id === selectedMethod.id)?.time_complexity ?? "unknown"}</strong><p className="m-0 mt-1 leading-5 text-slate-500">Не является измерением времени выполнения.</p></div> : null}
-          </div>
-        </aside>
+          }
+        />
       </div>
 
-      <section className="grid min-h-0 grid-rows-[32px_minmax(0,1fr)] border-t border-slate-700 bg-[#0a1220]" aria-label="Рабочая панель">
-        <nav className="flex items-center gap-1 border-b border-slate-800 bg-[#0d1625] px-2" aria-label="Нижняя панель">
-          {([["code", "Код"], ["diff", "Diff ревизий"]] as const).map(([id, label]) => (
-            <button key={id} className={`rounded px-2.5 py-1 text-[12px] ${workbench === id ? "bg-slate-800 text-cyan-200" : "text-slate-400 hover:bg-slate-800"}`} type="button" onClick={() => { setWorkbench(id); if (id === "diff") void getProjectRevisions(project.id).then(setRevisions); }}>{label}</button>
-          ))}
-          <span className="ml-2 text-[11px] text-slate-600">{workbench === "verify" ? "Проверка" : workbench === "benchmark" ? "Бенчмарк" : workbench === "decompose" ? "Разбор монолита" : ""}</span>
-        </nav>
-        <div className="min-h-0 overflow-auto">
-        {workbench === "code" ? (
-          <div className="grid h-full min-h-0 grid-rows-[34px_minmax(0,1fr)]">
-            <header className="flex items-center gap-2 border-b border-slate-800 px-3 text-[12px] text-slate-400"><FileCode2 size={14} /><strong className="truncate font-mono text-slate-300">{activeFile}</strong><span className="ml-auto">{dirty ? "Черновик" : `Сохранено · REV ${revision}`}</span></header>
+      <section className="grid min-h-0 grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)] border-t border-slate-700 bg-[#0a1220]" aria-label="Рабочая панель">
+        <div className="grid h-full min-h-0 grid-rows-[34px_minmax(0,1fr)]">
+          <header className="flex items-center gap-2 border-b border-slate-800 px-3 text-[12px] text-slate-400"><FileCode2 size={14} /><strong className="text-slate-200">Код Java</strong><span className="truncate font-mono text-slate-500">{activeFile}</span><span className="ml-auto whitespace-nowrap">{dirty ? "Черновик" : `Сохранено · REV ${revision}`}</span></header>
             <div className="min-h-0 min-w-0"><JavaEditor key={`${activeFile}:${revision}:${savedSource.length}`} ref={editorRef} value={source} diagnostics={activeDiagnostics} focusRange={range} onDirtyChange={(next) => { dirtyRef.current = next; setDirty(next); }} onMetricsChange={() => {}} onSourceSelection={(selection) => setRange(selection ? { ...selection, file: activeFile } : null)} /></div>
-          </div>
-        ) : null}
+        </div>
+        <ConsolePane lines={logLines} />
+        <TestsPane report={verifyReport} busy={verifyBusy} onRun={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }} />
+      </section>
+
+      {workbench !== "code" ? (
+        <div className="fixed inset-x-0 bottom-0 top-[52px] z-30 grid grid-rows-[40px_minmax(0,1fr)] bg-[#0a1220]" role="dialog" aria-label={overlayTitle}>
+          <header className="flex items-center gap-3 border-b border-slate-700 bg-[#0d1625] px-4"><strong className="text-[14px] text-slate-100">{overlayTitle}</strong><button className="ml-auto rounded border border-slate-700 px-3 py-1 text-[12px] text-slate-200 hover:border-cyan-700" type="button" onClick={() => setWorkbench("code")}>Код</button></header>
+          <div className="min-h-0 overflow-auto">
         {workbench === "verify" ? <VerificationWorkbench revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} cases={cases} onCases={setCases} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} repeats={repeats} onRepeats={setRepeats} report={verifyReport} error={verifyError} busy={verifyBusy} onRun={() => void runFunctionalVerification()} /> : null}
         {workbench === "benchmark" ? <BenchmarkWorkbench revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} workload={workload} onWorkload={setWorkload} iterations={measuredIterations} onIterations={setMeasuredIterations} report={benchmarkReport} error={benchmarkError} busy={benchmarkBusy} onRun={() => void runRuntimeBenchmark()} /> : null}
         {workbench === "diff" ? <DiffWorkbench revisions={revisions} from={diffFrom} to={diffTo} onFrom={setDiffFrom} onTo={setDiffTo} files={revisionDiff} onLoad={() => void loadDiff()} /> : null}
         {workbench === "decompose" ? <DecompositionPanel key={`${revision}:${sourceLevel}`} projectId={project.id} revision={revision} sourceLevel={sourceLevel} dirty={dirty} onApplied={reloadCurrentRevision} /> : null}
+          </div>
         </div>
-      </section>
+      ) : null}
     </main>
   );
 }
@@ -431,15 +470,6 @@ function ruleTitle(rule: string, fallback?: string) {
     string_concat_to_builder: "Собирать строку в StringBuilder вместо склейки в цикле",
   };
   return titles[rule] ?? fallback ?? rule;
-}
-
-function findingTitle(id: string, fallback: string) {
-  const titles: Record<string, string> = {
-    repeated_collection_scan: "Повторный линейный перебор коллекции в цикле",
-    nested_collection_iteration: "Вложенный перебор одной и той же коллекции",
-    string_concat_in_loop: "Склейка строки в цикле: каждый раз копируется всё накопленное",
-  };
-  return titles[id] ?? fallback;
 }
 
 function FileTree({ files, activeFile, onOpen }: { files: ProjectFile[]; activeFile: string; onOpen: (path: string) => void }) {
