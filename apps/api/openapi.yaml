@@ -496,6 +496,34 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/trace:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      operationId: traceProject
+      tags: [Verification]
+      description: |
+        Runs the current revision once in the Docker runner on the given stdin, in a copy where every statement of a
+        block counts how often it starts (parser `trace` subcommand). The counters are keyed by file and the
+        `source_range.start` of the statement's CFG node, so the UI can show the executed path on the CFG. stdout is
+        the program's own output; the counter lines are removed from stderr. Nothing is stored.
+      security: [{guestSession: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TraceRequest'}
+      responses:
+        '200':
+          description: Output and per-statement execution counts
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TraceReport'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {$ref: '#/components/responses/Unavailable'}
   /projects/{project_id}/optimizations:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -1550,6 +1578,30 @@ components:
       properties:
         revision: {type: integer, minimum: 2}
         source: {type: string}
+    TraceRequest:
+      type: object
+      additionalProperties: false
+      required: [revision]
+      properties:
+        revision: {type: integer, minimum: 1, description: must be the current revision}
+        stdin: {type: string, maxLength: 65536}
+        main_class: {type: string, nullable: true}
+        source_level: {type: string, enum: ['8', '11', '17', '21'], nullable: true}
+    TraceReport:
+      type: object
+      required: [revision, status, exit_code, timed_out, stdout, stderr, hits, complete]
+      properties:
+        revision: {type: integer, minimum: 1}
+        status: {type: string, description: '`completed`, or the compilation status of the traced copy'}
+        exit_code: {type: integer, nullable: true}
+        timed_out: {type: boolean}
+        stdout: {$ref: '#/components/schemas/CapturedStream'}
+        stderr: {type: string, description: stderr without the counter lines}
+        hits:
+          type: object
+          additionalProperties: {type: integer, minimum: 1}
+          description: '`<file>:<offset>` → executions of the statement whose CFG node starts there; `<file>:<offset>:i` → iterations of a loop body'
+        complete: {type: boolean, description: false when the program ended without shutdown hooks (timeout), so counts are missing}
     VerifyRequest:
       type: object
       additionalProperties: false

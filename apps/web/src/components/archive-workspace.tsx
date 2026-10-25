@@ -19,7 +19,7 @@ import { loadScenarios, saveScenarios, suggestScenarios } from "@/lib/scenarios"
 import { Splitter, clamp } from "@/components/splitter";
 import { ruAssumption, ruComplexityNote, ruNotCovered, ruPrecondition, ruProposalSummary, ruRuleTitle, ruText, ruVerdict, ruWarning } from "@/lib/ru";
 import { StepBar, type Step } from "@/components/step-bar";
-import {
+import { traceProject, type TraceReport,
   analyzeProjectStream, ApiError, applyOptimization, compareRevisions, exportProject,
   getOptimizations, getProject, getProjectComplexity, getProjectFile,
   getProjectFiles, getProjectFindings, getProjectMethods, getProjectReport, getProjectRevisions,
@@ -130,7 +130,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   }, [project.id, cases]);
   const [verifyError, setVerifyError] = useState("");
   const [runStdin, setRunStdin] = useState<string | null>(null);
-  const [runResult, setRunResult] = useState<{ revision: number; report: VerificationReport } | null>(null);
+  const [runResult, setRunResult] = useState<TraceReport | null>(null);
   const [runBusy, setRunBusy] = useState(false);
   const [runError, setRunError] = useState("");
   const [verifyBusy, setVerifyBusy] = useState(false);
@@ -348,12 +348,12 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   }
 
   /**
-   * Runs a verify request; when the project has several main classes and none is chosen, picks the one called Main
-   * (otherwise the first the API lists), remembers it and retries once.
+   * Runs a request that needs a main class; when the project has several and none is chosen, picks the one called
+   * Main (otherwise the first the API lists), remembers it and retries once.
    */
-  async function verifyWithMain(baseline: number, candidate: number, scenarios: VerifyTestCase[], runs: number) {
+  async function withMainClass<T>(call: (main: string | null) => Promise<T>): Promise<T> {
     try {
-      return await verifyRevisions(project.id, baseline, candidate, scenarios, { main_class: mainClass || null, source_level: sourceLevel, repeats: runs });
+      return await call(mainClass || null);
     } catch (cause) {
       if (!(cause instanceof ApiError) || cause.code !== "main_class_required" || mainClass) throw cause;
       const listed = (cause.message.split(":").at(-1) ?? "").split(",").map((item) => item.trim()).filter((item) => /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(item));
@@ -361,11 +361,18 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
       if (!pick) throw cause;
       setMainClass(pick);
       setLogLines((lines) => [...lines, { time: logTime(), kind: "info", text: `В проекте несколько классов с main (${listed.join(", ")}); выбран ${pick}. Другой можно указать в «Проверке».` }]);
-      return await verifyRevisions(project.id, baseline, candidate, scenarios, { main_class: pick, source_level: sourceLevel, repeats: runs });
+      return await call(pick);
     }
   }
 
-  /** «Запуск» of the mockup: the current revision runs once in the Docker runner on the given stdin (the verify endpoint, same revision on both sides). */
+  function verifyWithMain(baseline: number, candidate: number, scenarios: VerifyTestCase[], runs: number) {
+    return withMainClass((main) => verifyRevisions(project.id, baseline, candidate, scenarios, { main_class: main, source_level: sourceLevel, repeats: runs }));
+  }
+
+  /**
+   * «Запуск» of the mockup: the current revision runs once in the Docker runner on the given stdin, in a copy that
+   * counts every statement, so the CFG then shows which nodes ran and how often.
+   */
   async function runProgram(stdin: string) {
     setRunBusy(true);
     setRunError("");
@@ -373,15 +380,14 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
     const target = revision;
     try {
       setLogLines((lines) => [...lines, { time: logTime(), kind: "info", text: `Запуск REV ${target} в Docker…` }]);
-      const report = await verifyWithMain(target, target, [{ name: "Запуск", stdin }], 1);
-      setRunResult({ revision: target, report });
-      const run = report.test_cases[0]?.baseline;
-      const output = (run?.stdout.utf8 ?? "").split("\n").filter((line, index, all) => index < all.length - 1 || line).slice(0, 200);
+      const report = await withMainClass((main) => traceProject(project.id, target, stdin, { main_class: main, source_level: sourceLevel }));
+      setRunResult(report);
+      const output = (report.stdout.utf8 ?? "").split("\n").filter((line, index, all) => index < all.length - 1 || line).slice(0, 200);
       setLogLines((lines) => [...lines,
         ...output.map((text) => ({ time: logTime(), kind: "info" as const, text: `> ${text}` })),
-        report.status === "compilation_failed"
+        report.status !== "completed"
           ? { time: logTime(), kind: "error" as const, text: `REV ${target} не компилируется` }
-          : { time: logTime(), kind: run?.exit_code === 0 ? "ok" as const : "error" as const, text: `Программа завершилась: код ${run?.exit_code ?? "—"}${run?.timed_out ? ", превышен лимит времени" : ""}` }]);
+          : { time: logTime(), kind: report.exit_code === 0 ? "ok" as const : "error" as const, text: `Программа завершилась: код ${report.exit_code ?? "—"}${report.timed_out ? ", превышен лимит времени" : ""}; выполнено операторов: ${Object.keys(report.hits).filter((key) => !key.endsWith(":i")).length}` }]);
       setPanes((current) => ({ ...current, console: true }));
     } catch (cause) {
       setRunError(errorMessage(cause));
@@ -583,7 +589,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
           </header>
           <div className="min-h-0 min-w-0 overflow-hidden">
             {view === "overview" ? <ProjectGraphViewer projectId={project.id} revision={revision} enabled={!loading && !isDirty} methods={methods} onOpenMethod={(next) => { setSelector(next); setView("cfg"); const found = methods.find((method) => method.selector === next); if (found) void openRange(found.source_range); }} onSourceRangeSelect={(next) => void openRange(next)} /> : (
-              <CfgViewer onBlockDrop={(template) => { setBlockTemplate(template); setAnalysisTab("edit"); setLogLines((lines) => [...lines, { time: logTime(), kind: "info", text: `Блок «${template.label}» брошен на оператор: проверьте предпросмотр вставки` }]); }} projectId={project.id} revision={revision} methods={loading || isDirty ? [] : methods} selectedSourceRange={range} selectedMethodSelector={selector} onSelectedMethodSelectorChange={setSelector} onSourceRangeSelect={(next) => { if (next) void openRange(next); }} onTransformed={reloadCurrentRevision} showAnalysisSummary blockTemplate={blockTemplate} panelContainer={editPortal} onNodeSelected={() => setAnalysisTab("edit")} />
+              <CfgViewer trace={runResult ? { revision: runResult.revision, hits: runResult.hits } : null} onBlockDrop={(template) => { setBlockTemplate(template); setAnalysisTab("edit"); setLogLines((lines) => [...lines, { time: logTime(), kind: "info", text: `Блок «${template.label}» брошен на оператор: проверьте предпросмотр вставки` }]); }} projectId={project.id} revision={revision} methods={loading || isDirty ? [] : methods} selectedSourceRange={range} selectedMethodSelector={selector} onSelectedMethodSelectorChange={setSelector} onSourceRangeSelect={(next) => { if (next) void openRange(next); }} onTransformed={reloadCurrentRevision} showAnalysisSummary blockTemplate={blockTemplate} panelContainer={editPortal} onNodeSelected={() => setAnalysisTab("edit")} />
             )}
           </div>
         </section>
@@ -630,7 +636,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
         <div className="fixed inset-x-0 bottom-0 top-[78px] z-30 grid grid-rows-[40px_minmax(0,1fr)] bg-[#0a1220]" role="dialog" aria-label={overlayTitle}>
           <header className="flex items-center gap-3 border-b border-slate-700 bg-[#0d1625] px-4"><strong className="text-[14px] text-slate-100">{overlayTitle}</strong><button className="ml-auto rounded border border-slate-700 px-3 py-1 text-[12px] text-slate-200 hover:border-cyan-700" type="button" onClick={() => { setWorkbench("code"); setPanes((current) => (current.code ? current : { ...current, code: true })); }}>Код</button></header>
           <div className="min-h-0 overflow-auto">
-        {workbench === "run" ? <RunWorkbench stdin={runStdin ?? ""} onStdin={setRunStdin} mainClass={mainClass} onMainClass={setMainClass} revision={revision} busy={runBusy} error={runError} result={runResult} onRun={() => void runProgram(runStdin ?? "")} scenarios={cases.filter((item) => item.stdin.trim())} /> : null}
+        {workbench === "run" ? <RunWorkbench onShowGraph={() => { setWorkbench("code"); setView("cfg"); }} stdin={runStdin ?? ""} onStdin={setRunStdin} mainClass={mainClass} onMainClass={setMainClass} revision={revision} busy={runBusy} error={runError} result={runResult} onRun={() => void runProgram(runStdin ?? "")} scenarios={cases.filter((item) => item.stdin.trim())} /> : null}
         {workbench === "verify" ? <VerificationWorkbench onSuggest={() => void (async () => { const sources = [source]; for (const file of javaFiles.filter((item) => item.path !== activeFile).slice(0, 30)) { try { sources.push((await getProjectFile(project.id, file.path, revision)).source); } catch { /* skip */ } } setCases(suggestScenarios(sources)); })()} revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} cases={cases} onCases={setCases} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} repeats={repeats} onRepeats={setRepeats} report={verifyReport} error={verifyError} busy={verifyBusy} onRun={() => void runFunctionalVerification()} /> : null}
         {workbench === "benchmark" ? <BenchmarkWorkbench cases={cases} revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} workload={workload} onWorkload={setWorkload} iterations={measuredIterations} onIterations={setMeasuredIterations} report={benchmarkReport} error={benchmarkError} busy={benchmarkBusy} onRun={() => void runRuntimeBenchmark()} /> : null}
         {workbench === "diff" ? <DiffWorkbench revisions={revisions} from={diffFrom} to={diffTo} onFrom={setDiffFrom} onTo={setDiffTo} files={revisionDiff} onLoad={() => void loadDiff()} /> : null}
@@ -704,14 +710,13 @@ function RevisionSelect({ label, values, value, onChange }: { label: string; val
   return <label className="grid gap-1 text-[12px] text-slate-400">{label}<select className="h-9 w-full rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[12px] text-slate-200" value={value} onChange={(event) => onChange(Number(event.target.value))}>{values.map((item) => <option key={item.revision} value={item.revision}>REV {item.revision}{item.has_analysis ? " · анализ" : ""}</option>)}</select></label>;
 }
 
-function RunWorkbench({ stdin, onStdin, mainClass, onMainClass, revision, busy, error, result, onRun, scenarios }: {
+function RunWorkbench({ stdin, onStdin, mainClass, onMainClass, revision, busy, error, result, onRun, scenarios, onShowGraph }: {
   stdin: string; onStdin: (value: string) => void; mainClass: string; onMainClass: (value: string) => void; revision: number; busy: boolean; error: string;
-  result: { revision: number; report: VerificationReport } | null; onRun: () => void; scenarios: VerifyTestCase[];
+  result: TraceReport | null; onRun: () => void; scenarios: VerifyTestCase[]; onShowGraph: () => void;
 }) {
-  const run = result?.report.test_cases[0]?.baseline ?? null;
-  const compilation = result?.report.baseline_compilation ?? null;
+  const executed = result ? Object.keys(result.hits).filter((key) => !key.endsWith(":i")).length : 0;
   return <div className="mx-auto grid w-full max-w-[1500px] content-start gap-4 p-4" aria-label="Запуск программы">
-    <header className="flex flex-wrap items-center gap-2 text-[14px] font-semibold text-slate-200"><Play size={16} /> Запуск REV {revision} <span className="text-[12px] font-normal text-slate-500">в изолированном Docker-контейнере: без сети, с лимитами CPU, памяти и времени</span></header>
+    <header className="flex flex-wrap items-center gap-2 text-[14px] font-semibold text-slate-200"><Play size={16} /> Запуск REV {revision} <span className="text-[12px] font-normal text-slate-500">в изолированном Docker-контейнере (без сети, с лимитами CPU, памяти и времени); путь выполнения затем виден на графе</span></header>
     <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <div className="grid content-start gap-2">
         <label className="grid gap-1 text-[12px] text-slate-400">stdin программы<textarea aria-label="stdin запуска" className="min-h-48 w-full resize-y rounded border border-slate-700 bg-[#08101d] p-2 font-mono text-[13px] leading-5 text-slate-200" value={stdin} onChange={(event) => onStdin(event.target.value)} /></label>
@@ -721,13 +726,15 @@ function RunWorkbench({ stdin, onStdin, mainClass, onMainClass, revision, busy, 
         {error ? <p role="alert" className="m-0 text-[13px] text-rose-300">{error}</p> : null}
       </div>
       <section className="grid content-start gap-2" aria-label="Вывод программы">
-        {!result && !busy ? <p className="m-0 rounded border border-dashed border-slate-700 p-4 text-[13px] text-slate-500">Здесь появится вывод программы. Он же дублируется во вкладку «Консоль».</p> : null}
+        {!result && !busy ? <p className="m-0 rounded border border-dashed border-slate-700 p-4 text-[13px] text-slate-500">Здесь появится вывод программы. Он же дублируется во вкладку «Консоль», а выполненные операторы подсвечиваются на графе метода.</p> : null}
         {busy ? <p className="m-0 flex items-center gap-2 text-[13px] text-slate-400"><LoaderCircle className="spin" size={14} /> Компиляция и запуск…</p> : null}
-        {result && result.report.status === "compilation_failed" ? <div className="rounded border border-rose-800 bg-rose-950/30 p-3 text-[13px] text-rose-200">REV {result.revision} не компилируется{compilation?.diagnostics.length ? <ul className="mb-0">{compilation.diagnostics.slice(0, 10).map((item, index) => <li key={index}>{item.message}</li>)}</ul> : <pre className="m-0 mt-2 whitespace-pre-wrap font-mono text-[12px]">{compilation?.stderr.utf8 ?? ""}</pre>}</div> : null}
-        {run ? <>
-          <div className="flex flex-wrap gap-2 text-[12px]"><span className={`rounded px-2 py-0.5 ${run.exit_code === 0 ? "bg-emerald-500/15 text-emerald-200" : "bg-rose-500/15 text-rose-200"}`}>код выхода {run.exit_code ?? "—"}</span>{run.timed_out ? <span className="rounded bg-amber-500/15 px-2 py-0.5 text-amber-200">превышен лимит времени</span> : null}{run.stdout.truncated ? <span className="rounded bg-amber-500/15 px-2 py-0.5 text-amber-200">вывод обрезан</span> : null}</div>
-          <pre aria-label="stdout запуска" className="m-0 max-h-[55vh] overflow-auto whitespace-pre-wrap rounded border border-slate-800 bg-[#08101d] p-3 font-mono text-[12px] leading-5 text-slate-200">{run.stdout.utf8 ?? "(вывод не в UTF-8)"}</pre>
-          {run.stderr.utf8 ? <pre aria-label="stderr запуска" className="m-0 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-rose-900/60 bg-rose-950/20 p-3 font-mono text-[12px] leading-5 text-rose-200">{run.stderr.utf8}</pre> : null}
+        {result && result.status !== "completed" ? <div className="rounded border border-rose-800 bg-rose-950/30 p-3 text-[13px] text-rose-200">REV {result.revision} не компилируется<pre className="m-0 mt-2 whitespace-pre-wrap font-mono text-[12px]">{result.stderr}</pre></div> : null}
+        {result && result.status === "completed" ? <>
+          <div className="flex flex-wrap items-center gap-2 text-[12px]"><span className={`rounded px-2 py-0.5 ${result.exit_code === 0 ? "bg-emerald-500/15 text-emerald-200" : "bg-rose-500/15 text-rose-200"}`}>код выхода {result.exit_code ?? "—"}</span>{result.timed_out ? <span className="rounded bg-amber-500/15 px-2 py-0.5 text-amber-200">превышен лимит времени</span> : null}{result.stdout.truncated ? <span className="rounded bg-amber-500/15 px-2 py-0.5 text-amber-200">вывод обрезан</span> : null}
+            <span className="text-slate-400">выполнено операторов: {executed}{result.complete ? "" : " (счётчики неполные)"}</span>
+            <Button size="sm" variant="outline" onClick={onShowGraph}>Показать путь на графе</Button></div>
+          <pre aria-label="stdout запуска" className="m-0 max-h-[55vh] overflow-auto whitespace-pre-wrap rounded border border-slate-800 bg-[#08101d] p-3 font-mono text-[12px] leading-5 text-slate-200">{result.stdout.utf8 ?? "(вывод не в UTF-8)"}</pre>
+          {result.stderr ? <pre aria-label="stderr запуска" className="m-0 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-rose-900/60 bg-rose-950/20 p-3 font-mono text-[12px] leading-5 text-rose-200">{result.stderr}</pre> : null}
         </> : null}
       </section>
     </div>

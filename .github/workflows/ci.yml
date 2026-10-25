@@ -10,8 +10,8 @@ jobs:
     name: Parser (JDT) · mvn test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: "21", cache: maven }
       - run: mvn -B -q test
         working-directory: apps/parser
@@ -20,8 +20,8 @@ jobs:
     name: API (Rust) · cargo test with the real parser JAR
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: "21", cache: maven }
       - uses: dtolnay/rust-toolchain@stable
         with: { components: rustfmt }
@@ -39,15 +39,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: "21", cache: maven }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: apps/api }
       - uses: pnpm/action-setup@v4
         with: { package_json_file: apps/web/package.json }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: "22", cache: pnpm, cache-dependency-path: apps/web/pnpm-lock.yaml }
       - run: mvn -B -q package -DskipTests
         working-directory: apps/parser

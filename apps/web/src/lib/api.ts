@@ -953,3 +953,23 @@ export function getVerificationReport(projectId: string, reportId: string) {
     `/projects/${encodeURIComponent(projectId)}/verify/${encodeURIComponent(reportId)}`,
   );
 }
+
+export type TraceReport = {
+  revision: number;
+  status: string;
+  exit_code: number | null;
+  timed_out: boolean;
+  stdout: CapturedStream;
+  stderr: string;
+  /** `<file>:<offset>` of a CFG node → executions; `<file>:<offset>:i` → loop iterations. */
+  hits: Record<string, number>;
+  complete: boolean;
+};
+
+export async function traceProject(projectId: string, revision: number, stdin: string, options: { main_class?: string | null; source_level?: string } = {}) {
+  return request<TraceReport>(`/projects/${projectId}/trace`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ revision, stdin, main_class: options.main_class || null, source_level: options.source_level ?? null }),
+  });
+}

@@ -128,6 +128,7 @@ impl AppState {
         get_project_report,
         transform_project,
         verify_project,
+        trace_project,
         get_verification_report
     ),
     components(schemas(
@@ -215,6 +216,8 @@ impl AppState {
         TransformOperation,
         TransformResponse,
         VerifyRequest,
+        TraceRequest,
+        TraceReport,
         VerifyTestCase,
         VerificationReport,
         VerificationStatus,
@@ -350,6 +353,7 @@ pub fn app(state: AppState) -> Router {
         .route("/projects/{project_id}/report", get(get_project_report))
         .route("/projects/{project_id}/transform", post(transform_project))
         .route("/projects/{project_id}/verify", post(verify_project))
+        .route("/projects/{project_id}/trace", post(trace_project))
         .route(
             "/projects/{project_id}/verify/{report_id}",
             get(get_verification_report),
@@ -3508,6 +3512,173 @@ async fn verify_project(
     let _guard = state.0.writes.lock().await;
     project::store_verification_report(&directory, persisted.report_id, &bytes).await?;
     Ok(Json(persisted))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+struct TraceRequest {
+    /// Must be the current revision.
+    #[schema(minimum = 1)]
+    revision: u64,
+    /// Standard input of the run (at most 64 KiB).
+    #[serde(default)]
+    stdin: String,
+    /// Archive projects with several main classes: the class to run.
+    #[serde(default)]
+    main_class: Option<String>,
+    /// Archive projects: Java language level (8, 11, 17 or 21; default 21).
+    #[serde(default)]
+    source_level: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct TraceReport {
+    #[schema(minimum = 1)]
+    revision: u64,
+    /// `completed`, or the compilation status when the traced copy did not compile.
+    status: String,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    stdout: crate::runner::CapturedStream,
+    /// stderr of the program without the counter lines.
+    stderr: String,
+    /// How often each statement started, keyed `<file>:<offset>` (the `source_range.start` of its CFG node);
+    /// `<file>:<offset>:i` counts the iterations of a loop body. Statements that never ran are absent.
+    hits: std::collections::BTreeMap<String, u64>,
+    /// False when the program ended without running its shutdown hooks (timeout, `Runtime.halt`): counts are then missing.
+    complete: bool,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/trace",
+    tag = "Verification",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path)),
+    request_body = TraceRequest,
+    responses(
+        (status = 200, description = "The current revision ran once in the Docker runner with a counter before every statement; stdout is the program's own output", body = TraceReport),
+        (status = 400, body = ApiErrorBody),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody),
+        (status = 409, description = "revision is not the current one", body = ApiErrorBody),
+        (status = 503, description = "runner_unavailable or analyzer_unavailable", body = ApiErrorBody)
+    )
+)]
+async fn trace_project(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    request: Result<Json<TraceRequest>, JsonRejection>,
+) -> Result<Json<TraceReport>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let Json(request) = request.map_err(|_| ApiError::bad_request("invalid trace request"))?;
+    if request.stdin.len() > 64 * 1024 {
+        return Err(ApiError::bad_request("stdin must be at most 64 KiB"));
+    }
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    if request.revision != project.revision {
+        return Err(revision_conflict_error(request.revision, project.revision));
+    }
+    let main_class = resolve_main_class(
+        &directory,
+        &project,
+        project.revision,
+        request.main_class.as_deref(),
+    )
+    .await?;
+    let level = level_or_default(&request.source_level);
+    let files = java_files(&directory, &project).await?;
+    let run = state
+        .0
+        .analyzer
+        .trace(&directory, project.revision, &files, level)
+        .await?;
+    let target = if project::is_archive(&project) {
+        crate::runner::CompileTarget {
+            files: files
+                .iter()
+                .map(|file| (file.clone(), run.tree.join(file)))
+                .collect(),
+            main_class,
+            release: level.to_owned(),
+        }
+    } else {
+        crate::runner::CompileTarget::single(&project.filename, run.tree.join(&files[0]))
+    };
+    let case = crate::runner::VerifyTestCase {
+        name: "trace".to_owned(),
+        stdin: request.stdin,
+        expected_stdout: None,
+        expected_stderr: None,
+        expected_exit_code: None,
+    };
+    let report = state
+        .0
+        .runner
+        .verify(
+            project.revision,
+            &target,
+            project.revision,
+            &target,
+            std::slice::from_ref(&case),
+            1,
+        )
+        .await?;
+    drop(run);
+    let compilation = &report.candidate_compilation;
+    let Some(result) = report.test_cases.into_iter().next() else {
+        return Ok(Json(TraceReport {
+            revision: project.revision,
+            status: serde_json::to_value(compilation.status)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "failed".to_owned()),
+            exit_code: None,
+            timed_out: false,
+            stdout: crate::runner::CapturedStream {
+                utf8: Some(String::new()),
+                base64: String::new(),
+                truncated: false,
+            },
+            stderr: compilation.stderr.utf8.clone().unwrap_or_default(),
+            hits: Default::default(),
+            complete: false,
+        }));
+    };
+    let observed = result.candidate;
+    let (hits, stderr, complete) = split_trace(observed.stderr.utf8.as_deref().unwrap_or(""));
+    Ok(Json(TraceReport {
+        revision: project.revision,
+        status: "completed".to_owned(),
+        exit_code: observed.exit_code,
+        timed_out: observed.timed_out,
+        stdout: observed.stdout,
+        stderr,
+        hits,
+        complete: complete && !observed.timed_out && !observed.stderr.truncated,
+    }))
+}
+
+/// Separates the `#BPTRACE <key> <count>` lines the traced program prints at exit from its own stderr.
+fn split_trace(stderr: &str) -> (std::collections::BTreeMap<String, u64>, String, bool) {
+    let mut hits = std::collections::BTreeMap::new();
+    let mut rest = String::new();
+    let mut seen = false;
+    for line in stderr.split_inclusive('\n') {
+        if let Some(entry) = line.trim_end().strip_prefix("#BPTRACE ") {
+            seen = true;
+            if let Some((key, count)) = entry.rsplit_once(' ') {
+                if let Ok(count) = count.parse::<u64>() {
+                    hits.insert(key.to_owned(), count);
+                }
+            }
+        } else {
+            rest.push_str(line);
+        }
+    }
+    (hits, rest, seen)
 }
 
 /// Fully qualified class names with a `main(String[])` method in the analysis of `revision`.

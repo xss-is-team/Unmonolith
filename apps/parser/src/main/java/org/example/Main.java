@@ -41,6 +41,9 @@ public class Main {
         if (args.length > 1 && args[0].equals("decompose")) {
             return Decomposer.run(args, out, err);
         }
+        if (args.length > 1 && args[0].equals("trace")) {
+            return Tracer.run(args, out, err);
+        }
         if (args.length > 1 && args[0].equals("project")) {
             return ProjectAnalyzer.run(args, out, err);
         }

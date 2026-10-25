@@ -28,6 +28,11 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/v1/healthz || wget -qO- http://127.0.0.1:3000/api/v1/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   web:
     build:
@@ -37,7 +42,10 @@ services:
         BLUEPRINTS_API_ORIGIN: http://api:3000
     image: java-blueprints-web:local
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+        # the web server keeps connections to the API container; restart it whenever the API is recreated
+        restart: true
     ports:
       - "3001:3001"
     restart: unless-stopped

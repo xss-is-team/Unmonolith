@@ -56,6 +56,9 @@ const NODE_HEIGHT = 124;
 type FlowData = CfgNode & {
   hasFinding: boolean;
   complexityFragment: string | null;
+  /** Executions in the last traced run: undefined without a trace, null when the node did not run. */
+  hits?: number | null;
+  iterations?: number | null;
 };
 type FlowNode = Node<FlowData, "cfg">;
 
@@ -82,7 +85,7 @@ const CfgFlowNode = memo(function CfgFlowNode({ data, selected }: NodeProps<Flow
     <div
       className={[
         "relative flex h-[124px] w-[248px] flex-col items-center justify-center text-center text-slate-300",
-        data.reachable === false ? "opacity-45" : "",
+        data.reachable === false || data.hits === null ? "opacity-35" : "",
       ].filter(Boolean).join(" ")}
       title={condition ? "Нажмите, чтобы выбрать условие и подсветить ветвь." : undefined}
     >
@@ -106,6 +109,8 @@ const CfgFlowNode = memo(function CfgFlowNode({ data, selected }: NodeProps<Flow
         {!connector ? <strong className="line-clamp-2 max-w-full font-mono text-[13px] font-medium leading-[18px] text-slate-200">{label}</strong> : null}
         {condition ? <small className={`text-[10px] ${accentText}`}>клик — ветвь и код</small> : null}
       </div>
+      {typeof data.hits === "number" ? <div className={`pointer-events-none absolute ${condition ? "inset-1 [clip-path:polygon(50%_0,100%_50%,50%_100%,0_50%)]" : terminal ? "inset-x-2 top-6 bottom-6 rounded-full" : connector ? "top-[22px] left-[84px] size-[80px] rounded-full" : "inset-x-0 top-3 bottom-3 rounded"} ring-2 ring-emerald-400/80`} aria-hidden="true" /> : null}
+      {typeof data.hits === "number" ? <small className="absolute bottom-1 left-1 z-20 rounded border border-emerald-800 bg-emerald-950 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-emerald-300" title="Сколько раз выполнялся в последнем запуске">×{data.hits}{typeof data.iterations === "number" ? ` · итераций ${data.iterations}` : ""}</small> : null}
       {data.complexityFragment ? <small className="absolute top-1 right-1 z-20 rounded border border-rose-900 bg-rose-950 px-1.5 py-1 font-mono text-[10px] font-semibold text-rose-300">{data.complexityFragment}</small> : null}
       <Handle type="source" position={Position.Bottom} style={{ bottom: verticalInset }} />
     </div>
@@ -126,6 +131,7 @@ export function CfgViewer({
   showAnalysisSummary = true,
   blockTemplate = null,
   onBlockDrop,
+  trace = null,
   panelContainer = null,
   onNodeSelected,
 }: {
@@ -141,6 +147,8 @@ export function CfgViewer({
   blockTemplate?: { code: string; nonce: number; position?: "before" | "after" } | null;
   /** A palette block was dropped on a statement node. */
   onBlockDrop?: (template: BlockTemplate) => void;
+  /** Execution counts of the last «Запуск» of this revision, keyed `<file>:<offset>`. */
+  trace?: { revision: number; hits: Record<string, number> } | null;
   panelContainer?: HTMLElement | null;
   onNodeSelected?: () => void;
 }) {
@@ -246,6 +254,26 @@ export function CfgViewer({
     [cfg, activeBranch],
   );
   const highlighted = useMemo(() => analysisHighlights(methodAnalysis), [methodAnalysis]);
+  const traceOf = useMemo(() => {
+    const active = trace && trace.revision === revision ? trace.hits : null;
+    if (!active) return () => ({});
+    // the counters are keyed by file and offset; a node without its own file belongs to the method's file
+    const byOffset = new Map<string, number>();
+    for (const [key, count] of Object.entries(active)) {
+      const match = /^(.*):(\d+)(:i)?$/.exec(key);
+      if (match) byOffset.set(`${match[2]}${match[3] ?? ""}`, (byOffset.get(`${match[2]}${match[3] ?? ""}`) ?? 0) + count);
+      if (match) byOffset.set(`${match[1]}|${match[2]}${match[3] ?? ""}`, count);
+    }
+    const file = method?.source_range.file;
+    return (node: CfgNode) => {
+      if (node.kind === "entry" || node.kind === "exit" || node.kind === "merge") return {};
+      const start = node.source_range.start;
+      const own = node.source_range.file ?? file;
+      const hits = own ? byOffset.get(`${own}|${start}`) : byOffset.get(`${start}`);
+      const iterations = own ? byOffset.get(`${own}|${start}:i`) : byOffset.get(`${start}:i`);
+      return { hits: hits ?? null, iterations: iterations ?? null };
+    };
+  }, [trace, revision, method?.source_range.file]);
   const flow = useMemo(() => ({
     nodes: cfg?.nodes.map((node) => ({
       id: node.id,
@@ -257,6 +285,7 @@ export function CfgViewer({
       data: {
         ...node,
         hasFinding: highlighted.findings.has(node.id),
+        ...traceOf(node),
         complexityFragment: highlighted.fragments.get(node.id) ?? null,
       },
       selected: node.id === selectedNode?.id,
@@ -283,7 +312,7 @@ export function CfgViewer({
         labelBgBorderRadius: 2,
       };
     }) ?? [],
-  }), [activeEdges, cfg, drag, highlighted, positions, selectedNode?.id]);
+  }), [activeEdges, cfg, drag, highlighted, positions, selectedNode?.id, traceOf]);
 
   /** The statement node under a screen point, other than `except`. */
   function statementUnder(clientX: number, clientY: number, except = "") {

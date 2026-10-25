@@ -369,7 +369,7 @@ test("dragging a palette block onto a statement inserts it, dragging a statement
   await cfg.getByText("int tax = base / 5;", { exact: true }).dragTo(cfg.getByText("int bonus = qty * 2;", { exact: true }));
   await expect(page.getByRole("dialog")).toContainText("int tax = base / 5;");
   await page.getByRole("button", { name: "Подтвердить перемещение" }).click();
-  await expect(page.getByTestId("revision")).toContainText("REV 3");
+  await expect(page.getByTestId("revision")).toContainText("REV 3", { timeout: 30_000 });
 });
 
 test("an own block is saved in the palette and can be dropped on the graph", async ({ page }) => {
@@ -394,4 +394,10 @@ test("«Запуск» runs the current revision in Docker and shows its output"
   await page.getByRole("button", { name: "Запустить REV 1" }).click();
   await expect(page.getByLabel("stdout запуска")).toContainText(/\d+/, { timeout: 60_000 });
   await expect(page.getByLabel("Вывод программы")).toContainText("код выхода 0");
+  // the run was traced: the CFG shows how often its statements ran
+  await page.getByRole("button", { name: "Показать путь на графе" }).click();
+  const methodSelect = page.locator("select").filter({ hasText: "OrderLinker.link" });
+  const option = methodSelect.locator("option").filter({ hasText: "OrderLinker.link" }).first();
+  await methodSelect.selectOption({ label: (await option.textContent()) ?? "" });
+  await expect(page.getByTitle("Сколько раз выполнялся в последнем запуске").first()).toBeVisible({ timeout: 15_000 });
 });

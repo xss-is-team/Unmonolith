@@ -490,6 +490,21 @@ impl JavaAnalyzer {
             .await
     }
 
+    /// Runs the parser's `trace` subcommand: writes a copy of the revision in which every statement counts its
+    /// executions (see `Tracer.java`). The copy is only ever compiled and run in the Docker runner.
+    pub async fn trace(
+        &self,
+        project_dir: &Path,
+        revision: u64,
+        files: &[String],
+        source_level: &str,
+    ) -> Result<OptimizationRun, ApiError> {
+        check_source_level(source_level)?;
+        let body = serde_json::json!({ "source_level": source_level, "files": files });
+        self.run_staged("trace", project_dir, revision, body, true)
+            .await
+    }
+
     /// Shared driver of the project tools that read one revision and may write a candidate tree.
     async fn run_staged(
         &self,

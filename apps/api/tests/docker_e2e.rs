@@ -1121,3 +1121,61 @@ async fn repeated_runs_tell_nondeterminism_from_a_behaviour_change_and_expectati
         .await
         .expect_status(400);
 }
+
+#[tokio::test]
+#[ignore = "needs Docker and the runner image"]
+async fn trace_counts_the_statements_a_real_run_executes() {
+    let server = TestServer::start_docker().await;
+    let api = server.client().await;
+    let project = demo_project(&api).await;
+    project.analyze_single_file().await;
+    let trace = project
+        .api
+        .post_json(
+            &project.path("/trace"),
+            &json!({"revision": 1, "stdin": "merge_inventory\ninventory\nexit\n"}),
+        )
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(trace["status"], "completed", "{trace}");
+    assert_eq!(trace["complete"], true, "{trace}");
+    assert_eq!(trace["exit_code"], 0);
+    assert!(!trace["stderr"].as_str().unwrap().contains("#BPTRACE"));
+    let hits = trace["hits"].as_object().unwrap();
+    let merged = project
+        .cfg("Main.DataOptimizer.mergeDuplicateItemsQuadratic(List<Item>)")
+        .await;
+    let starts: Vec<String> = merged["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|n| n["source_range"]["start"].as_u64())
+        .map(|start| format!("Main.java:{start}"))
+        .collect();
+    assert!(
+        starts.iter().any(|key| hits.contains_key(key)),
+        "the merge command runs the merge method: {hits:?}"
+    );
+    // the same input without the merge command never reaches it
+    let quiet = project
+        .api
+        .post_json(
+            &project.path("/trace"),
+            &json!({"revision": 1, "stdin": "help\nexit\n"}),
+        )
+        .await
+        .expect_status(200)
+        .json();
+    let quiet_hits = quiet["hits"].as_object().unwrap();
+    assert!(!starts.iter().any(|key| quiet_hits.contains_key(key)));
+    assert!(!quiet_hits.is_empty());
+    project
+        .api
+        .post_json(
+            &project.path("/trace"),
+            &json!({"revision": 7, "stdin": ""}),
+        )
+        .await
+        .expect_error(409, "revision_conflict");
+}

@@ -11,10 +11,10 @@ Status: ✅ done · 🟡 partial · ❌ missing · ❓ not verified. Evidence ki
 | Run | Result |
 |---|---|
 | `cargo test` (apps/api), fresh JAR built by `mvn package` | lib 78 passed (7 ignored); `e2e_analysis` 7/7, `e2e_decompose` 5/5, `e2e_edit` 16/16, `e2e_import` 6/6. The e2e files refuse to run when the JAR is older than `apps/parser/src` (`apps/api/tests/common/mod.rs:49`): rebuild with `./dev parser-build` after any pull. |
-| `cargo test --test docker_e2e -- --ignored` (real Docker, runner image) | 13/13 passed. Run with `BLUEPRINTS_REAL_RUNNER_IMAGE=<image id>`: resolving the image by tag failed inside the test process on the audit machine although the same `docker image inspect` worked in a shell. |
+| `cargo test --test docker_e2e -- --ignored` (real Docker, runner image) | 13/13 passed in the previous audit; the new `trace_counts_the_statements_a_real_run_executes` passed on this revision (the other 13 were not re-run). Run with `BLUEPRINTS_REAL_RUNNER_IMAGE=<image id>`: resolving the image by tag failed inside the test process on the audit machine although the same `docker image inspect` worked in a shell. |
 | `cargo test --lib -- --ignored` (7 `real_*` tests, real JAR + JDK + Docker) | 7/7 passed |
-| Parser `mvn test` (Maven 3.9.9, JDK 26 with `release 21`) | 228 tests, 0 failures (incl. `OptimizerTest` 16 with the slide-5 example verbatim, `CodeSmellsTest`, `InputLoopTest`, `StatementEditTest`, `ExtractMethodTest`) |
-| Web `tsc` / `eslint` / Playwright against the real API, parser JAR and Docker runner | clean; `apps/web/e2e/real-backend.spec.ts` 8/8 (upload, CFG, optimization, verification, benchmark, block insert/replace/delete, extract method, drag-and-drop of palette blocks and statements, own blocks) |
+| Parser `mvn test` (Maven 3.9.9, JDK 26 with `release 21`) | 230 tests, 0 failures (incl. `TracerTest` (the traced copy prints the same and its counters point at CFG nodes), `OptimizerTest` 16 with the slide-5 example verbatim, `CodeSmellsTest`, `InputLoopTest`, `StatementEditTest`, `ExtractMethodTest`) |
+| Web `tsc` / `eslint` / Playwright against the real API, parser JAR and Docker runner | clean; `apps/web/e2e/real-backend.spec.ts` 9/9 (upload, CFG, optimization + automatic quality gate, verification, benchmark, block insert/replace/delete, extract method, drag-and-drop of palette blocks and statements, own blocks, run with trace) |
 | Parser CLI on `acceptance/Organizer.java` and `acceptance/Main.java` | run directly (see R13/R16) |
 
 ## Requirement matrix
@@ -34,7 +34,7 @@ Mandatory = case slides 2, 3, 5, 6 (gate), 7, 10, 11. Optional = slide 6 decompo
 | R9 | 3 | 05 Assemble Java | ✅ | ✅ | ASTRewrite → validated new revision; `real_ast_rewrite_http_end_to_end` | — |
 | R10 | 3 | 06 Run and compare | ✅ | ✅ | `real_container_http_verification`, `docker_e2e` | — |
 | R11 | 3 | Mandatory finish: full path | ✅ | ✅ | `real_optimize_verify_and_benchmark_end_to_end`; Playwright `real ZIP workflow…` drives upload → CFG → optimization → verification → benchmark in the UI | Organizer's `main` reads no stdin, so its gate is weak (reported as `change_not_reached`) |
-| R12 | 4 | UI concept (mockup) | 🟡 | ✅ | see «Mockup comparison» | no step-by-step Debug; «Запуск» opens the behaviour check |
+| R12 | 4 | UI concept (mockup) | ✅ | ✅ | see «Mockup comparison»; «Запуск» runs the current revision in Docker and shows its output, and the CFG then highlights the statements that ran with their counts (`POST /trace`, `TracerTest`, `docker_e2e::trace_counts_the_statements_a_real_run_executes`, Playwright `«Запуск» runs…`) | no breakpoints / stepping: the trace is the whole run |
 | R13 | 5 | Complexity of method/fragment | ✅ | ✅ | `ComplexityAnalyzer.java`; measured on this revision: Organizer 22/98 methods `unknown` (was 28), demo Main 2/65 (was 7) after input-driven loops (`InputLoopTest`), calls through interfaces with O(1) implementations and analysed constructors (`AnalysisTest`) | `unknown` remains for recursion, streams, lambdas and unmodelled library calls |
 | R14 | 5 | Defect + risk + recommendation | ✅ | ✅ | complexity findings `repeated_collection_scan`, `nested_collection_iteration`, `string_concat_in_loop`; maintainability findings of the mockup `long_method`, `deep_nesting`, `too_many_parameters`, `duplicate_code` (`CodeSmellsTest`); shown in Russian with «why» and «what to do» | risk is inside `explanation` |
 | R15 | 5 | Code line and graph node | ✅ | ✅ | `source_range`, `node_ids`; `cfg-viewer.tsx:220,436-444` | — |
@@ -50,7 +50,7 @@ Mandatory = case slides 2, 3, 5, 6 (gate), 7, 10, 11. Optional = slide 6 decompo
 | R25 | 11 | Deliverables 01–04 | ✅ | n/a | 01 `README.md`, `./dev`; 02 `docker compose up --build` (run for this audit); 03 tests exist and `docs/evidence/demo/` holds a saved real run (verify + benchmark); 04 `docs/SOLUTION.md` | see priorities |
 
 Percentages (mandatory only, counting R1–R11, R13–R17, R19, R20, R24, R25 = 20): backend 15 ✅ / 5 🟡 / 0 ❌ (R18 is optional and not counted);
-frontend: the UI covers analysis, Big O overview, optimization preview/apply, drag-and-drop block editing, verify (suggested and saved scenarios, automatic gate, repeats, expectations, warnings), benchmark, decomposition, history with rollback, revision diff, report, export; the real-backend Playwright suite passes 8/8. Missing: step-by-step debug, a plain «run and show output».
+frontend: the UI covers analysis, Big O overview, optimization preview/apply, drag-and-drop block editing, run with an execution trace on the CFG, verify (suggested and saved scenarios, automatic gate, repeats, expectations, warnings), benchmark, decomposition, history with rollback, revision diff, report, export; the real-backend Playwright suite passes 9/9. Missing: stepping debugger.
 
 ## Mockup comparison (slide 4)
 
@@ -65,7 +65,7 @@ The text brief only had a title; the slide is a full mockup.
 | «Current O(n²) → after O(n log n)» | ✅ `/optimizations` | ✅ in the proposal |
 | «Expected speedup up to 5.2x» | ✅ measurable via `POST /benchmark` (value must come from measurement, never hardcoded) | ✅ benchmark tab |
 | Tabs: Java code / Console / Test results (per-test list) | ✅ | ✅ code, console log, per-scenario results of the automatic gate |
-| Toolbar Import / Export Java / Optimize / Run / Debug | ✅ import, export, optimize, run | ✅ import, export, optimize, run, decomposition; ❌ debug |
+| Toolbar Import / Export Java / Optimize / Run / Debug | ✅ import, export, optimize, run with an execution trace | ✅ import, export, optimize, run (output + executed path on the CFG), decomposition; 🟡 debug = trace of a whole run, no stepping |
 
 ## Contract mismatches (frontend ↔ openapi)
 
@@ -90,13 +90,14 @@ The frontend client (`apps/web/src/lib/api.ts`) covers the optimization, benchma
    receiver for `String`/boxed/enum keys (extra assumption `outer_key_non_null`) and constructors/setters that only store
    fields of a freshly allocated object.
 7. **Stale-JAR gate:** the e2e JAR-freshness check fails after a merge until the JAR is rebuilt.
-8. **Verified:** `tsc`, `eslint` and the browser flow (`pnpm exec playwright test`, 8/8 against the real API, parser and Docker runner). Not verified: a deployed public instance, other browsers.
+8. **Verified:** `tsc`, `eslint` and the browser flow (`pnpm exec playwright test`, 9/9 against the real API, parser and Docker runner). Not verified: a deployed public instance, other browsers.
 
 ## Priorities
 
 **Done:** UI for warnings, optimizations, benchmark, export, ZIP upload, decomposition; verify repeats/expectations; `StringBuilder` rule; method-group decomposition.
 **Done too:** `List.contains` → `HashSet` rule (`ContainsToSetRule`), Markdown report (`GET /projects/{id}/report`, «Отчёт» button), demo monolith whose scenarios reach every rule (saved run: three optimizations, verify 8/8, decomposition), `compose.yaml` (`docker compose up --build`).
 **Done too:** drag-and-drop block editing, `replace_statement`, extract method in the UI, automatic quality gate with suggested scenarios, maintainability findings, fewer `unknown` estimates.
-**Next:** plain «run» with output in the console and an execution trace on the CFG instead of a debugger; a public instance; CI. R21 (the case technical document) is an organizers' artifact and is not in the repo.
+**Done too:** «Запуск» with output in the console and the executed path on the CFG; CI (`.github/workflows/ci.yml`: parser, API, web build + Playwright against the real Docker runner).
+**Next:** a public instance; stepping through a run. R21 (the case technical document) is an organizers' artifact and is not in the repo.
 
 Do not hardcode «5.2x» or any speedup: it is a number from the case mockup, and results must come from `/benchmark`.
