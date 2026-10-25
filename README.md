@@ -1,102 +1,164 @@
-# Java Blueprints — end-to-end architecture
+<div align="center">
 
-> **Что это.** Веб-инструмент для кейса Axenix «Java Blueprints»: Java-монолит → AST/CFG/граф проекта → диагностика Big O →
-> правка и оптимизация → регенерация Java → проверка сохранения поведения в Docker. Описание решения: [`docs/SOLUTION.md`](docs/SOLUTION.md),
-> соответствие кейсу: [`docs/CASE_COMPLIANCE.md`](docs/CASE_COMPLIANCE.md), сохранённый реальный прогон: [`docs/evidence/demo/SUMMARY.md`](docs/evidence/demo/SUMMARY.md)
-> (повтор: `./dev demo`). Бэкенд готов; интерфейс догоняет API (см. список расхождений в compliance).
+# Java Blueprints · Unmonolith
 
-## Current application
+**Java-монолит → блок-схема → диагноз Big O → безопасная правка → доказанное сохранение поведения**
 
-The web client lives in `apps/web/` and uses Next.js App Router. It provides source-linked diagnostics, per-method CFG and Big O views, a Project Overview UI, revision diff, `replace_condition`, and behavioral verification. Project Overview reads the revisioned graph endpoint for the current single-file project; its explicitly labeled multi-file fixture is only for `/demo`. The Rust/Axum service in `apps/api/` remains the API and owns guest sessions, project storage, revisions, analysis and runner reports. Next proxies `/api/v1/*` to Axum so browser requests and the session cookie stay same-origin.
+Веб-инструмент для кейса Axenix «Визуальная среда программирования»
 
-The three application folders share one Git repository: `apps/api/` (Rust), `apps/parser/` (Java/Maven), and `apps/web/` (Next.js). Install the tools with your OS package manager, or use the optional root `flake.nix` with `nix develop`.
+[![Rust](https://img.shields.io/badge/API-Rust%20%2F%20Axum-dea584?logo=rust&logoColor=white)](apps/api)
+[![Java](https://img.shields.io/badge/Parser-Java%2021%20%2B%20Eclipse%20JDT-ed8b00?logo=openjdk&logoColor=white)](apps/parser)
+[![Next.js](https://img.shields.io/badge/Web-Next.js%2016%20%2B%20React%2019-000000?logo=nextdotjs&logoColor=white)](apps/web)
+[![React Flow](https://img.shields.io/badge/Graph-React%20Flow%20%2B%20ELK-ff0072)](apps/web)
+[![Docker](https://img.shields.io/badge/Runner-Docker%20sandbox-2496ed?logo=docker&logoColor=white)](apps/runner)
+[![Tests](https://img.shields.io/badge/tests-200%2B%20parser%20%C2%B7%20130%2B%20API%20%C2%B7%208%20e2e-2ea44f)](#тесты-и-доказательства)
+[![Case](https://img.shields.io/badge/Axenix-Java%20Blueprints-0ea5e9)](docs/CASE_COMPLIANCE.md)
 
-Required tools: stable Rust, JDK 21, Maven, Node.js 22 or newer, pnpm 11, Git, and pkg-config. Docker is required only for isolated Java execution and behavioral verification.
+[Быстрый старт](#быстрый-старт) · [Как это работает](#как-это-работает) · [Возможности](#возможности) · [Архитектура](#архитектура) · [Тесты](#тесты-и-доказательства) · [Ограничения](#честные-ограничения)
 
-Arch Linux:
+</div>
 
-```sh
-sudo pacman -S --needed rustup jdk21-openjdk maven nodejs pnpm git pkgconf docker
-rustup default stable
+<p align="center">
+  <img src="docs/screenshots/02-project-graph.png" alt="Главный экран: граф проекта, найденные проблемы, сложность" width="100%">
+</p>
+
+## Зачем это нужно
+
+В 1000 строках Java-монолита трудно увидеть, **где** код тормозит, и страшно его менять, потому что непонятно, **что сломается**.
+Java Blueprints делает три вещи, которые обычно живут в разных инструментах:
+
+1. **Показывает программу как граф**: граф типов проекта и блок-схема (CFG) каждого метода, привязанные к строкам кода.
+2. **Находит и объясняет дефекты сложности** (Big O) и предлагает исправление с явными допущениями.
+3. **Доказывает, что поведение не изменилось**: запускает версию «до» и «после» на одних и тех же сценариях в изолированном Docker и сравнивает stdout, stderr и код выхода.
+
+Главный принцип: **ничего не выдумывается**. Нет парсера или Docker-образа, значит честная ошибка, а не «зелёная» галочка.
+
+## Как это работает
+
+```
+ .java / .zip ─▶ JDT: AST + CFG + граф проекта ─▶ Big O и находки ─▶ правка через ASTRewrite
+                                                                           │
+   отчёт ◀─ замер времени ◀─ сравнение «до/после» в Docker ◀─ новая ревизия Java ◀┘
 ```
 
-macOS with Homebrew:
+Шесть шагов пути из кейса идут в интерфейсе по порядку: **Анализ → Оптимизация → Проверка → Замер → Разбор монолита → Отчёт**.
 
-```sh
-brew install rustup openjdk@21 maven node@22 pnpm@11 pkgconf git docker
-export PATH="$(brew --prefix rustup)/bin:$PATH"
-rustup default stable
-```
+## Возможности
 
-Nix (optional): from the repository root, run `nix develop`.
+### Видно всё: граф проекта и блок-схемы
 
-## Common commands
+Типы и связи монолита на одном экране; двойной клик по классу открывает блок-схему метода. Узлы раскрашены по типу (условие, цикл, вызов, возврат), проблемные помечены, клик по узлу подсвечивает строку кода и наоборот.
 
-The root `./dev` wrapper keeps routine commands short. Install web dependencies and build the parser once:
+<p align="center">
+  <img src="docs/screenshots/04-cfg-bigo.png" alt="Блок-схема метода с Big O" width="100%">
+</p>
 
-```sh
-./dev web-install
-./dev parser-build
-./dev runner-build
-```
+### Диагноз Big O, который можно проверить
 
-Then start API and web in separate terminals (verification is enabled only when the runner image is configured):
+Статическая оценка сложности по модели стоимости (по размерам коллекций), с уровнем уверенности, допущениями и ограничениями. Находки по-русски: что за дефект, почему это проблема, что делать, и кнопка «Показать на графе».
 
-```sh
-BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21 ./dev api
-./dev web
-```
+<p align="center">
+  <img src="docs/screenshots/03-problems.png" alt="Найденные проблемы" width="100%">
+</p>
 
-Open <http://localhost:3001>. The API listens on port 3000; the web app proxies its requests to it. Set `BLUEPRINTS_API_ORIGIN` if Axum listens elsewhere. Set `BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21` when starting the API to enable verification. `./dev` lists the parser and runner commands. Frontend details are in `apps/web/README.md`.
+### Оптимизация с явными допущениями
 
-For a quick frontend check during UI work, run `./dev web-fast-check` (TypeScript and lint). Run `./dev web-check` before handing work off; it also makes a production build.
-## Run after cloning
+| Правило | Что делает |
+|---|---|
+| `nested_scan_to_hashmap` | вложенный поиск по списку → индекс `HashMap` |
+| `contains_to_hashset` | `list.contains()` в цикле → `HashSet` |
+| `string_concat_to_builder` | `s += x` в цикле → `StringBuilder` |
 
-After installing the host tools listed above, run one command from the repository root:
+Перед применением виден **diff** и **допущения, которые нужно подтвердить** (например, «ключ не равен null»). Применение создаёт новую ревизию, откат возможен.
 
-```sh
-./dev up
-```
+<p align="center">
+  <img src="docs/screenshots/05-optimization-preview.png" alt="Предпросмотр оптимизации с допущениями" width="100%">
+</p>
 
-It installs frontend packages, builds the parser and API, then starts both services. Open <http://localhost:3001>; the API is at <http://localhost:3000>. Press Ctrl+C to stop both. To include behavioral verification, first run `./dev runner-build`, then start with `BLUEPRINTS_RUNNER_IMAGE=java-blueprints-runner:java21 ./dev up`. `./dev` lists individual build and check commands. Frontend details are in `apps/web/README.md`.
+### Правка блок-схемы меняет код
 
-Or run everything in containers (needs only Docker, builds the parser, API, web and the runner image):
+Каждая операция проходит предпросмотр и проверку компиляцией:
+
+- **перетащите блок** из палитры (переменная, условие, цикл, вызов, операция, возврат или **свой блок**) на оператор графа: он будет вставлен до или после;
+- **перетащите оператор** на другой, чтобы переставить (зависимые операторы переставить не даст);
+- заменить условие, заменить или удалить оператор, **извлечь метод**;
+- **разбор монолита** на классы: вынос вложенных типов в отдельные файлы и групп методов (`parse*` → `Parsing`) в новые классы.
+
+### Проверка поведения: ключевой контракт кейса
+
+Версии «до» и «после» компилируются и запускаются в одноразовых контейнерах (без сети, read-only файловая система, лимиты CPU и памяти) на одинаковых сценариях stdin.
+
+<p align="center">
+  <img src="docs/screenshots/07-verify-success.png" alt="Успешная проверка поведения" width="100%">
+</p>
+
+- побайтовое сравнение stdout, stderr и кода выхода, таймаута и переполнения вывода;
+- `repeats` (1 до 5): если версия расходится сама с собой, статус `unstable`, а не ложное «поведение изменилось»;
+- предупреждение, если сценарии **не доходят** до изменённого кода, и список того, чего проверка не показывает;
+- **замер времени** (`POST /benchmark`): прогрев, медианы, тест Манна-Уитни, bootstrap-интервал. Заявление «быстрее в N раз» появляется только при статистической значимости.
+
+### Отчёт и история
+
+Ревизии с diff и откатом, экспорт проекта, отчёт в Markdown (`GET /projects/{id}/report`).
+
+## Быстрый старт
+
+Нужен только Docker:
 
 ```sh
 docker compose up --build
 ```
 
-Open <http://localhost:3001>. The API container uses the host Docker socket to start throw-away runner containers; run it on a dedicated machine (see `compose.yaml`).
+Откройте <http://localhost:3001>, загрузите `.java` или ZIP (готовый монолит на 819 строк для демо: [`apps/api/tests/fixtures/demo/Main.java`](apps/api/tests/fixtures/demo/Main.java)).
+API: <http://localhost:3000> (`/swagger-ui`). Контейнер API запускает одноразовые контейнеры раннера через сокет Docker хоста, держите его на отдельной машине (см. [`compose.yaml`](compose.yaml)).
 
-## Parser integration
+### Без контейнеров (разработка)
 
-`./dev parser-build` creates an executable JAR. `./dev api` points the API at that JAR automatically; `BLUEPRINTS_ANALYZER_JAR` can override it. The API invokes the parser for each analysis request and stores its JSON result with the project revision. If the JAR has not been built, analysis returns `analyzer_unavailable`. The parser provides AST data, semantic diagnostics, per-method CFGs, and the restricted `replace_condition` rewrite.
+Нужны: Rust stable, JDK 21, Maven, Node.js 22+, pnpm 11, Git, pkg-config; Docker только для проверки поведения.
 
-`./dev runner-build` creates the Java 21 image used by the separate `/verify` operation. The runner is opt-in and never falls back to host execution; see `apps/api/README.md` for configuration and security limitations.
+```sh
+./dev up              # ставит зависимости, собирает парсер и API, запускает API :3000 и веб :3001
+./dev runner-build    # образ раннера для проверки поведения
+./dev demo            # сквозной сценарий через реальные API, парсер и Docker; пишет docs/evidence/demo/
+```
 
-## Product direction
+macOS: `brew install rustup openjdk@21 maven node@22 pnpm@11 pkgconf git docker`. Nix: `nix develop`.
+Остальные команды: `./dev` без аргументов.
 
-See [ROADMAP.md](ROADMAP.md) for global goals, frontend work that can start now, and backend-dependent milestones.
+## Архитектура
 
-The target is to open a whole Java project and immediately show its main behavior flows using familiar flowchart symbols. The engineer drills down from project to flow, module/package, type, and method. These flowcharts are for navigation and understanding; architecture/dependency maps are a separate view, not a substitute for behavior flows.
+Один репозиторий, четыре компонента с жёсткими границами:
 
-Changes happen through a separate editable BPMN-style process diagram. Its supported elements map to explicit Java transformations; changing a diagram proposes a code change, it does not silently rewrite source. The product applies a chosen action, such as migrating a legacy monolith from the Java 2 era to a target like Java 16, decomposing part of it into services, or optimizing a detected hot spot. The actual source level must come from project configuration or be confirmed when it is unknown. It should show the source diff, compile and run the project's checks, compare behavior, and report before/after metrics such as runtime. Users edit source manually only when the product cannot safely handle a case; then it should take them to the specific code and explain what needs attention. Test results support the tested scenarios; they cannot prove identical behavior for every possible input.
+| Компонент | Роль |
+|---|---|
+| [`apps/api`](apps/api) · Rust / Axum | HTTP, гостевые сессии, проекты, ревизии с оптимистичной блокировкой, оркестрация, SSE. **Java не разбирает.** Контракт: [`openapi.yaml`](apps/api/openapi.yaml). |
+| [`apps/parser`](apps/parser) · Java 21 + Eclipse JDT | AST, CFG, Big O, граф проекта, перезапись исходника через ASTRewrite. Единственный, кто понимает Java. |
+| [`apps/runner`](apps/runner) · Docker JDK 21 | Компилирует и запускает ревизию; контейнер на каждый вызов; загруженный код исполняется **только здесь**. |
+| [`apps/web`](apps/web) · Next.js 16 | Интерфейс: React Flow (граф и CFG), CodeMirror, diff, панели проверки. Раскладку графа считает веб, не бэкенд. |
 
-## Current scope
+Подробности: [`docs/SOLUTION.md`](docs/SOLUTION.md) · спецификация API: [`apps/api/BACKEND_SPEC.md`](apps/api/BACKEND_SPEC.md) · контракт парсера: [`apps/parser/README.md`](apps/parser/README.md).
 
-- The API accepts a single `.java` file or a ZIP project (multi-file, packages, source levels Java 8–21); Maven/Gradle import and external dependencies are not supported (unresolved calls are reported honestly).
-- The parser produces AST data, per-method CFGs, Big O estimates with findings, a project graph, `replace_condition` and `move_statement` edits, three optimization rules (nested lookup → `HashMap`, `list.contains` in a loop → `HashSet`, `String +=` in a loop → `StringBuilder`) and the decomposition of a monolith (static member types → files, groups of static methods → classes). The Rust API exposes these through the revisioned endpoints in `apps/api/openapi.yaml`, plus rollback, export, a Markdown report and a runtime benchmark.
-- The web app covers source editing, per-method CFG and Big O, the project overview and Big O summary, `replace_condition`, `move_statement`, optimization preview/apply with assumptions, behavioural verification (repeats, expectations, warnings), the runtime benchmark, monolith decomposition, revision diff, ZIP upload, project export and the Markdown report. Block palette (insert/delete a statement) and «Выделить метод» are in the CFG view. Not in the UI: rollback screen, drag-and-drop of nodes, debugger.
-- The `/demo` route and its synthetic fixtures described in earlier versions are not present in `apps/web`; every view reads real API data.
-- See `docs/SOLUTION.md` for architecture, supported Java scope and limitations.
+## Тесты и доказательства
 
-## Core concepts
+| Что | Где |
+|---|---|
+| Парсер, CFG, Big O, оптимизации (200+ тестов) | `cd apps/parser && mvn test`, эталонный монолит `Organizer.java` в `AcceptanceTest` |
+| API (130+ тестов), включая реальные JAR, JDK и Docker | `cd apps/api && cargo test` и `cargo test -- --ignored` |
+| Интерфейс против реального бэкенда (8 сценариев Playwright, включая перетаскивание блоков) | `cd apps/web && pnpm exec playwright test` |
+| Сохранённый реальный прогон: оптимизация, проверка 8/8, замер | [`docs/evidence/demo/SUMMARY.md`](docs/evidence/demo/SUMMARY.md) |
+| Соответствие требованиям кейса по слайдам | [`docs/CASE_COMPLIANCE.md`](docs/CASE_COMPLIANCE.md) |
 
-- **AST** — nested structure of declarations and statements, with source ranges.
-- **CFG** — possible execution paths inside one method; conditions branch and loops return to earlier blocks.
-- **Project graph** — types and relationships across the analyzed scope. It complements the CFG; it is not a flowchart of every statement.
-- **Quality gate** — compile and run automated checks, then compare observable behavior for tested scenarios. Passing tests is evidence for those scenarios, not proof for every possible input.
+## Честные ограничения
 
-## Legacy test corpus
+- Big O это **статическая оценка**; методы с неизвестными вызовами получают `unknown`, а не выдуманную сложность.
+- Зелёная проверка относится **только к заданным сценариям**: это свидетельство, а не доказательство эквивалентности.
+- Многопоточность, рефлексия, файлы, сеть и `java.time` вне рамок кейса.
+- Разбор монолита механический (по типам и по префиксам методов), а не семантическое распознавание «Parser/Analyzer/Optimizer».
+- Нет пошагового «Дебага» по графу и обычного запуска программы с выводом: «Запуск» открывает проверку поведения.
+- Maven и Gradle, внешние зависимости не поддерживаются. Публичного URL и аккаунтов нет: сессии гостевые.
 
-`legacy/commons-math-3.6.1/` is the pinned Apache Commons Math 3.6.1 codebase used as a large Java parser and analysis test corpus. Keep the fixture unchanged; see `legacy/commons-math-3.6.1/README-test-fixture.md` for provenance and use.
+Полный и честный статус по каждому требованию кейса: [`docs/CASE_COMPLIANCE.md`](docs/CASE_COMPLIANCE.md). План: [`ROADMAP.md`](ROADMAP.md).
+
+---
+
+<sub>`legacy/commons-math-3.6.1/` это закреплённый Apache Commons Math 3.6.1, большой корпус для проверки парсера. Не изменять.</sub>

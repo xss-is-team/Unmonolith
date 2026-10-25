@@ -79,7 +79,7 @@ export function BlockPalette({ onPick }: { onPick: (template: BlockTemplate) => 
               <button
                 type="button"
                 draggable
-                className="flex h-8 w-full cursor-grab items-center gap-2 rounded border border-slate-800 bg-slate-900/70 px-2 text-left text-[12px] text-slate-200 hover:border-cyan-700 active:cursor-grabbing"
+                className="flex h-8 w-full cursor-grab items-center gap-1 rounded border border-slate-800 bg-slate-900/70 px-1 text-left text-[11px] text-slate-200 hover:border-cyan-700 active:cursor-grabbing"
                 title="Перетащите на оператор графа, чтобы вставить; клик кладёт Java в редактор блоков"
                 onDragStart={(event) => {
                   event.dataTransfer.setData(BLOCK_MIME, JSON.stringify({ id: item.id, label: item.label, code: item.code }));
@@ -88,8 +88,8 @@ export function BlockPalette({ onPick }: { onPick: (template: BlockTemplate) => 
                 }}
                 onClick={() => onPick({ id: item.id, label: item.label, code: item.code, nonce: Date.now() })}
               >
-                <span className={`grid size-6 shrink-0 place-items-center rounded ${item.tone}`}><Icon size={14} /></span>
-                <span className="truncate">{item.label}</span>
+                <span className={`grid size-4 shrink-0 place-items-center ${item.tone.split(" ")[0]}`}><Icon size={14} /></span>
+                <span className="min-w-0 flex-1 whitespace-nowrap tracking-tight">{item.label}</span>
               </button>
               {item.own ? <button type="button" aria-label={`Удалить блок ${item.label}`} className="absolute top-1 right-1 hidden size-6 place-items-center rounded text-slate-500 hover:text-rose-300 group-hover:grid" onClick={() => removeCustom(item.id)}><Trash2 size={13} /></button> : null}
             </div>
