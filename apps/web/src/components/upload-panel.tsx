@@ -3,7 +3,9 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowUpRight, FileCode2, FileUp, LoaderCircle, LockKeyhole } from "lucide-react";
-import { ApiError, MAX_SOURCE_BYTES, uploadJavaFile } from "@/lib/api";
+import { ApiError, MAX_SOURCE_BYTES, uploadProjectFile } from "@/lib/api";
+
+const MAX_ARCHIVE_BYTES = 16 * 1024 * 1024;
 
 export function UploadPanel() {
   const router = useRouter();
@@ -15,18 +17,20 @@ export function UploadPanel() {
   async function openFile(file?: File) {
     if (!file) return;
     setError("");
-    if (!file.name.toLowerCase().endsWith(".java")) {
-      setError("Выберите исходный файл с расширением .java.");
+    const javaFile = file.name.toLowerCase().endsWith(".java");
+    const archiveFile = file.name.toLowerCase().endsWith(".zip");
+    if (!javaFile && !archiveFile) {
+      setError("Выберите Java-файл .java или ZIP-проект .zip.");
       return;
     }
-    if (file.size > MAX_SOURCE_BYTES) {
-      setError("Файл больше лимита 2 МБ.");
+    if (file.size > (javaFile ? MAX_SOURCE_BYTES : MAX_ARCHIVE_BYTES)) {
+      setError(javaFile ? "Java-файл больше лимита 2 МиБ." : "ZIP-архив больше лимита 16 МиБ.");
       return;
     }
 
     setBusy(true);
     try {
-      const project = await uploadJavaFile(file);
+      const project = await uploadProjectFile(file);
       router.push(`/projects/${project.id}`);
     } catch (cause) {
       setError(uploadErrorMessage(cause));
@@ -58,8 +62,8 @@ export function UploadPanel() {
           {busy ? <LoaderCircle className="spin" /> : <FileUp />}
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <strong className="text-xs text-slate-200">{busy ? "Загружаем проект…" : "Перетащите .java сюда"}</strong>
-          <span className="text-[10px] text-slate-400">{busy ? "Создаём приватную сессию и сохраняем исходник" : "или выберите файл на компьютере"}</span>
+          <strong className="text-xs text-slate-200">{busy ? "Загружаем проект…" : "Перетащите .java или .zip сюда"}</strong>
+          <span className="text-[10px] text-slate-400">{busy ? "Создаём приватную сессию и сохраняем исходник" : "Java-файл до 2 МиБ · ZIP до 16 МиБ"}</span>
         </span>
         <ArrowUpRight className="w-4 text-slate-500" />
       </button>
@@ -67,7 +71,7 @@ export function UploadPanel() {
         ref={inputRef}
         className="sr-only"
         type="file"
-        accept=".java,text/x-java-source"
+        accept=".java,.zip,text/x-java-source,application/zip"
         aria-label="Выбрать файл Java"
         tabIndex={-1}
         onChange={(event) => {
@@ -77,7 +81,7 @@ export function UploadPanel() {
       />
       {error ? <p className="mt-2.5 text-[11px] text-rose-300" role="alert">{error}</p> : null}
       <div className="mt-2.5 flex justify-between gap-3 font-mono text-[9px] text-slate-500 max-[700px]:flex-col">
-        <span className="inline-flex items-center gap-1.5"><FileCode2 size={15} /> Один файл · до 2 МБ</span>
+        <span className="inline-flex items-center gap-1.5"><FileCode2 size={15} /> .java или ZIP-проект</span>
         <span className="inline-flex items-center gap-1.5"><LockKeyhole size={14} /> Приватная гостевая сессия</span>
       </div>
     </div>
@@ -87,7 +91,10 @@ export function UploadPanel() {
 function uploadErrorMessage(cause: unknown) {
   if (!(cause instanceof ApiError)) return "Не удалось загрузить файл. Проверьте соединение с API.";
   switch (cause.code) {
-    case "project_too_large": return "Файл превышает лимит 2 МиБ.";
+    case "project_too_large": return "Файл превышает допустимый размер.";
+    case "invalid_archive": return "ZIP-архив повреждён или не читается.";
+    case "unsafe_archive_path": return "В архиве найден небезопасный путь.";
+    case "no_java_sources": return "В архиве не найдено Java-файлов.";
     case "invalid_request": return "API не принял файл. Проверьте расширение и кодировку UTF-8.";
     case "unauthorized": return "Не удалось создать гостевую сессию. Попробуйте ещё раз.";
     case "request_failed": return "Сервер недоступен. Запустите API и попробуйте снова.";
