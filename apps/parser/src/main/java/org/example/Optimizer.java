@@ -581,7 +581,7 @@ final class Optimizer {
     }
 
     /** {@code return field;} / {@code return this.field;} or an implicit record accessor, not overridable in the project. */
-    private static boolean isTrivialAccessor(ProjectAnalyzer.Loaded loaded, IMethodBinding b) {
+    static boolean isTrivialAccessor(ProjectAnalyzer.Loaded loaded, IMethodBinding b) {
         return trivialMember(loaded, b, false);
     }
 

@@ -43,6 +43,8 @@ CASES = [
         "add_item ITM-101;Ноутбук Pro 15;Электроника;90000;2\n"
         "add_item ITM-105;Кабель;Аксессуары;300;40\nmerge_inventory\ninventory\nexit\n",
     ),
+    ("available", "add_item ITM-900;Тест;Склад;10;1\navailable ITM-900,ITM-102\nexit\n"),
+    ("labels", "labels\nadd_item ITM-901;Метка;Склад;5;3\nlabels\nexit\n"),
     ("unknown-command", "foo\nexit\n"),
     ("eof-without-exit", "orders\n"),
 ]
@@ -202,6 +204,22 @@ def main():
         after = find(api.call("GET", p + "/complexity")["methods"], "method_id", METHOD)
         print(f"demo: optimization applied -> revision {candidate}; method is now {after['time_complexity']}")
 
+        # two more rules of the optimizer, applied on top: list.contains in a loop -> HashSet, String += -> StringBuilder
+        extra = []
+        for rule in ("contains_to_hashset", "string_concat_to_builder"):
+            listing = api.call("GET", p + f"/optimizations?source_level={LEVEL}")["proposals"]
+            found = next((x for x in listing if x["rule"] == rule and x["applicability"] == "applicable"), None)
+            if found is None:
+                fail(f"no applicable {rule} proposal in the demo monolith")
+            pv = api.call("POST", p + f"/optimizations/{found['id']}/preview", {"base_revision": candidate, "source_level": LEVEL})
+            done = api.call("POST", p + f"/optimizations/{found['id']}/apply", {
+                "base_revision": candidate, "source_level": LEVEL, "preview_sha256": pv["preview_sha256"],
+                "acknowledged_assumptions": [a["id"] for a in found["assumptions"]]})
+            candidate = done["revision"]
+            extra.append({"rule": rule, "method_id": found["method_id"], "revision": candidate,
+                          "assumptions": [a["id"] for a in found["assumptions"]]})
+            print(f"demo: {rule} applied to {found['method_id']} -> revision {candidate}")
+
         verify = api.call("POST", p + "/verify", {
             "baseline_revision": 1, "candidate_revision": candidate, "repeats": 2,
             "test_cases": [{"name": n, "stdin": s} for n, s in CASES]})
@@ -257,7 +275,7 @@ def main():
              | {"diff_files": [{"path": d["path"], "status": d["status"], "additions": d["additions"], "deletions": d["deletions"]} for d in split["diff"]]})
         save(staging, "11-decomposition-verify.json", split_verify)
         (staging / "SUMMARY.md").write_text(
-            summary(meta, before, after, proposal, applied, verify, bench, split_preview, split, split_verify), encoding="utf-8")
+            summary(meta, before, after, proposal, applied, verify, bench, split_preview, split, split_verify, extra), encoding="utf-8")
     finally:
         process.terminate()
         try:
@@ -277,7 +295,7 @@ def main():
     print(f"demo: evidence written to {out}")
 
 
-def summary(meta, before, after, proposal, applied, verify, bench, split_preview, split, split_verify):
+def summary(meta, before, after, proposal, applied, verify, bench, split_preview, split, split_verify, extra):
     runtime = bench["runtime"]
     lines = [
         "# Demo run — evidence",
@@ -299,6 +317,8 @@ def summary(meta, before, after, proposal, applied, verify, bench, split_preview
         f"- Proposal: {proposal['title']} — `{proposal['complexity']['scan_before']}` → `{proposal['complexity']['scan_after']}`; "
         f"assumptions acknowledged: {', '.join(a['id'] for a in proposal['assumptions'])}.",
         f"- Applied as revision {applied['revision']}; static re-analysis of the rewritten method: **{after['time_complexity']}**.",
+        *[f"- Then `{item['rule']}` on `{item['method_id']}` (revision {item['revision']}; assumptions acknowledged: "
+          f"{', '.join(item['assumptions']) or 'none'})." for item in extra],
         *([f"  The proposal itself predicts `{proposal['complexity']['scan_after']}` for the replaced scan. The analyzer's bound for the whole "
            "method is an upper bound and can stay pessimistic (it cannot prove that the loops over matched groups sum to the number of "
            "matching pairs), so the measured runtime in section 3 is the evidence for the effect."]

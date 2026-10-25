@@ -75,6 +75,26 @@
           }
         },
         "method_id": "Main.DataOptimizer.reconcileOrdersWithTransactions(List<Order>,List<Transaction>)"
+      },
+      {
+        "file": null,
+        "finding": {
+          "explanation": "Strings are immutable: every concatenation on line 632 copies all characters collected so far, so building the result takes up to quadratic time in its length.",
+          "id": "string_concat_in_loop",
+          "message": "String 'labels' is extended inside a loop",
+          "node_ids": [
+            "m59.n3"
+          ],
+          "recommendation": "Collect the pieces in a StringBuilder and call toString() once after the loop (or use String.join / Collectors.joining).",
+          "severity": "warning",
+          "source_range": {
+            "end_line": 632,
+            "length": 52,
+            "line": 632,
+            "start": 22886
+          }
+        },
+        "method_id": "Main.OutputFormatter.buildLabels(List<Item>)"
       }
     ],
     "revision": 1

@@ -102,7 +102,7 @@ final class ContainsToSetRule {
                 public boolean visit(MethodDeclaration md) {
                     ProjectGraph.Link link = loaded.links().get(md);
                     if (md.getBody() != null && link != null) {
-                        scanMethod(json, md, link.methodId(), all);
+                        scanMethod(loaded, json, md, link.methodId(), all);
                     }
                     return true;
                 }
@@ -124,7 +124,7 @@ final class ContainsToSetRule {
         return t != null && (SAFE_ELEMENTS.contains(t.getErasure().getQualifiedName()) || t.isEnum());
     }
 
-    private static void scanMethod(AstJson json, MethodDeclaration md, String methodId, List<Candidate> out) {
+    private static void scanMethod(ProjectAnalyzer.Loaded loaded, AstJson json, MethodDeclaration md, String methodId, List<Candidate> out) {
         // every list.contains(arg) with a local list or parameter as receiver
         Map<IVariableBinding, List<MethodInvocation>> byList = new LinkedHashMap<>();
         md.getBody().accept(new ASTVisitor() {
@@ -148,7 +148,7 @@ final class ContainsToSetRule {
                 }
             }
             for (Map.Entry<Statement, List<MethodInvocation>> loop : perLoop.entrySet()) {
-                out.add(candidate(json, md, methodId, list, loop.getKey(), loop.getValue()));
+                out.add(candidate(loaded, json, md, methodId, list, loop.getKey(), loop.getValue()));
             }
         }
     }
@@ -203,7 +203,7 @@ final class ContainsToSetRule {
         return uses;
     }
 
-    private static Candidate candidate(AstJson json, MethodDeclaration md, String methodId, IVariableBinding list, Statement loop,
+    private static Candidate candidate(ProjectAnalyzer.Loaded loaded, AstJson json, MethodDeclaration md, String methodId, IVariableBinding list, Statement loop,
             List<MethodInvocation> calls) {
         Candidate c = new Candidate();
         c.json = json;
@@ -272,7 +272,7 @@ final class ContainsToSetRule {
         c.aliasable = isParameter || escapes[0];
         boolean projectCalls = false;
         if (c.aliasable) {
-            projectCalls = callsProjectCode(loop);
+            projectCalls = callsProjectCode(loaded, loop);
         }
         c.preconditions.add(new Precondition("no_project_calls_when_aliasable", !projectCalls,
                 !c.aliasable ? "'" + c.listName + "' is a local that never leaves the method, so no other code can change it."
@@ -284,7 +284,7 @@ final class ContainsToSetRule {
         return c;
     }
 
-    private static boolean callsProjectCode(Statement loop) {
+    private static boolean callsProjectCode(ProjectAnalyzer.Loaded loaded, Statement loop) {
         boolean[] found = {false};
         loop.accept(new ASTVisitor() {
             private void check(IMethodBinding m) {
@@ -293,7 +293,8 @@ final class ContainsToSetRule {
                     return;
                 }
                 String owner = m.getDeclaringClass().getErasure().getQualifiedName();
-                if (!owner.startsWith("java.")) {
+                // a getter that only returns a field cannot change a list
+                if (!owner.startsWith("java.") && !Optimizer.isTrivialAccessor(loaded, m)) {
                     found[0] = true;
                 }
             }

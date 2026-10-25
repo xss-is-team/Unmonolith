@@ -1,9 +1,9 @@
 {
-  "report_id": "e1f50064-cb6e-4498-a320-67e0073ca191",
-  "created_at": "2026-10-25T03:19:19.601475Z",
+  "report_id": "842db868-5b30-44de-9484-7c071da54587",
+  "created_at": "2026-10-25T06:37:38.728596Z",
   "status": "completed",
   "baseline_revision": 1,
-  "candidate_revision": 2,
+  "candidate_revision": 4,
   "settings": {
     "warmup_iterations": 3,
     "measured_iterations": 12,
@@ -58,18 +58,25 @@
   },
   "timings": {
     "baseline": {
-      "compile_and_setup_ms": 1154,
-      "harness_setup_ms": 959,
-      "benchmark_process_ms": 1183
+      "compile_and_setup_ms": 1182,
+      "harness_setup_ms": 962,
+      "benchmark_process_ms": 1270
     },
     "candidate": {
-      "compile_and_setup_ms": 1135,
-      "harness_setup_ms": 980,
-      "benchmark_process_ms": 827
+      "compile_and_setup_ms": 1199,
+      "harness_setup_ms": 1003,
+      "benchmark_process_ms": 840
     }
   },
   "static_complexity": {
     "changes": [
+      {
+        "method_id": "Main.DataOptimizer.filterUnavailableInventory(List<Item>,List<String>)",
+        "before": "O(n*m)",
+        "after": "O(n + m)",
+        "confidence_before": "medium",
+        "confidence_after": "medium"
+      },
       {
         "method_id": "Main.DataOptimizer.mergeDuplicateItemsQuadratic(List<Item>)",
         "before": "O(n^2)",
@@ -96,23 +103,23 @@
         "baseline": {
           "status": "completed",
           "samples_ns": [
-            61288291,
-            4807125,
-            4124583,
-            3570625,
-            3081125,
-            2807959,
-            2886750,
-            3270000,
-            51677583,
-            3180417,
-            3110875,
-            2787125
+            63094625,
+            5131292,
+            4458250,
+            3503833,
+            3415750,
+            3148334,
+            2991375,
+            4001542,
+            4036541,
+            3379875,
+            3049708,
+            2810542
           ],
           "warmup_ns": [
-            20779375,
-            8782000,
-            6714125
+            31777209,
+            9082584,
+            6140667
           ],
           "stdout_sha256": "60276f57d2b071fec409f40a36e79c316259dc6cf8907f5592cce116f94c242f",
           "stdout_bytes": 15199,
@@ -122,23 +129,23 @@
         "candidate": {
           "status": "completed",
           "samples_ns": [
-            5464208,
-            4047625,
-            4036291,
-            3055458,
-            2695834,
-            56912833,
-            3295000,
-            3271542,
-            2638125,
-            2729083,
-            2444584,
-            2038875
+            4727000,
+            4031583,
+            58239250,
+            3645667,
+            3151958,
+            2731833,
+            2925541,
+            2505333,
+            2715208,
+            2123917,
+            2066667,
+            52912292
           ],
           "warmup_ns": [
-            20508666,
-            8407417,
-            7208125
+            66087542,
+            9796125,
+            6773792
           ],
           "stdout_sha256": "60276f57d2b071fec409f40a36e79c316259dc6cf8907f5592cce116f94c242f",
           "stdout_bytes": 15199,
@@ -147,37 +154,40 @@
         },
         "baseline_stats": {
           "iterations": 12,
-          "median_ns": 3225209,
-          "min_ns": 2787125,
-          "max_ns": 61288291,
-          "p25_ns": 3032531,
-          "p75_ns": 4295219,
-          "relative_spread": 0.39150579078751174,
-          "mean_ns": 12216038.166666666,
-          "stddev_ns": 20786540.634459015,
-          "mad_ns": 381333
+          "median_ns": 3459792,
+          "min_ns": 2810542,
+          "max_ns": 63094625,
+          "p25_ns": 3123678,
+          "p75_ns": 4141968,
+          "relative_spread": 0.29432116150335047,
+          "mean_ns": 8585138.916666666,
+          "stddev_ns": 17179312.291502036,
+          "mad_ns": 505084
         },
         "candidate_stats": {
           "iterations": 12,
-          "median_ns": 3163500,
-          "min_ns": 2038875,
-          "max_ns": 56912833,
-          "p25_ns": 2681407,
-          "p75_ns": 4039125,
-          "relative_spread": 0.4291822348664454,
-          "mean_ns": 7719121.5,
-          "stddev_ns": 15519163.9825428,
-          "mad_ns": 622146
+          "median_ns": 3038750,
+          "min_ns": 2066667,
+          "max_ns": 58239250,
+          "p25_ns": 2662739,
+          "p75_ns": 4205437,
+          "relative_spread": 0.5076751953928424,
+          "mean_ns": 11814687.416666666,
+          "stddev_ns": 20486704.387627307,
+          "mad_ns": 760875
         },
         "equivalent": true,
-        "verdict": "no_significant_difference",
+        "verdict": "insufficient_evidence",
         "speedup": null,
         "speedup_ci95": [
-          0.7879553282952096,
-          1.5195590327169275
+          0.7520503619634745,
+          1.497879922549218
         ],
-        "p_value": 0.3123214494333011,
-        "notes": []
+        "p_value": 0.26023630490221783,
+        "notes": [
+          "the medians differ but the evidence is not strong enough for a claim (significance, effect size, confidence interval and interquartile separation must all agree)",
+          "high run-to-run spread (interquartile range above 50% of the median)"
+        ]
       },
       {
         "name": "merge-600",
@@ -187,23 +197,23 @@
         "baseline": {
           "status": "completed",
           "samples_ns": [
-            9406417,
-            8709958,
-            8524083,
-            10182292,
-            9291250,
-            8676333,
-            8385750,
-            10304125,
-            8945417,
-            7965000,
-            7324750,
-            52973083
+            9775250,
+            8732000,
+            62886625,
+            10178166,
+            9101666,
+            8519375,
+            7964167,
+            54922959,
+            8550542,
+            7992542,
+            7535125,
+            62101291
           ],
           "warmup_ns": [
-            10377250,
-            8854042,
-            11963958
+            9247750,
+            8877876,
+            10742042
           ],
           "stdout_sha256": "3d97f8dee8f1cc706db1e0d2a5ffaab2fadcdbfed7b062fa3a9da29ff9d0c144",
           "stdout_bytes": 59750,
@@ -213,23 +223,23 @@
         "candidate": {
           "status": "completed",
           "samples_ns": [
-            4769625,
-            4493666,
-            4428125,
-            4237250,
-            4104500,
-            57116583,
-            4792208,
-            4500500,
-            4359250,
-            4129208,
-            3952083,
-            3706292
+            4430416,
+            4306000,
+            60395208,
+            5085750,
+            4756375,
+            4959709,
+            4305666,
+            4088291,
+            4131250,
+            53299666,
+            4880750,
+            4083958
           ],
           "warmup_ns": [
-            4884750,
-            48740083,
-            5492375
+            6087125,
+            5179375,
+            5263166
           ],
           "stdout_sha256": "3d97f8dee8f1cc706db1e0d2a5ffaab2fadcdbfed7b062fa3a9da29ff9d0c144",
           "stdout_bytes": 59750,
@@ -238,37 +248,39 @@
         },
         "baseline_stats": {
           "iterations": 12,
-          "median_ns": 8827688,
-          "min_ns": 7324750,
-          "max_ns": 52973083,
-          "p25_ns": 8489500,
-          "p75_ns": 9600386,
-          "relative_spread": 0.12584110358227432,
-          "mean_ns": 12557371.5,
-          "stddev_ns": 12755730.384257076,
-          "mad_ns": 521146
+          "median_ns": 8916833,
+          "min_ns": 7535125,
+          "max_ns": 62886625,
+          "p25_ns": 8387667,
+          "p75_ns": 21364364,
+          "relative_spread": 1.4553033571448517,
+          "mean_ns": 21521642.333333332,
+          "stddev_ns": 23272444.38332237,
+          "mad_ns": 938479
         },
         "candidate_stats": {
           "iterations": 12,
-          "median_ns": 4393688,
-          "min_ns": 3706292,
-          "max_ns": 57116583,
-          "p25_ns": 4123031,
-          "p75_ns": 4567781,
-          "relative_spread": 0.10122475696954358,
-          "mean_ns": 8715774.166666666,
-          "stddev_ns": 15245589.570147725,
-          "mad_ns": 276834
+          "median_ns": 4593396,
+          "min_ns": 4083958,
+          "max_ns": 60395208,
+          "p25_ns": 4262062,
+          "p75_ns": 4991219,
+          "relative_spread": 0.15874028714267177,
+          "mean_ns": 13226919.916666666,
+          "stddev_ns": 20434142.67140287,
+          "mad_ns": 414230
         },
         "equivalent": true,
         "verdict": "faster",
-        "speedup": 2.0091749801078276,
+        "speedup": 1.9412288859919764,
         "speedup_ci95": [
-          1.8866207496398575,
-          2.2652872680742164
+          1.6992669325247425,
+          7.451697126144176
         ],
-        "p_value": 0.0005921402064212877,
-        "notes": []
+        "p_value": 0.002436873252338767,
+        "notes": [
+          "high run-to-run spread (interquartile range above 50% of the median)"
+        ]
       },
       {
         "name": "merge-1200",
@@ -278,23 +290,23 @@
         "baseline": {
           "status": "completed",
           "samples_ns": [
-            15005917,
-            12913709,
-            64245709,
-            13718125,
-            12602416,
-            59735042,
-            13789833,
-            12643416,
-            11966625,
-            14459875,
-            12963792,
-            12317833
+            14363625,
+            13065083,
+            64920667,
+            14288250,
+            13060792,
+            66301875,
+            13976041,
+            13568834,
+            16529958,
+            14529666,
+            67382125,
+            14731667
           ],
           "warmup_ns": [
-            15138667,
-            13834417,
-            69353875
+            16154792,
+            14256708,
+            65335542
           ],
           "stdout_sha256": "7b161a918ca4c92b28d8830e0e4a4f1b0c919917cad880798cc5b2e778ef13fe",
           "stdout_bytes": 119150,
@@ -304,23 +316,23 @@
         "candidate": {
           "status": "completed",
           "samples_ns": [
-            5289167,
-            6592417,
-            4791959,
-            49600250,
-            5640166,
-            5221209,
-            5104292,
-            4916958,
-            4983083,
-            4900042,
-            6007542,
-            5362458
+            5323166,
+            6905625,
+            5905166,
+            5435833,
+            5337000,
+            5271375,
+            4976417,
+            49731583,
+            5660875,
+            5532417,
+            5445875,
+            5182084
           ],
           "warmup_ns": [
-            58453208,
-            7172041,
-            6285834
+            6698666,
+            6288958,
+            5783667
           ],
           "stdout_sha256": "7b161a918ca4c92b28d8830e0e4a4f1b0c919917cad880798cc5b2e778ef13fe",
           "stdout_bytes": 119150,
@@ -329,37 +341,39 @@
         },
         "baseline_stats": {
           "iterations": 12,
-          "median_ns": 13340959,
-          "min_ns": 11966625,
-          "max_ns": 64245709,
-          "p25_ns": 12633166,
-          "p75_ns": 14596386,
-          "relative_spread": 0.14715733704001338,
-          "mean_ns": 21363524.333333332,
-          "stddev_ns": 19021581.155294348,
-          "mad_ns": 880835
+          "median_ns": 14446646,
+          "min_ns": 13060792,
+          "max_ns": 67382125,
+          "p25_ns": 13874239,
+          "p75_ns": 28627635,
+          "relative_spread": 1.02123330217962,
+          "mean_ns": 27226548.583333332,
+          "stddev_ns": 23525860.466538712,
+          "mad_ns": 1129688
         },
         "candidate_stats": {
           "iterations": 12,
-          "median_ns": 5255188,
-          "min_ns": 4791959,
-          "max_ns": 49600250,
-          "p25_ns": 4966552,
-          "p75_ns": 5732010,
-          "relative_spread": 0.14565758636988818,
-          "mean_ns": 9034128.583333334,
-          "stddev_ns": 12785602.63680136,
-          "mad_ns": 346688
+          "median_ns": 5440854,
+          "min_ns": 4976417,
+          "max_ns": 49731583,
+          "p25_ns": 5310218,
+          "p75_ns": 5721948,
+          "relative_spread": 0.07567378209376689,
+          "mean_ns": 9225618.0,
+          "stddev_ns": 12765469.827101888,
+          "mad_ns": 194750
         },
         "equivalent": true,
         "verdict": "faster",
-        "speedup": 2.538626401186789,
+        "speedup": 2.655216625919387,
         "speedup_ci95": [
-          2.25217308707124,
-          2.8328855402473057
+          2.477766808095136,
+          7.4781945968278745
         ],
-        "p_value": 0.0003842832856164602,
-        "notes": []
+        "p_value": 0.0003081177902299892,
+        "notes": [
+          "high run-to-run spread (interquartile range above 50% of the median)"
+        ]
       }
     ],
     "overall": {

@@ -625,6 +625,15 @@ public class Main {
                     orders.size(), paidCount, totalRevenue);
         }
 
+        /** Склейка строки в цикле: каждая конкатенация копирует всё накопленное. */
+        public static String buildLabels(List<Item> items) {
+            String labels = "";
+            for (Item item : items) {
+                labels += item.getId() + "=" + item.getName() + "; ";
+            }
+            return labels;
+        }
+
         public static void printCategoryStatistics(PrintStream out, Map<String, Integer> stats) {
             printHeader(out, "ПРОДАЖИ ПО КАТЕГОРИЯМ");
             for (Map.Entry<String, Integer> entry : stats.entrySet()) {
@@ -689,6 +698,15 @@ public class Main {
                     context.inventory.clear();
                     context.inventory.addAll(merged);
                     out.printf("Слияние завершено. Уникальных позиций: %d%n", context.inventory.size());
+                } else if ("available".equals(command)) {
+                    // Формат: available id1,id2 - товары, кроме снятых с продажи (contains() в цикле)
+                    List<String> discontinued = new ArrayList<String>();
+                    if (tokens.length > 1) {
+                        discontinued.addAll(Arrays.asList(tokens[1].split(",")));
+                    }
+                    OutputFormatter.printInventoryTable(out, DataOptimizer.filterUnavailableInventory(context.inventory, discontinued));
+                } else if ("labels".equals(command)) {
+                    out.println(OutputFormatter.buildLabels(context.inventory));
                 } else if ("add_order".equals(command)) {
                     // Формат: add_order orderId;customerId;itemId:qty:price,itemId:qty:price
                     if (tokens.length < 2) {
@@ -766,6 +784,8 @@ public class Main {
         out.println("  orders             - Просмотреть список всех заказов");
         out.println("  add_item <CSV>     - Добавить товар (id;name;category;price;quantity)");
         out.println("  merge_inventory    - Запустить объединение дубликатов склада (алгоритм со слайда 5)");
+        out.println("  available <ids>    - Товары кроме снятых с продажи (id через запятую)");
+        out.println("  labels             - Строка из подписей всех товаров");
         out.println("  add_order <CSV>    - Создать заказ (orderId;customerId;item1:qty:price,item2:qty:price)");
         out.println("  add_tx <CSV>       - Добавить платеж (txId;orderId;amount;type;success)");
         out.println("  reconcile          - Сверить оплату заказов с транзакциями");
