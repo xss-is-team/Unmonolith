@@ -6,12 +6,15 @@ import { createPortal } from "react-dom";
 import useSWR from "swr";
 import {
   Background,
+  BaseEdge,
   Controls,
+  getSmoothStepPath,
   Handle,
   MarkerType,
   Position,
   ReactFlow,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeChange,
   type NodeProps,
@@ -32,6 +35,7 @@ import { BlockEditor } from "@/components/block-editor";
 import { BLOCK_MIME, type BlockTemplate } from "@/components/block-palette";
 import { PreviewDialog } from "@/components/preview-dialog";
 import { ruFinding, ruText } from "@/lib/ru";
+import { modelAssumptions, originsOf, pretty, readFormula, variablesOf } from "@/lib/complexity";
 import { DiffView } from "@/components/diff-view";
 import {
   ApiError,
@@ -119,6 +123,47 @@ const CfgFlowNode = memo(function CfgFlowNode({ data, selected }: NodeProps<Flow
 
 const nodeTypes = { cfg: CfgFlowNode };
 
+type Point = { x: number; y: number };
+type RoutedData = { points?: Point[] | null };
+
+/** Path through the bend points ELK routed for this edge, with small rounded corners. */
+function routedPath(points: Point[], radius = 8) {
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const [prev, at, next] = [points[i - 1], points[i], points[i + 1]];
+    const r = Math.min(radius, Math.hypot(at.x - prev.x, at.y - prev.y) / 2, Math.hypot(next.x - at.x, next.y - at.y) / 2);
+    const before = { x: at.x - Math.sign(at.x - prev.x) * r, y: at.y - Math.sign(at.y - prev.y) * r };
+    const after = { x: at.x + Math.sign(next.x - at.x) * r, y: at.y + Math.sign(next.y - at.y) * r };
+    d += ` L ${before.x} ${before.y} Q ${at.x} ${at.y} ${after.x} ${after.y}`;
+  }
+  const last = points[points.length - 1];
+  return `${d} L ${last.x} ${last.y}`;
+}
+
+/** Midpoint of the longest segment: where a label is least likely to sit on another line. */
+function labelPoint(points: Point[]) {
+  let best = { x: points[0].x, y: points[0].y, length: -1 };
+  for (let i = 1; i < points.length; i++) {
+    const length = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+    if (length > best.length) best = { x: (points[i].x + points[i - 1].x) / 2, y: (points[i].y + points[i - 1].y) / 2, length };
+  }
+  return best;
+}
+
+const RoutedEdge = memo(function RoutedEdge(props: EdgeProps<Edge<RoutedData>>) {
+  const points = props.data?.points;
+  if (points && points.length >= 2) {
+    const at = labelPoint(points);
+    return <BaseEdge path={routedPath(points)} markerEnd={props.markerEnd} style={props.style} label={props.label} labelX={at.x} labelY={at.y}
+      labelStyle={props.labelStyle} labelShowBg labelBgStyle={props.labelBgStyle} labelBgPadding={props.labelBgPadding} labelBgBorderRadius={props.labelBgBorderRadius} />;
+  }
+  const [path, labelX, labelY] = getSmoothStepPath(props);
+  return <BaseEdge path={path} markerEnd={props.markerEnd} style={props.style} label={props.label} labelX={labelX} labelY={labelY}
+    labelStyle={props.labelStyle} labelShowBg labelBgStyle={props.labelBgStyle} labelBgPadding={props.labelBgPadding} labelBgBorderRadius={props.labelBgBorderRadius} />;
+});
+
+const edgeTypes = { routed: RoutedEdge };
+
 export function CfgViewer({
   projectId,
   revision,
@@ -157,6 +202,7 @@ export function CfgViewer({
     : methods[0]?.selector ?? "";
   const method = methods.find((item) => item.selector === selector);
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const [routes, setRoutes] = useState<Map<number, Point[]>>(new Map());
   const [activeBranch, setActiveBranch] = useState<CfgEdge | null>(null);
   const [conditionDraft, setConditionDraft] = useState<{ nodeId: string; value: string } | null>(null);
   const [transformState, setTransformState] = useState<"idle" | "saving" | "done" | "error">("idle");
@@ -210,22 +256,40 @@ export function CfgViewer({
         "elk.algorithm": "layered",
         "elk.direction": "DOWN",
         "elk.edgeRouting": "ORTHOGONAL",
-        "elk.layered.spacing.nodeNodeBetweenLayers": "26",
-        "elk.spacing.nodeNode": "30",
-        "elk.layered.cycleBreaking.strategy": "GREEDY",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "34",
+        "elk.spacing.nodeNode": "34",
+        // keep parallel lines apart and route around nodes instead of through each other
+        "elk.spacing.edgeEdge": "16",
+        "elk.spacing.edgeNode": "20",
+        "elk.layered.spacing.edgeEdgeBetweenLayers": "14",
+        "elk.layered.spacing.edgeNodeBetweenLayers": "18",
+        "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+        "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+        "elk.layered.cycleBreaking.strategy": "MODEL_ORDER",
+        "elk.layered.mergeEdges": "false",
       },
       children: cfg.nodes.map((node) => ({
         id: node.id,
         width: NODE_WIDTH,
         height: NODE_HEIGHT,
       })),
+      // loop back edges are laid out reversed, so the graph is acyclic: entry on top, every loop body below its head
       edges: cfg.edges.map((edge, index) => ({
         id: `e${index}`,
-        sources: [edge.from],
-        targets: [edge.to],
+        sources: [edge.back ? edge.to : edge.from],
+        targets: [edge.back ? edge.from : edge.to],
       })),
     })).then((graph) => {
       if (!cancelled) {
+        const routed = new Map<number, Point[]>();
+        for (const edge of (graph.edges ?? []) as { id: string; sections?: { startPoint: Point; endPoint: Point; bendPoints?: Point[] }[] }[]) {
+          const section = edge.sections?.[0];
+          const index = Number(edge.id.slice(1));
+          if (!section || !Number.isInteger(index)) continue;
+          const points = [section.startPoint, ...(section.bendPoints ?? []), section.endPoint];
+          routed.set(index, cfg.edges[index]?.back ? points.reverse() : points);
+        }
+        setRoutes(routed);
         setPositions(new Map(
           graph.children?.map((node) => [
             node.id,
@@ -297,7 +361,9 @@ export function CfgViewer({
         id: `${edge.from}-${edge.to}-${index}`,
         source: edge.from,
         target: edge.to,
-        type: "smoothstep" as const,
+        type: "routed" as const,
+        // a dragged node leaves its routed lines behind, so they fall back to a plain path while it moves
+        data: { points: drag && (drag.id === edge.from || drag.id === edge.to) ? null : routes.get(index) ?? null },
         label: edge.label || formatEdgeKind(edge.kind),
         markerEnd: { type: MarkerType.ArrowClosed, color: active ? "#bb613e" : "#69786d" },
         className: active ? "cfg-edge--active" : undefined,
@@ -312,7 +378,7 @@ export function CfgViewer({
         labelBgBorderRadius: 2,
       };
     }) ?? [],
-  }), [activeEdges, cfg, drag, highlighted, positions, selectedNode?.id, traceOf]);
+  }), [activeEdges, cfg, drag, highlighted, positions, routes, selectedNode?.id, traceOf]);
 
   /** The statement node under a screen point, other than `except`. */
   function statementUnder(clientX: number, clientY: number, except = "") {
@@ -498,8 +564,9 @@ export function CfgViewer({
               nodes={flow.nodes}
               edges={flow.edges}
               nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
               onNodeClick={onNodeClick}
-              onInit={(instance) => { flowRef.current = instance as ReactFlowInstance<FlowNode, Edge>; }}
+              onInit={(instance) => { flowRef.current = instance as unknown as ReactFlowInstance<FlowNode, Edge>; }}
               fitView
               fitViewOptions={{ padding: 0.06, minZoom: 0.5, maxZoom: 1.2 }}
               minZoom={0.04}
@@ -586,33 +653,57 @@ function BigOPanel({
   analysis: MethodAnalysis;
   onSelect: (range: SourceRange | null, keepGraphVisible?: boolean) => void;
 }) {
+  const complexity = analysis.complexity;
+  const variables = variablesOf(complexity);
+  const origins = originsOf(complexity, analysis.fragments);
   return (
-    <section className="grid grid-cols-[170px_1fr] gap-3 border-t border-slate-800 bg-slate-950 p-3" aria-label="Оценка сложности метода">
-      <div className="grid gap-1 rounded border border-slate-700 bg-violet-400/5 p-2.5 text-[12px]">
-        <span className="flex items-center gap-1.5 text-slate-500"><Sparkles size={15} /> Big O</span>
-        <strong className="font-mono text-[18px] text-violet-200">{analysis.complexity.time}</strong>
-        <small className="text-slate-500">уверенность: {confidenceLabel(analysis.complexity.confidence)}</small>
+    <section className="grid gap-3 border-t border-slate-800 bg-slate-950 p-3 text-[13px] leading-5 text-slate-300" aria-label="Оценка сложности метода">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="flex items-center gap-1.5 text-[12px] text-slate-500"><Sparkles size={15} /> Сложность по времени</span>
+        <strong className="rounded bg-violet-400/10 px-2 py-0.5 font-mono text-[18px] text-violet-200">{pretty(complexity.time)}</strong>
+        <small className="text-[11px] text-slate-500">уверенность: {confidenceLabel(complexity.confidence)} · оценка сверху по коду, без запуска</small>
       </div>
-      <div className="grid content-start gap-1.5 text-[13px] leading-5 text-slate-400">
-        <p className="m-0">{ruText(analysis.complexity.reason)}</p>
-        {analysis.complexity.assumptions.length ? (
-          <details className="text-[12px]"><summary className="cursor-pointer text-slate-500">Допущения · {analysis.complexity.assumptions.length}</summary><ul className="mt-1 [&_li]:leading-5">{analysis.complexity.assumptions.map((item) => <li key={item}>{ruText(item)}</li>)}</ul></details>
-        ) : null}
-        {analysis.findings.length ? (
-          <div className="grid gap-1.5">
-            {analysis.findings.map((finding) => (
-              <details key={finding.id} className="rounded border border-slate-700 bg-slate-900">
-                <summary className="cursor-pointer p-2 text-[13px] text-slate-300">{ruFinding(finding).title}</summary>
-                <div className="border-t border-slate-800 p-2 text-[12px] leading-5">
-                  <p className="m-0">{ruFinding(finding).explanation}</p>
-                  <p className="mt-1 mb-0 text-slate-300">Рекомендация: {ruFinding(finding).recommendation}</p>
-                  <Button variant="ghost" size="sm" className="mt-1.5" onClick={() => onSelect(finding.source_range)}>К коду</Button>
-                </div>
-              </details>
-            ))}
-          </div>
-        ) : <small className="text-emerald-300">Рекомендаций для выбранного метода нет.</small>}
+      {variables.length ? (
+        <div className="grid gap-1" aria-label="Что означают буквы">
+          <strong className="text-[12px] text-slate-400">Что означают буквы <span className="font-normal text-slate-500">· размеры входных данных, от которых зависит время</span></strong>
+          {variables.map((item) => <p key={item.letter} className="m-0 flex gap-2"><code className="w-5 shrink-0 font-mono font-semibold text-violet-200">{item.letter}</code><span>{item.what}</span></p>)}
+        </div>
+      ) : null}
+      <div className="grid gap-1" aria-label="Как читать оценку">
+        <strong className="text-[12px] text-slate-400">Как читать</strong>
+        {readFormula(complexity).map((sentence) => <p key={sentence} className="m-0">{sentence}</p>)}
       </div>
+      {origins.length ? (
+        <div className="grid gap-1" aria-label="Откуда берётся оценка">
+          <strong className="text-[12px] text-slate-400">Откуда берётся (циклы метода)</strong>
+          {origins.map((origin) => (
+            <button key={`${origin.range.start}`} type="button" className="flex items-center gap-2 rounded border border-slate-800 bg-slate-900/60 px-2 py-1 text-left hover:border-cyan-700" onClick={() => onSelect(origin.range, true)}>
+              <span className="w-16 shrink-0 font-mono text-[11px] text-slate-500">стр. {origin.line ?? "—"}</span>
+              <span className="min-w-0 flex-1 truncate">{origin.label}</span>
+              <code className="shrink-0 font-mono text-[12px] text-violet-200">{origin.time}</code>
+            </button>
+          ))}
+          <small className="text-[11px] text-slate-500">Вложенный цикл даёт произведение, следующие друг за другом — сумму. Клик — строка в коде и узел на графе.</small>
+        </div>
+      ) : null}
+      <details className="text-[12px] text-slate-400"><summary className="cursor-pointer text-slate-500">Как анализатор пришёл к оценке и что он допускает</summary>
+        <p className="m-0 mt-1">{ruText(complexity.reason)}</p>
+        <ul className="mt-1 mb-0 pl-4 [&_li]:leading-5">{modelAssumptions(complexity).map((item) => <li key={item}>{ruText(item)}</li>)}</ul>
+      </details>
+      {analysis.findings.length ? (
+        <div className="grid gap-1.5">
+          {analysis.findings.map((finding) => (
+            <details key={finding.id + finding.source_range.start} className="rounded border border-slate-700 bg-slate-900">
+              <summary className="cursor-pointer p-2 text-[13px] text-slate-300">{ruFinding(finding).title}</summary>
+              <div className="border-t border-slate-800 p-2 text-[12px] leading-5">
+                <p className="m-0">{ruFinding(finding).explanation}</p>
+                <p className="mt-1 mb-0 text-slate-300">Рекомендация: {ruFinding(finding).recommendation}</p>
+                <Button variant="ghost" size="sm" className="mt-1.5" onClick={() => onSelect(finding.source_range)}>К коду</Button>
+              </div>
+            </details>
+          ))}
+        </div>
+      ) : <small className="text-emerald-300">Проблем в этом методе не найдено.</small>}
     </section>
   );
 }

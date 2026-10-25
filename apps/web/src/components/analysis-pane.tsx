@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowRight, Check, Gauge, LoaderCircle, Zap } from "luci
 import { Button } from "@/components/ui/button";
 import { ComplexityOverview } from "@/components/complexity-overview";
 import { ruFinding } from "@/lib/ru";
+import { pretty, variablesOf } from "@/lib/complexity";
 import type {
   AnalysisResult, ComplexityReport, Diagnostic, FindingsReport, OptimizationProposal, SourceRange,
 } from "@/lib/api";
@@ -38,7 +39,9 @@ export function AnalysisPane({
 }) {
 
   const list = findings?.findings ?? [];
-  const current = complexity?.methods.find((item) => item.method_id === selectedMethodId)?.time_complexity ?? null;
+  const currentEntry = complexity?.methods.find((item) => item.method_id === selectedMethodId) ?? null;
+  const current = currentEntry?.time_complexity ?? null;
+  const legend = currentEntry ? variablesOf(currentEntry) : [];
   const proposalBefore = selectedProposal && selectedProposal.method_id === selectedMethodId ? (selectedProposal.complexity.method_before ?? selectedProposal.complexity.scan_before) : null;
   const proposalAfter = selectedProposal && selectedProposal.method_id === selectedMethodId ? selectedProposal.complexity.scan_after : null;
   const tabs: [Tab, string, string][] = [["problems", `Проблемы ${list.length}`, `Проблемы (${list.length})`], ["recommendations", `Советы ${proposals.length}`, `Рекомендации (${proposals.length})`], ["metrics", "Метрики", "Метрики"], ["edit", "Правка", "Правка графа"]];
@@ -98,9 +101,10 @@ export function AnalysisPane({
         <button type="button" className="flex items-center gap-2 bg-transparent text-left text-[13px] font-semibold text-slate-200" onClick={() => onTab("metrics")}><Gauge size={15} /> Сложность</button>
         <div className="flex flex-wrap items-center gap-2 text-[12px]">
           <span className="text-slate-500">Текущая:</span>
-          <code className="rounded bg-rose-500/15 px-1.5 py-0.5 font-mono text-rose-300">{current ?? "—"}</code>
+          <code className="rounded bg-rose-500/15 px-1.5 py-0.5 font-mono text-rose-300">{current ? pretty(current) : "—"}</code>
           {proposalAfter ? <><ArrowRight size={14} className="text-slate-600" /><span className="text-slate-500">После оптимизации:</span><code className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-emerald-300">{proposalAfter}</code></> : null}
         </div>
+        {legend.length ? <small className="text-[11px] leading-4 text-slate-400">{legend.map((item) => `${item.letter} — ${item.what}`).join("; ")}. Подробно — вкладка «Правка».</small> : current === "O(1)" ? <small className="text-[11px] text-slate-500">не зависит от размера входных данных</small> : null}
         {proposalBefore && proposalAfter ? <small className="text-[11px] leading-4 text-slate-500">Оценка заменяемого перебора: {proposalBefore} → {proposalAfter}; границу всего метода даёт анализатор после применения.</small> : null}
         <div className="flex items-center justify-between rounded-md border border-slate-800 bg-slate-900/50 p-2.5 text-[12px]">
           <div className="grid gap-0.5"><span className="flex items-center gap-1.5 text-slate-300"><Zap size={14} /> Оценка производительности</span><small className="text-slate-500">{speedup ? speedup.note : "Измеренное ускорение появится после замера (вкладка «Бенчмарк»)."}</small></div>
