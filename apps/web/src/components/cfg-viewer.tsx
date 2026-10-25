@@ -474,7 +474,7 @@ export function CfgViewer({
           <div className="flex flex-wrap items-center gap-2 text-[12px]">
             <span className="font-mono text-slate-400">Источник: {moveSource?.id ?? "нажмите на оператор"}</span>
             <label className="text-slate-400">Цель
-              <select aria-label="Целевой оператор" className="ml-1 h-8 max-w-[360px] rounded border border-slate-700 bg-[#08101d] px-2 text-slate-200" value={targetNodeId} onChange={(event) => setTargetNodeId(event.target.value)}>
+              <select aria-label="Целевой оператор" className="ml-1 h-8 w-full min-w-[160px] max-w-[420px] rounded border border-slate-700 bg-[#08101d] px-2 text-slate-200" value={targetNodeId} onChange={(event) => setTargetNodeId(event.target.value)}>
                 <option value="">Не выбрана</option>
                 {(cfg?.nodes ?? []).filter((node) => node.kind === "statement" && node.id !== moveNodeId).map((node) => <option value={node.id} key={node.id}>{node.id} · {node.text || node.statement_kind}</option>)}
               </select>

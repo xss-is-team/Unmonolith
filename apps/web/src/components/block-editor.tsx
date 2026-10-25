@@ -90,7 +90,7 @@ export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, 
           <button key={item.id} type="button" className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[12px] text-slate-300 hover:border-cyan-700" onClick={() => { setCode(item.code); setPreview(null); }}>{item.label}</button>
         ))}
       </div>
-      <div className="grid grid-cols-[1fr_auto] gap-2">
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
         <textarea className="min-h-16 rounded border border-slate-700 bg-[#08101d] p-2 font-mono text-[12px] text-slate-200" aria-label="Java-код блока" value={code} onChange={(event) => { setCode(event.target.value); setPreview(null); }} />
         <div className="grid content-start gap-1.5 text-[12px]">
           <label className="text-slate-400">Куда
@@ -106,20 +106,20 @@ export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, 
       <small className="font-mono text-slate-500">Выбран: {nodeId ? `${nodeId} · ${nodeLabel}` : "нажмите на оператор в графе"}</small>
       <div className="flex flex-wrap items-end gap-2 border-t border-slate-800 pt-2 text-[12px] text-slate-400" aria-label="Выделение метода">
         <strong className="flex items-center gap-1.5 text-[13px] text-slate-300"><Scissors size={15} /> Выделить метод</strong>
-        <label className="grid gap-0.5">С оператора
-          <select aria-label="Первый оператор выделения" className="h-8 max-w-[240px] rounded border border-slate-700 bg-[#08101d] px-2 text-slate-200" value={firstId} onChange={(event) => { setFirstId(event.target.value); setPreview(null); }}>
+        <label className="grid min-w-[150px] flex-1 gap-0.5">С оператора
+          <select aria-label="Первый оператор выделения" className="h-8 w-full rounded border border-slate-700 bg-[#08101d] px-2 text-slate-200" value={firstId} onChange={(event) => { setFirstId(event.target.value); setPreview(null); }}>
             <option value="">—</option>
             {statements.map((item) => <option key={item.id} value={item.id}>{item.id} · {item.text}</option>)}
           </select>
         </label>
-        <label className="grid gap-0.5">По оператор
-          <select aria-label="Последний оператор выделения" className="h-8 max-w-[240px] rounded border border-slate-700 bg-[#08101d] px-2 text-slate-200" value={lastId} onChange={(event) => { setLastId(event.target.value); setPreview(null); }}>
+        <label className="grid min-w-[150px] flex-1 gap-0.5">По оператор
+          <select aria-label="Последний оператор выделения" className="h-8 w-full rounded border border-slate-700 bg-[#08101d] px-2 text-slate-200" value={lastId} onChange={(event) => { setLastId(event.target.value); setPreview(null); }}>
             <option value="">—</option>
             {statements.map((item) => <option key={item.id} value={item.id}>{item.id} · {item.text}</option>)}
           </select>
         </label>
-        <label className="grid gap-0.5">Имя метода
-          <input aria-label="Имя нового метода" className="h-8 w-36 rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-slate-200" value={methodName} onChange={(event) => { setMethodName(event.target.value); setPreview(null); }} />
+        <label className="grid min-w-[130px] flex-1 gap-0.5">Имя метода
+          <input aria-label="Имя нового метода" className="h-8 w-full rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-slate-200" value={methodName} onChange={(event) => { setMethodName(event.target.value); setPreview(null); }} />
         </label>
         <Button size="sm" variant="outline" disabled={!firstId || !lastId || !methodName.trim() || busy} onClick={() => void request({ type: "extract_method", first_node_id: firstId, last_node_id: lastId, name: methodName.trim() })}>{busy ? <LoaderCircle className="spin" /> : <Scissors />} Показать извлечение</Button>
       </div>

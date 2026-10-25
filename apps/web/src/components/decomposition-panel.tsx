@@ -113,7 +113,7 @@ export function DecompositionPanel({ projectId, revision, sourceLevel, dirty, on
       ) : null}
 
       {list && mode === "types" ? (
-        <div className="grid max-w-5xl gap-1.5">
+        <div className="grid w-full gap-1.5">
           {list.candidates.map((item) => (
             <label key={item.id} className={`grid grid-cols-[auto_1fr] items-start gap-2 rounded border p-2 text-[12px] ${item.extractable ? "border-slate-800 bg-slate-900/50" : "border-slate-800/60 bg-slate-950/40 opacity-70"}`}>
               <input type="checkbox" disabled={!item.extractable} checked={types.includes(item.id)} onChange={() => toggle(item.id, types, setTypes)} />
@@ -128,14 +128,14 @@ export function DecompositionPanel({ projectId, revision, sourceLevel, dirty, on
       ) : null}
 
       {list && mode === "groups" ? (
-        <div className="grid max-w-5xl gap-1.5">
+        <div className="grid w-full gap-1.5">
           {list.method_groups.length === 0 ? <p className="m-0 text-[12px] text-slate-500">Групп статических методов с общим первым словом в названии нет.</p> : null}
           {list.method_groups.map((item) => (
             <div key={item.id} className={`grid grid-cols-[auto_1fr] items-start gap-2 rounded border p-2 text-[12px] ${item.extractable ? "border-slate-800 bg-slate-900/50" : "border-slate-800/60 bg-slate-950/40 opacity-70"}`}>
               <input type="checkbox" aria-label={`Вынести ${item.name}`} disabled={!item.extractable} checked={groups.includes(item.id)} onChange={() => toggle(item.id, groups, setGroups)} />
               <div className="grid gap-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <input className="h-7 w-44 rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[12px] text-slate-200" aria-label={`Имя класса для ${item.id}`} defaultValue={item.name} disabled={!item.extractable} onChange={(event) => { setPreview(null); setNames((current) => ({ ...current, [item.id]: event.target.value.trim() === item.name ? "" : event.target.value.trim() })); }} />
+                  <input className="h-8 w-full max-w-xs rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[12px] text-slate-200" aria-label={`Имя класса для ${item.id}`} defaultValue={item.name} disabled={!item.extractable} onChange={(event) => { setPreview(null); setNames((current) => ({ ...current, [item.id]: event.target.value.trim() === item.name ? "" : event.target.value.trim() })); }} />
                   <span className="text-slate-500">из {item.host} · {item.lines} строк → {item.new_file}</span>
                 </div>
                 <small className="font-mono text-slate-400">{item.methods.map((method) => method.name).join(", ")}</small>
@@ -156,7 +156,7 @@ export function DecompositionPanel({ projectId, revision, sourceLevel, dirty, on
       ) : null}
 
       {preview ? (
-        <section className="grid max-w-5xl gap-2" aria-label="Предпросмотр разбиения">
+        <section className="grid w-full gap-2" aria-label="Предпросмотр разбиения">
           <p className="m-0 text-[12px] leading-5 text-slate-300">
             Новых файлов: <strong>{preview.added_files.length}</strong> ({preview.added_files.join(", ")}). Изменено: {preview.changed_files.join(", ") || "—"}.
             {hostLines.map(([file, lines]) => <span key={file} className="ml-2 font-mono text-slate-400">{file}: {lines.before} → {lines.after} строк</span>)}
