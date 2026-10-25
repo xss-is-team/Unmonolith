@@ -30,7 +30,7 @@ Mandatory = case slides 2, 3, 5, 6 (gate), 7, 10, 11. Optional = slide 6 decompo
 | R5 | 3 | 01 Load `.java` | ✅ | ✅ | `single_file_uploads_keep_working_unchanged`, ZIP `e2e_import` 6/6; `upload-panel.tsx` | UI accepts `.java` only |
 | R6 | 3 | 02 Parse | ✅ | ✅ | JDT with bindings; `SemanticTest`, `MainTest` (surefire) | — |
 | R7 | 3 | 03 Build graph | ✅ | ✅ | CFG + project graph | methods without body have no CFG |
-| R8 | 3 | 04 Explore and edit, «Java ↔ блок-схема» two-way | ✅ | 🟡 | `replace_condition`, `move_statement`, `insert_statement`, `delete_statement`, optimizations, rollback: `e2e_edit` 14/14, `TransformTest`, `StatementMoveTest`, `StatementEditTest` (4); every edit is re-analysed and refused on a new error; UI: condition replace, move, block palette (insert/delete) with preview diff | no drag-and-drop of nodes (layout only), no method extraction |
+| R8 | 3 | 04 Explore and edit, «Java ↔ блок-схема» two-way | ✅ | 🟡 | `replace_condition`, `move_statement`, `insert_statement`, `delete_statement`, `extract_method`, optimizations, rollback: `e2e_edit` 15/15, `TransformTest`, `StatementMoveTest`, `StatementEditTest` (4), `ExtractMethodTest` (2); every edit is re-analysed and refused on a new error; UI: condition replace, move, block palette (insert/delete) with preview diff | no drag-and-drop of nodes (layout only); extract method: consecutive statements of one block, at most one value out, no `return`/jumps out of the selection |
 | R9 | 3 | 05 Assemble Java | ✅ | ✅ | ASTRewrite → validated new revision; `real_ast_rewrite_http_end_to_end` | — |
 | R10 | 3 | 06 Run and compare | ✅ | ✅ | `real_container_http_verification`, `docker_e2e` | — |
 | R11 | 3 | Mandatory finish: full path | 🟡 | 🟡 | `real_optimize_verify_and_benchmark_end_to_end`, `organizer_workflow_runs_in_the_real_runner` | path runs, but verify is empty on Organizer; UI lacks the optimize step |
@@ -50,7 +50,7 @@ Mandatory = case slides 2, 3, 5, 6 (gate), 7, 10, 11. Optional = slide 6 decompo
 | R25 | 11 | Deliverables 01–04 | 🟡 | n/a | 01 `README.md`, `./dev`; 02 `./dev up` (not run); 03 tests exist and `docs/evidence/demo/` holds a saved real run (verify + benchmark); 04 `docs/SOLUTION.md` | see priorities |
 
 Percentages (mandatory only, counting R1–R11, R13–R17, R19, R20, R24, R25 = 20): backend 15 ✅ / 5 🟡 / 0 ❌ (R18 is optional and not counted);
-frontend: the UI now covers analysis, Big O overview, optimization preview/apply, verify (repeats, expectations, warnings), benchmark, decomposition, revision diff, export; the real-backend Playwright suite (`apps/web/e2e/real-backend.spec.ts`) passes 4/4. Missing: block palette/drag-and-drop, debug, rollback screen.
+frontend: the UI now covers analysis, Big O overview, optimization preview/apply, verify (repeats, expectations, warnings), benchmark, decomposition, revision diff, export; the real-backend Playwright suite (`apps/web/e2e/real-backend.spec.ts`) passes 5/5. Missing: block palette/drag-and-drop, debug, rollback screen.
 
 ## Mockup comparison (slide 4)
 
@@ -90,7 +90,7 @@ Not consumed: `POST /rollback` has a client function but no screen; `GET /graph`
    receiver for `String`/boxed/enum keys (extra assumption `outer_key_non_null`) and constructors/setters that only store
    fields of a freshly allocated object.
 7. **Stale-JAR gate:** the e2e JAR-freshness check fails after a merge until the JAR is rebuilt.
-8. **Verified:** the web build (`pnpm build`), `tsc`, `eslint` and the browser flow (`pnpm exec playwright test`, 4/4 against the real API, parser and Docker runner). Not verified: a deployed public instance, other browsers.
+8. **Verified:** the web build (`pnpm build`), `tsc`, `eslint` and the browser flow (`pnpm exec playwright test`, 5/5 against the real API, parser and Docker runner). Not verified: a deployed public instance, other browsers.
 
 ## Priorities
 

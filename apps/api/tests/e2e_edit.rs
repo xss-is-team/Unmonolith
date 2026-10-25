@@ -945,3 +945,35 @@ async fn statements_can_be_inserted_and_deleted_from_the_cfg_with_validation() {
         .expect_error(422, "unsupported_node");
     assert_eq!(project.revision().await, 3, "refused edits change nothing");
 }
+
+#[tokio::test]
+async fn a_selection_can_be_extracted_into_a_method_over_http() {
+    let (_server, project, _original) = pricing().await;
+    let tax = project.cfg_node(PRICE, "int tax = base / 5;").await;
+    let body = json!({
+        "base_revision": 1, "source_level": "8", "method_id": PRICE,
+        "operation": {"type": "extract_method", "first_node_id": tax, "last_node_id": tax, "name": "taxOf"},
+    });
+    let preview = project.cfg_preview(&body).await.expect_status(200).json();
+    let unified = preview["diff"][0]["unified_diff"].as_str().unwrap();
+    assert!(unified.contains("int tax = taxOf(base);"), "{unified}");
+    assert!(unified.contains("private int taxOf(int base)"), "{unified}");
+    project
+        .cfg_apply(&body, &preview["preview_sha256"])
+        .await
+        .expect_status(200);
+    assert_eq!(project.revision().await, 2);
+    project.analyze("8").await;
+    let ids = method_ids(&project.methods().await);
+    assert!(ids.contains("taxOf(int)"), "{ids}");
+
+    let again = project.cfg_node(PRICE, "int tax = taxOf(base);").await;
+    let clash = json!({
+        "base_revision": 2, "source_level": "8", "method_id": PRICE,
+        "operation": {"type": "extract_method", "first_node_id": again, "last_node_id": again, "name": "taxOf"},
+    });
+    project
+        .cfg_preview(&clash)
+        .await
+        .expect_error(400, "invalid_operation");
+}

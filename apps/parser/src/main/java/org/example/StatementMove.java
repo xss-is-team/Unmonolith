@@ -143,11 +143,11 @@ final class StatementMove {
         String methodId = request.path("method_id").asText("");
         JsonNode op = request.path("operation");
         String type = op.path("type").asText("");
-        if (type.equals("insert_statement") || type.equals("delete_statement")) {
+        if (type.equals("insert_statement") || type.equals("delete_statement") || type.equals("extract_method")) {
             return editStructural(root, request, outputDir, type);
         }
         if (!type.equals("move_statement")) {
-            return failure("unsupported_operation", "Supported operations: move_statement, insert_statement, delete_statement.", null);
+            return failure("unsupported_operation", "Supported operations: move_statement, insert_statement, delete_statement, extract_method.", null);
         }
         String nodeId = op.path("node_id").asText("");
         String targetId = op.path("target_node_id").asText("");
@@ -330,6 +330,9 @@ final class StatementMove {
         if (failure != null) {
             return failure;
         }
+        if (type.equals("extract_method")) {
+            return extractMethod(root, files, level, single, r, methodId, op, outputDir);
+        }
         ASTRewrite rewrite = ASTRewrite.create(r.json.unit().getAST());
         Map<String, Object> operation = new LinkedHashMap<>();
         operation.put("type", type);
@@ -384,6 +387,357 @@ final class StatementMove {
         result.put("file", r.json.file() == null ? files.get(0) : r.json.file());
         result.put("operation", operation);
         return finish(root, files, level, single, r, methodId, document.get(), result, outputDir);
+    }
+
+    // ---------- extract method ----------
+
+    private static final Set<String> KEYWORDS = Set.of("abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
+            "class", "const", "continue", "default", "do", "double", "else", "enum", "extends", "final", "finally", "float", "for",
+            "goto", "if", "implements", "import", "instanceof", "int", "interface", "long", "native", "new", "package", "private",
+            "protected", "public", "return", "short", "static", "strictfp", "super", "switch", "synchronized", "this", "throw",
+            "throws", "transient", "try", "void", "volatile", "while", "true", "false", "null");
+
+    private static Map<String, Object> refused(String code, String message) {
+        return failure(code, message, null);
+    }
+
+    /**
+     * {@code extract_method}: consecutive statements of one block become a private method of the same class and are replaced
+     * by a call. Values that flow in become parameters; at most one value may flow out (returned and assigned back). Refused
+     * when the selection returns, jumps out of itself, lets more than one value out, or the result does not analyse cleanly.
+     */
+    private static Map<String, Object> extractMethod(Path root, List<String> files, String level, boolean single, Resolved r,
+            String methodId, JsonNode op, Path outputDir) throws IOException {
+        String firstId = op.path("first_node_id").asText("");
+        String lastId = op.path("last_node_id").asText("");
+        String name = op.path("name").asText("");
+        if (firstId.isEmpty() || lastId.isEmpty() || !name.matches("[a-z][A-Za-z0-9_]*") || KEYWORDS.contains(name)) {
+            return refused("invalid_operation", "first_node_id, last_node_id and a method name (a valid Java identifier starting with a lowercase letter) are required.");
+        }
+        Statement first = statementOf(r, firstId);
+        Statement last = statementOf(r, lastId);
+        if (first == null || last == null) {
+            return refused("unsupported_node", "Both ends of the selection must be whole statements of a block.");
+        }
+        if (first.getParent() != last.getParent() || !(first.getParent() instanceof Block block)) {
+            return refused("invalid_operation", "The selection must be consecutive statements of one block.");
+        }
+        int from = block.statements().indexOf(first);
+        int to = block.statements().indexOf(last);
+        if (from > to) {
+            int swap = from;
+            from = to;
+            to = swap;
+            Statement s = first;
+            first = last;
+            last = s;
+        }
+        List<Statement> selected = new ArrayList<>();
+        for (int i = from; i <= to; i++) {
+            selected.add((Statement) block.statements().get(i));
+        }
+        int start = first.getStartPosition();
+        int end = last.getStartPosition() + last.getLength();
+        if (!(r.method.getParent() instanceof AbstractTypeDeclaration type) || type instanceof AnnotationTypeDeclaration
+                || type instanceof TypeDeclaration td && td.isInterface()) {
+            return refused("unsupported_node", "The method must belong to a class, enum or record.");
+        }
+        for (Object member : type.bodyDeclarations()) {
+            if (member instanceof MethodDeclaration other && other.getName().getIdentifier().equals(name)) {
+                return refused("invalid_operation", "The class already has a method named '" + name + "'.");
+            }
+        }
+
+        // what the selection does
+        Set<IVariableBinding> declaredInside = new LinkedHashSet<>();
+        Map<IVariableBinding, boolean[]> outside = new LinkedHashMap<>(); // [read, written]
+        List<String> problems = new ArrayList<>();
+        Set<ITypeBinding> thrown = new LinkedHashSet<>();
+        List<TryStatement> tries = new ArrayList<>();
+        for (Statement s : selected) {
+            s.accept(new ASTVisitor() {
+                @Override
+                public boolean visit(VariableDeclarationFragment f) {
+                    if (f.resolveBinding() != null) {
+                        declaredInside.add(f.resolveBinding());
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(SingleVariableDeclaration d) {
+                    if (d.resolveBinding() != null) {
+                        declaredInside.add(d.resolveBinding());
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(ReturnStatement n) {
+                    problems.add("The selection contains a return statement (line " + r.json.unit().getLineNumber(n.getStartPosition()) + ").");
+                    return true;
+                }
+
+                @Override
+                public boolean visit(YieldStatement n) {
+                    problems.add("The selection contains a yield statement.");
+                    return true;
+                }
+
+                @Override
+                public boolean visit(BreakStatement n) {
+                    if (!jumpsInside(n, selected)) {
+                        problems.add("A break at line " + r.json.unit().getLineNumber(n.getStartPosition()) + " leaves the selection.");
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(ContinueStatement n) {
+                    if (!jumpsInside(n, selected)) {
+                        problems.add("A continue at line " + r.json.unit().getLineNumber(n.getStartPosition()) + " leaves the selection.");
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(TryStatement n) {
+                    tries.add(n);
+                    return true;
+                }
+
+                @Override
+                public boolean visit(ThrowStatement n) {
+                    ITypeBinding t = n.getExpression().resolveTypeBinding();
+                    if (t != null) {
+                        thrown.add(t);
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(MethodInvocation n) {
+                    IMethodBinding b = n.resolveMethodBinding();
+                    if (b != null) {
+                        thrown.addAll(List.of(b.getExceptionTypes()));
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(ClassInstanceCreation n) {
+                    IMethodBinding b = n.resolveConstructorBinding();
+                    if (b != null) {
+                        thrown.addAll(List.of(b.getExceptionTypes()));
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(SimpleName n) {
+                    if (n.isDeclaration() || !(n.resolveBinding() instanceof IVariableBinding v) || v.isField()) {
+                        return true;
+                    }
+                    if (declaredInside.contains(v) || isDeclaredInside(r, v, selected)) {
+                        return true;
+                    }
+                    boolean[] flags = outside.computeIfAbsent(v, k -> new boolean[2]);
+                    ASTNode parent = n.getParent();
+                    boolean write = parent instanceof Assignment a && a.getLeftHandSide() == n
+                            || parent instanceof PostfixExpression
+                            || parent instanceof PrefixExpression p
+                                    && (p.getOperator() == PrefixExpression.Operator.INCREMENT || p.getOperator() == PrefixExpression.Operator.DECREMENT);
+                    boolean compound = parent instanceof Assignment a2 && a2.getLeftHandSide() == n && a2.getOperator() != Assignment.Operator.ASSIGN
+                            || parent instanceof PostfixExpression || parent instanceof PrefixExpression;
+                    if (write) {
+                        flags[1] = true;
+                    }
+                    if (!write || compound) {
+                        flags[0] = true;
+                    }
+                    return true;
+                }
+            });
+        }
+        // checked exceptions that are not caught inside the selection must stay declared by the method
+        List<ITypeBinding> checked = new ArrayList<>();
+        for (ITypeBinding t : thrown) {
+            if (isChecked(t) && tries.stream().noneMatch(tr -> catches(tr, t)) && checked.stream().noneMatch(c -> c.isEqualTo(t))) {
+                checked.add(t);
+            }
+        }
+        if (!problems.isEmpty()) {
+            return refused("invalid_operation", String.join(" ", problems));
+        }
+
+        // values that flow out: written in the selection and used elsewhere, or declared in it and used after it
+        List<IVariableBinding> outputs = new ArrayList<>();
+        for (Map.Entry<IVariableBinding, boolean[]> e : outside.entrySet()) {
+            if (e.getValue()[1] && usedOutside(r, e.getKey(), start, end)) {
+                outputs.add(e.getKey());
+            }
+        }
+        for (IVariableBinding v : declaredInside) {
+            if (usedOutside(r, v, start, end)) {
+                outputs.add(v);
+            }
+        }
+        if (outputs.size() > 1) {
+            return refused("invalid_operation", "More than one value flows out of the selection ("
+                    + String.join(", ", outputs.stream().map(IVariableBinding::getName).toList()) + "); a method returns one.");
+        }
+        IVariableBinding output = outputs.isEmpty() ? null : outputs.get(0);
+        boolean outputDeclaredInside = output != null && declaredInside.contains(output);
+
+        List<IVariableBinding> inputs = new ArrayList<>();
+        List<IVariableBinding> assignedOnly = new ArrayList<>(); // written but never read in the selection: a local of the new method
+        for (Map.Entry<IVariableBinding, boolean[]> e : outside.entrySet()) {
+            (e.getValue()[0] ? inputs : assignedOnly).add(e.getKey());
+        }
+        StringBuilder params = new StringBuilder();
+        StringBuilder args = new StringBuilder();
+        for (IVariableBinding v : inputs) {
+            if (params.length() > 0) {
+                params.append(", ");
+                args.append(", ");
+            }
+            params.append(typeText(r, v)).append(' ').append(v.getName());
+            args.append(v.getName());
+        }
+        String returnType = output == null ? "void" : typeText(r, output);
+
+        String source = r.json.sourceText();
+        int lineStart = start;
+        while (lineStart > 0 && source.charAt(lineStart - 1) != '\n') {
+            lineStart--;
+        }
+        String statementIndent = source.substring(lineStart, start).isBlank() ? source.substring(lineStart, start) : "    ";
+        int methodStart = r.method.getStartPosition();
+        int methodLineStart = methodStart;
+        while (methodLineStart > 0 && source.charAt(methodLineStart - 1) != '\n') {
+            methodLineStart--;
+        }
+        String methodIndent = source.substring(methodLineStart, methodStart).isBlank() ? source.substring(methodLineStart, methodStart) : "";
+
+        String call = name + "(" + args + ");";
+        if (output != null) {
+            call = (outputDeclaredInside ? returnType + " " : "") + output.getName() + " = " + call;
+        }
+        StringBuilder method = new StringBuilder();
+        method.append(methodIndent).append("private ").append(Modifier.isStatic(r.method.getModifiers()) ? "static " : "")
+                .append(returnType).append(' ').append(name).append('(').append(params).append(')');
+        if (!checked.isEmpty()) {
+            method.append(" throws ").append(String.join(", ", checked.stream().map(ITypeBinding::getName).toList()));
+        }
+        method.append(" {\n");
+        for (IVariableBinding v : assignedOnly) {
+            method.append(statementIndent).append(typeText(r, v)).append(' ').append(v.getName()).append(";\n");
+        }
+        method.append(statementIndent).append(source, start, end).append('\n');
+        if (output != null) {
+            method.append(statementIndent).append("return ").append(output.getName()).append(";\n");
+        }
+        method.append(methodIndent).append('}');
+
+        int methodEnd = methodStart + r.method.getLength();
+        StringBuilder rewritten = new StringBuilder(source);
+        rewritten.insert(methodEnd, "\n\n" + method);
+        rewritten.replace(start, end, call);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("status", "completed");
+        result.put("method_id", methodId);
+        result.put("file", r.json.file() == null ? files.get(0) : r.json.file());
+        Map<String, Object> operation = new LinkedHashMap<>();
+        operation.put("type", "extract_method");
+        operation.put("name", name);
+        operation.put("statements", selected.size());
+        operation.put("parameters", inputs.stream().map(IVariableBinding::getName).toList());
+        operation.put("returns", output == null ? null : output.getName());
+        operation.put("throws", checked.stream().map(ITypeBinding::getName).toList());
+        result.put("operation", operation);
+        return finish(root, files, level, single, r, methodId, rewritten.toString(), result, outputDir);
+    }
+
+    private static boolean isDeclaredInside(Resolved r, IVariableBinding v, List<Statement> selected) {
+        ASTNode declaration = r.json.unit().findDeclaringNode(v);
+        for (ASTNode p = declaration; p != null; p = p.getParent()) {
+            if (selected.contains(p)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** True if a break/continue stays inside the selection (its loop, switch or label is part of it). */
+    private static boolean jumpsInside(Statement jump, List<Statement> selected) {
+        String label = jump instanceof BreakStatement b ? (b.getLabel() == null ? null : b.getLabel().getIdentifier())
+                : ((ContinueStatement) jump).getLabel() == null ? null : ((ContinueStatement) jump).getLabel().getIdentifier();
+        for (ASTNode p = jump.getParent(); p != null; p = p.getParent()) {
+            boolean target = label != null ? p instanceof LabeledStatement l && l.getLabel().getIdentifier().equals(label)
+                    : p instanceof ForStatement || p instanceof EnhancedForStatement || p instanceof WhileStatement
+                            || p instanceof DoStatement || jump instanceof BreakStatement && p instanceof SwitchStatement;
+            if (target) {
+                return true;
+            }
+            if (selected.contains(p)) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static boolean usedOutside(Resolved r, IVariableBinding v, int start, int end) {
+        boolean[] used = {false};
+        r.method.accept(new ASTVisitor() {
+            @Override
+            public boolean visit(SimpleName n) {
+                if (!n.isDeclaration() && n.resolveBinding() instanceof IVariableBinding other && other.isEqualTo(v)
+                        && (n.getStartPosition() < start || n.getStartPosition() >= end)) {
+                    used[0] = true;
+                }
+                return true;
+            }
+        });
+        return used[0];
+    }
+
+    private static boolean isChecked(ITypeBinding t) {
+        for (ITypeBinding c = t; c != null; c = c.getSuperclass()) {
+            String name = c.getErasure().getQualifiedName();
+            if (name.equals("java.lang.RuntimeException") || name.equals("java.lang.Error")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean catches(TryStatement tr, ITypeBinding thrown) {
+        for (Object o : tr.catchClauses()) {
+            ITypeBinding caught = ((CatchClause) o).getException().getType().resolveBinding();
+            if (caught != null && thrown.isSubTypeCompatible(caught)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The declared type as written in the source (keeps generics readable); the resolved name for `var` and lambda parameters. */
+    private static String typeText(Resolved r, IVariableBinding v) {
+        ASTNode declaration = r.json.unit().findDeclaringNode(v);
+        Type type = null;
+        if (declaration instanceof SingleVariableDeclaration d) {
+            type = d.getType();
+        } else if (declaration instanceof VariableDeclarationFragment f && f.getParent() instanceof VariableDeclarationStatement s) {
+            type = s.getType();
+        }
+        if (type != null && !type.isVar()) {
+            String text = r.json.text(type);
+            int extra = declaration instanceof VariableDeclarationFragment f ? f.getExtraDimensions()
+                    : ((SingleVariableDeclaration) declaration).getExtraDimensions();
+            return text + "[]".repeat(extra);
+        }
+        return v.getType().getQualifiedName();
     }
 
     /** The statements of {@code code} as source text, or null when it is not a valid statement sequence. */

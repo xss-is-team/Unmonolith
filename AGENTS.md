@@ -97,7 +97,7 @@ script already sets it); bare `cargo`/`java`/`mvn` are not on PATH outside the N
 ## Known limitations (detail in docs/CASE_COMPLIANCE.md)
 
 - Edit operations: `replace_condition`, `move_statement`, optimizations (lookup-loop → Map, `String +=` in a loop →
-  `StringBuilder`, `contains` → `HashSet`), decomposition, `insert_statement` and `delete_statement`, rollback. No drag-and-drop of blocks, no method extraction. The web UI exposes
+  `StringBuilder`, `contains` → `HashSet`), decomposition, `insert_statement`, `delete_statement` and `extract_method`, rollback. No drag-and-drop of blocks. The web UI exposes
   condition replacement, statement move, optimization preview/apply and free text editing.
 - Responsibility decomposition (case slide 6, optional): `GET/POST /projects/{id}/decomposition[/preview|/apply]` moves
   static member types of a top-level class into files of their own (`classes`) or groups of static methods of one class,

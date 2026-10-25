@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertCircle, Check, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, Check, LoaderCircle, Plus, Scissors, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DiffView } from "@/components/diff-view";
 import {
@@ -29,12 +29,13 @@ function message(cause: unknown) {
 }
 
 /** Insert a block next to the selected statement or delete the selected statement; every edit is previewed and validated. */
-export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, onApplied }: {
+export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, statements, onApplied }: {
   projectId: string;
   revision: number;
   methodId: string;
   nodeId: string;
   nodeLabel: string;
+  statements: { id: string; text: string }[];
   onApplied: () => Promise<void>;
 }) {
   const [code, setCode] = useState<string>(PALETTE[0].code);
@@ -43,6 +44,9 @@ export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, 
   const [preview, setPreview] = useState<CfgEditPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [firstId, setFirstId] = useState("");
+  const [lastId, setLastId] = useState("");
+  const [methodName, setMethodName] = useState("extracted");
 
   async function request(next: CfgEditOperation) {
     setBusy(true);
@@ -99,6 +103,25 @@ export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, 
         </div>
       </div>
       <small className="font-mono text-slate-500">Выбран: {nodeId ? `${nodeId} · ${nodeLabel}` : "нажмите на оператор в графе"}</small>
+      <div className="flex flex-wrap items-end gap-2 border-t border-slate-800 pt-2 text-[12px] text-slate-400" aria-label="Выделение метода">
+        <strong className="flex items-center gap-1.5 text-[13px] text-slate-300"><Scissors size={15} /> Выделить метод</strong>
+        <label className="grid gap-0.5">С оператора
+          <select aria-label="Первый оператор выделения" className="h-8 max-w-[240px] rounded border border-slate-700 bg-[#08101d] px-2 text-slate-200" value={firstId} onChange={(event) => { setFirstId(event.target.value); setPreview(null); }}>
+            <option value="">—</option>
+            {statements.map((item) => <option key={item.id} value={item.id}>{item.id} · {item.text}</option>)}
+          </select>
+        </label>
+        <label className="grid gap-0.5">По оператор
+          <select aria-label="Последний оператор выделения" className="h-8 max-w-[240px] rounded border border-slate-700 bg-[#08101d] px-2 text-slate-200" value={lastId} onChange={(event) => { setLastId(event.target.value); setPreview(null); }}>
+            <option value="">—</option>
+            {statements.map((item) => <option key={item.id} value={item.id}>{item.id} · {item.text}</option>)}
+          </select>
+        </label>
+        <label className="grid gap-0.5">Имя метода
+          <input aria-label="Имя нового метода" className="h-8 w-36 rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-slate-200" value={methodName} onChange={(event) => { setMethodName(event.target.value); setPreview(null); }} />
+        </label>
+        <Button size="sm" variant="outline" disabled={!firstId || !lastId || !methodName.trim() || busy} onClick={() => void request({ type: "extract_method", first_node_id: firstId, last_node_id: lastId, name: methodName.trim() })}>{busy ? <LoaderCircle className="spin" /> : <Scissors />} Показать извлечение</Button>
+      </div>
       {error ? <p className="m-0 flex items-center gap-1.5 text-[12px] text-rose-300" role="alert"><AlertCircle size={14} />{error}</p> : null}
       {preview ? (
         <div className="grid gap-2" aria-label="Предпросмотр правки блока">

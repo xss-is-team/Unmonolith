@@ -583,6 +583,17 @@ enum CfgEditOperation {
         /// CFG node of the statement to delete.
         node_id: String,
     },
+    /// Turns consecutive statements of one block into a private method of the same class and replaces them with a
+    /// call. Values that flow in become parameters; at most one value may flow out. Refused when the selection
+    /// returns, jumps out of itself or lets more than one value out.
+    ExtractMethod {
+        /// CFG node of the first statement of the selection.
+        first_node_id: String,
+        /// CFG node of the last statement of the selection.
+        last_node_id: String,
+        /// Name of the new method (lowercase Java identifier, not used by another method of the class).
+        name: String,
+    },
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -2662,6 +2673,16 @@ async fn build_edit_candidate(
         CfgEditOperation::DeleteStatement { node_id } => serde_json::json!({
             "type": "delete_statement",
             "node_id": node_id,
+        }),
+        CfgEditOperation::ExtractMethod {
+            first_node_id,
+            last_node_id,
+            name,
+        } => serde_json::json!({
+            "type": "extract_method",
+            "first_node_id": first_node_id,
+            "last_node_id": last_node_id,
+            "name": name,
         }),
     };
     let run = state

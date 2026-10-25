@@ -293,3 +293,31 @@ test("block editor inserts a validated statement and refuses a deletion that bre
   await editor.getByRole("button", { name: "Показать удаление" }).click();
   await expect(editor.locator('[role="alert"]')).toContainText("не компилируется");
 });
+
+test("extract method turns a statement into a private method and refuses a selection with two results", async ({ page }) => {
+  test.setTimeout(45_000);
+  await uploadZip(page);
+  await page.locator('button[title="calc.Pricing.price(int,int,int)"]').click();
+  const editor = page.getByLabel("Выделение метода");
+  const pick = async (label: string, text: string) => {
+    const select = editor.getByLabel(label);
+    const option = select.locator("option").filter({ hasText: text }).first();
+    await select.selectOption({ label: (await option.textContent()) ?? "" });
+  };
+  await pick("Первый оператор выделения", "int tax = base / 5;");
+  await pick("Последний оператор выделения", "int tax = base / 5;");
+  await editor.getByLabel("Имя нового метода").fill("taxOf");
+  await editor.getByRole("button", { name: "Показать извлечение" }).click();
+  await expect(page.getByLabel("Предпросмотр правки блока")).toContainText("private int taxOf(int base)");
+  await page.getByRole("button", { name: /Применить · REV 2/ }).click();
+  await expect(page.getByTestId("revision")).toContainText("REV 2");
+  await page.getByTestId("file-src/main/java/calc/Pricing.java").click();
+  await expect(page.locator(".cm-content")).toContainText("int tax = taxOf(base);");
+
+  await page.locator('button[title="calc.Pricing.price(int,int,int)"]').click();
+  await pick("Первый оператор выделения", "int subtotal");
+  await pick("Последний оператор выделения", "int tax");
+  await editor.getByLabel("Имя нового метода").fill("pair");
+  await editor.getByRole("button", { name: "Показать извлечение" }).click();
+  await expect(page.getByLabel("Добавление и удаление блоков").locator('[role="alert"]')).toContainText("More than one value");
+});
