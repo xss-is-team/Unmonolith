@@ -19,17 +19,17 @@ export function BlockPalette({ onPick }: { onPick: (template: BlockTemplate) => 
   const [query, setQuery] = useState("");
   const shown = ITEMS.filter((item) => item.label.toLowerCase().includes(query.trim().toLowerCase()));
   return (
-    <section className="grid gap-2 border-t border-slate-800 p-2.5" aria-label="Палитра блоков">
-      <h2 className="m-0 text-[13px] font-semibold text-slate-200">Блоки</h2>
-      <label className="flex h-8 items-center gap-2 rounded border border-slate-700 bg-[#08101d] px-2 text-slate-500">
+    <details className="grid gap-2 border-t border-slate-800 p-2.5" aria-label="Палитра блоков">
+      <summary className="cursor-pointer text-[13px] font-semibold text-slate-200">Блоки <span className="font-normal text-slate-500">· шаблоны для вставки в граф</span></summary>
+      <label className="mt-2 flex h-8 items-center gap-2 rounded border border-slate-700 bg-[#08101d] px-2 text-slate-500">
         <Search size={14} />
         <input className="min-w-0 flex-1 bg-transparent text-[12px] text-slate-200 outline-none placeholder:text-slate-600" placeholder="Поиск блоков…" aria-label="Поиск блоков" value={query} onChange={(event) => setQuery(event.target.value)} />
       </label>
-      <div className="grid gap-1.5">
+      <div className="mt-2 grid grid-cols-2 gap-1.5">
         {shown.map((item) => {
           const Icon = item.icon;
           return (
-            <button key={item.id} type="button" className="flex h-9 items-center gap-2.5 rounded border border-slate-800 bg-slate-900/70 px-2 text-left text-[13px] text-slate-200 hover:border-cyan-700" title="Поместить шаблон в редактор блоков (вкладка CFG)" onClick={() => onPick({ id: item.id, label: item.label, code: item.code, nonce: Date.now() })}>
+            <button key={item.id} type="button" className="flex h-8 items-center gap-2 rounded border border-slate-800 bg-slate-900/70 px-2 text-left text-[12px] text-slate-200 hover:border-cyan-700" title="Поместить шаблон в редактор блоков (вкладка CFG)" onClick={() => onPick({ id: item.id, label: item.label, code: item.code, nonce: Date.now() })}>
               <span className={`grid size-6 place-items-center rounded ${item.tone}`}><Icon size={14} /></span>
               {item.label}
             </button>
@@ -37,6 +37,6 @@ export function BlockPalette({ onPick }: { onPick: (template: BlockTemplate) => 
         })}
         {shown.length === 0 ? <p className="m-0 text-[12px] text-slate-500">Нет подходящих блоков.</p> : null}
       </div>
-    </section>
+    </details>
   );
 }

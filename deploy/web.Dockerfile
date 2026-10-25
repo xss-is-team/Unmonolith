@@ -12,8 +12,7 @@ RUN pnpm build
 
 FROM node:22-slim
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
-RUN corepack enable
 WORKDIR /app
 COPY --from=build /app .
 EXPOSE 3001
-CMD ["pnpm", "start"]
+CMD ["node", "node_modules/next/dist/bin/next", "start", "--port", "3001"]

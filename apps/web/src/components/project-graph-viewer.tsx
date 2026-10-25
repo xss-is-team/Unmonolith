@@ -226,9 +226,9 @@ export function ProjectGraphViewer({
         "elk.direction": "RIGHT",
         "elk.edgeRouting": "ORTHOGONAL",
         "elk.layered.thoroughness": "detail",
-        "elk.layered.spacing.nodeNodeBetweenLayers": "170",
-        "elk.spacing.nodeNode": "90",
-        "elk.padding": "[top=80;left=80;bottom=80;right=80]",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "80",
+        "elk.spacing.nodeNode": "28",
+        "elk.padding": "[top=24;left=24;bottom=24;right=24]",
         "elk.layered.cycleBreaking.strategy": "GREEDY",
       },
       children: filteredTypes.map((node) => ({ id: node.id, width: NODE_WIDTH, height: NODE_HEIGHT })),
@@ -301,6 +301,19 @@ export function ProjectGraphViewer({
       data: { relationship: edge },
     };
   }), [projectedRelationships, focusedEdgeId, selectedType]);
+
+  function openTypeNode(_event: MouseEvent, node: FlowNode) {
+    const type = filteredTypes.find((item) => item.id === node.id);
+    if (!type) return;
+    for (const method of type.methods) {
+      const resolution = resolveCfgSelector(method, methods);
+      if (resolution && typeof resolution === "object") {
+        onOpenMethod(resolution.selector);
+        return;
+      }
+    }
+    setSelectedTypeId(node.id);
+  }
 
   function selectNode(_event: MouseEvent, node: FlowNode) {
     setSelectedTypeId(node.id === selectedTypeId ? null : node.id);
@@ -400,8 +413,9 @@ export function ProjectGraphViewer({
             edges={flowEdges}
             nodeTypes={nodeTypes}
             fitView
-            fitViewOptions={{ padding: 0.12, minZoom: 0.05, maxZoom: 1.2 }}
+            fitViewOptions={{ padding: 0.04, minZoom: 0.3, maxZoom: 1.2 }}
             onNodeClick={selectNode}
+            onNodeDoubleClick={openTypeNode}
             onEdgeMouseEnter={(_event, edge) => setEdgeFocus((current) => current?.pinned ? current : { id: edge.id, pinned: false })}
             onEdgeMouseLeave={() => setEdgeFocus((current) => current?.pinned ? current : null)}
             onEdgeClick={(_event, edge) => setEdgeFocus((current) => (current?.id === edge.id && current.pinned ? null : { id: edge.id, pinned: true }))}

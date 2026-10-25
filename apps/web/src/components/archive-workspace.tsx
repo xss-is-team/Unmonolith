@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertCircle, Bug, ChevronRight, Code2, Download, History, FileCode2, FileText, FolderOpen, Gauge, GitCompareArrows, LayoutGrid,
+  AlertCircle, ArrowLeft, ChevronRight, Code2, Download, History, FileCode2, FileText, FolderOpen, Gauge, GitCompareArrows, LayoutGrid,
   LoaderCircle, Network, Play, Save, Scissors, ShieldCheck, Sparkles, Upload, Waypoints,
 } from "lucide-react";
 import { AnalysisPane } from "@/components/analysis-pane";
@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { DecompositionPanel } from "@/components/decomposition-panel";
 import { DiffView } from "@/components/diff-view";
 import { HistoryPanel } from "@/components/history-panel";
+import { StepBar, type Step } from "@/components/step-bar";
 import {
   analyzeProjectStream, ApiError, applyOptimization, compareRevisions, exportProject,
   getOptimizations, getProject, getProjectComplexity, getProjectFile,
@@ -75,6 +76,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   const [openTabs, setOpenTabs] = useState<string[]>([initialFilePath]);
   const [logLines, setLogLines] = useState<LogLine[]>([]);
   const [panes, setPanes] = useState({ code: true, console: true, tests: true });
+  const [codeTall, setCodeTall] = useState(false);
   const [revisions, setRevisions] = useState<{ revision: number; has_analysis: boolean }[]>([]);
   const [baselineRevision, setBaselineRevision] = useState(1);
   const [candidateRevision, setCandidateRevision] = useState(initialRevision);
@@ -279,6 +281,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
       const report = await verifyRevisions(project.id, baselineRevision, candidateRevision, cases, { main_class: mainClass || null, source_level: sourceLevel, repeats });
       setVerifyReport(report);
       const passedCount = report.test_cases.filter((item) => item.passed).length;
+      setLogLines((lines) => [...lines, { time: logTime(), kind: report.baseline_compilation.status === "completed" && report.candidate_compilation.status === "completed" ? "ok" : "error", text: `Сборка REV ${report.baseline_revision}: ${report.baseline_compilation.status}; REV ${report.candidate_revision}: ${report.candidate_compilation.status}` }]);
       setLogLines((lines) => [...lines, report.status === "compilation_failed"
         ? { time: logTime(), kind: "error", text: "Компиляция не прошла" }
         : { time: logTime(), kind: report.behaviorally_verified ? "ok" : "error", text: report.behaviorally_verified ? `Поведение совпадает (${passedCount} из ${report.test_cases.length})` : report.status === "unstable" ? "Результат неопределён: вывод нестабилен" : `Есть различия (${passedCount} из ${report.test_cases.length} совпало)` }]);
@@ -360,12 +363,31 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   })();
   const firstApplicable = optimizations?.proposals.find((proposal) => proposal.applicability === "applicable") ?? null;
   const overlayTitle = workbench === "verify" ? "Проверка поведения" : workbench === "benchmark" ? "Бенчмарк" : workbench === "diff" ? "Diff ревизий" : workbench === "decompose" ? "Разбор монолита" : workbench === "history" ? "История ревизий" : "";
+  const methodGroups = (() => {
+    const groups = new Map<string, CfgMethod[]>();
+    for (const method of methods) {
+      const head = method.id.split("(")[0];
+      const group = head.includes(".") ? head.slice(0, head.lastIndexOf(".")) : "(без класса)";
+      groups.set(group, [...(groups.get(group) ?? []), method]);
+    }
+    return [...groups.entries()];
+  })();
+  const openVerify = () => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); };
+  const openBenchmark = () => { setWorkbench("benchmark"); void getProjectRevisions(project.id).then(setRevisions); };
+  const applicableCount = optimizations?.proposals.filter((proposal) => proposal.applicability === "applicable").length ?? 0;
+  const steps: Step[] = [
+    { id: "analysis", label: loading ? "1 Анализ…" : "Анализ", hint: "Граф проекта, CFG методов и Big O", state: loading ? "next" : "done", onClick: () => { setWorkbench("code"); setView("overview"); setAnalysisTab("problems"); } },
+    { id: "optimize", label: `Оптимизация${applicableCount ? ` · ${applicableCount}` : ""}`, hint: "Предложения по ускорению с предпросмотром diff", state: revision > 1 ? "done" : applicableCount ? "next" : "todo", onClick: () => { setWorkbench("code"); setAnalysisTab("recommendations"); if (firstApplicable) { setSelectedProposal(firstApplicable.id); setPreview(null); setAcknowledged([]); } } },
+    { id: "verify", label: "Проверка поведения", hint: "Запуск в Docker: поведение до и после совпадает?", state: verifyReport ? (verifyReport.behaviorally_verified ? "done" : "warn") : revision > 1 ? "next" : "todo", onClick: openVerify },
+    { id: "benchmark", label: "Замер ускорения", hint: "Измерение времени выполнения до и после", state: benchmarkReport ? "done" : verifyReport?.behaviorally_verified ? "next" : "todo", onClick: openBenchmark },
+    { id: "decompose", label: "Разбор монолита", hint: "Разделить на файлы и классы по ответственности", state: files.length > 1 ? "done" : "todo", onClick: () => setWorkbench("decompose") },
+    { id: "report", label: "Отчёт", hint: "Скачать итоговый отчёт (Markdown)", state: "todo", onClick: () => void downloadReport() },
+  ];
 
   return (
-    <main className="grid h-svh min-w-[1100px] grid-rows-[52px_minmax(0,1fr)_auto] overflow-hidden bg-[#070b14]">
+    <main className="grid h-svh min-w-[1100px] grid-rows-[44px_34px_minmax(0,1fr)_auto] overflow-hidden bg-[#070b14]">
       <header className="flex min-w-0 items-center gap-2 border-b border-slate-800 bg-[#0b1220] px-3">
-        <LayoutGrid size={20} className="shrink-0 text-cyan-400" />
-        <strong className="whitespace-nowrap text-[15px] text-slate-100">Визуальная среда программирования</strong>
+        <Link href="/" className="flex shrink-0 items-center gap-2 rounded px-1 hover:bg-slate-800/60" title="На главную: загрузить другой проект"><LayoutGrid size={20} className="shrink-0 text-cyan-400" /><strong className="whitespace-nowrap text-[15px] text-slate-100">Визуальная среда программирования</strong></Link>
         
         <span className="whitespace-nowrap rounded bg-slate-800 px-2 py-1 font-mono text-[11px] text-slate-400" data-testid="revision">REV {revision}</span>
         <span className={`text-[12px] ${isDirty ? "text-amber-300" : "text-emerald-300"}`} role="status">{isDirty ? "Не сохранено" : "Сохранено"}</span>
@@ -375,7 +397,6 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
           <Button variant="outline" size="sm" aria-label="Экспортировать проект" onClick={() => void downloadProject()}><Download /> Экспорт Java</Button>
           <Button size="sm" className="bg-cyan-600 text-white hover:bg-cyan-500" disabled={loading || !firstApplicable} title={firstApplicable ? "Открыть применимую оптимизацию" : "Применимых оптимизаций нет"} onClick={() => { setAnalysisTab("recommendations"); if (firstApplicable) { setSelectedProposal(firstApplicable.id); setPreview(null); setAcknowledged([]); } }}><Sparkles /> Оптимизировать</Button>
           <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-500" onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}><Play /> Запуск</Button>
-          <Button variant="outline" size="sm" disabled title="Пошаговая отладка не реализована"><Bug /> Дебаг</Button>
         </div>
         <div className="ml-2 flex items-center gap-1 border-l border-slate-800 pl-2" aria-label="Инструменты">
           <Button variant="ghost" size="sm" aria-label="Проверка" title="Проверка поведения" onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}><ShieldCheck /></Button>
@@ -387,9 +408,11 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
         </div>
       </header>
 
+      <StepBar steps={steps} />
+
       {error ? <div className="absolute top-14 left-1/2 z-50 flex w-[min(720px,95vw)] -translate-x-1/2 items-center gap-2 rounded border border-rose-900 bg-rose-950 px-3 py-2 text-[13px] text-rose-200 shadow-xl" role="alert"><AlertCircle size={16} />{error}<button className="ml-auto bg-transparent text-slate-400" type="button" aria-label="Закрыть сообщение" onClick={() => setError("")}>×</button></div> : null}
 
-      <div className="grid min-h-0 min-w-0 grid-cols-[270px_minmax(420px,1fr)_380px]">
+      <div className="grid min-h-0 min-w-0 grid-cols-[240px_minmax(420px,1fr)_400px]">
         <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] border-r border-slate-800 bg-[#0b1120]" aria-label="Файлы проекта">
           <div className="min-h-0 overflow-auto">
             <div className="flex h-10 items-center justify-between border-b border-slate-800 px-3 text-[13px] font-semibold text-slate-200"><span className="flex items-center gap-2"><FolderOpen size={15} /> Проект</span><span className="font-mono text-[11px] text-slate-500">{javaFiles.length}</span></div>
@@ -397,7 +420,14 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
             <details open className="border-t border-slate-800">
               <summary className="cursor-pointer px-3 py-2 text-[12px] font-semibold text-slate-400">Методы · {methods.length}</summary>
               <div className="grid gap-0.5 px-1.5 pb-3">
-                {methods.map((method, index) => <button key={`${method.selector}:${index}`} type="button" title={method.id} className={`flex min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] ${selector === method.selector ? "bg-slate-800 text-slate-100" : "text-slate-400 hover:bg-slate-900"}`} onClick={() => { setSelector(method.selector); setView("cfg"); void openRange(method.source_range); }}><Code2 size={14} className="shrink-0 text-blue-400" /><span className="min-w-0 flex-1 truncate">{method.id}</span></button>)}
+                {methodGroups.map(([group, items]) => (
+                  <details key={group} open={items.some((method) => method.selector === selector) || methodGroups.length <= 3}>
+                    <summary className="flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-[12px] text-slate-300 hover:bg-slate-900"><span className="min-w-0 flex-1 truncate font-mono" title={group}>{group}</span><span className="font-mono text-[11px] text-slate-500">{items.length}</span></summary>
+                    <div className="grid gap-0.5 pl-3">
+                      {items.map((method, index) => <button key={`${method.selector}:${index}`} type="button" title={method.id} className={`flex min-w-0 items-center gap-2 rounded px-2 py-1 text-left text-[12px] ${selector === method.selector ? "bg-slate-800 text-slate-100" : "text-slate-400 hover:bg-slate-900"}`} onClick={() => { setSelector(method.selector); setView("cfg"); void openRange(method.source_range); }}><Code2 size={13} className="shrink-0 text-blue-400" /><span className="min-w-0 flex-1 truncate">{method.id.slice(group.length + 1)}</span></button>)}
+                    </div>
+                  </details>
+                ))}
               </div>
             </details>
           </div>
@@ -412,6 +442,9 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
               ))}
             </div>
             <nav className="mb-1 flex items-center gap-1" aria-label="Представление проекта">
+              {view === "overview"
+                ? <span className="mr-2 hidden text-[11px] text-slate-500 xl:inline">клик по классу — связи и методы · двойной клик — граф метода</span>
+                : <button className="mr-2 inline-flex h-7 items-center gap-1 rounded border border-cyan-800 bg-cyan-950/30 px-2 text-[12px] text-cyan-200 hover:bg-cyan-900/40" type="button" title="Вернуться к графу всего проекта" onClick={() => setView("overview")}><ArrowLeft size={14} /> К графу проекта</button>}
               <button className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[12px] ${view === "overview" ? "bg-slate-800 text-cyan-200" : "text-slate-400 hover:bg-slate-900"}`} type="button" onClick={() => setView("overview")}><Network size={14} /> Обзор</button>
               <button className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[12px] ${view === "cfg" ? "bg-slate-800 text-cyan-200" : "text-slate-400 hover:bg-slate-900"}`} type="button" onClick={() => setView("cfg")}><Waypoints size={14} /> CFG</button>
             </nav>
@@ -449,9 +482,9 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
           ))}
           <button type="button" className="ml-auto rounded px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-800 hover:text-slate-300" title="Скрыть или показать все нижние панели" onClick={() => setPanes((current) => (current.code || current.console || current.tests ? { code: false, console: false, tests: false } : { code: true, console: true, tests: true }))}>{panes.code || panes.console || panes.tests ? "Свернуть ▾" : "Развернуть ▴"}</button>
         </nav>
-        <div className={`min-h-0 ${panes.code || panes.console || panes.tests ? "h-[28vh] min-h-[190px]" : "hidden"} grid`} style={{ gridTemplateColumns: [panes.code ? "minmax(0,1.5fr)" : null, panes.console ? "minmax(0,1fr)" : null, panes.tests ? "minmax(0,1fr)" : null].filter(Boolean).join(" ") || "1fr" }}>
+        <div className={`min-h-0 ${panes.code || panes.console || panes.tests ? (codeTall ? "h-[58vh] min-h-[300px]" : "h-[25vh] min-h-[170px]") : "hidden"} grid`} style={{ gridTemplateColumns: [panes.code ? "minmax(0,1.5fr)" : null, panes.console ? "minmax(0,1fr)" : null, panes.tests ? "minmax(0,1fr)" : null].filter(Boolean).join(" ") || "1fr" }}>
         <div className={`${panes.code ? "grid" : "hidden"} h-full min-h-0 grid-rows-[34px_minmax(0,1fr)]`}>
-          <header className="flex items-center gap-2 border-b border-slate-800 px-3 text-[12px] text-slate-400"><FileCode2 size={14} /><strong className="text-slate-200">Код Java</strong><span className="truncate font-mono text-slate-500">{activeFile}</span><span className="ml-auto whitespace-nowrap">{dirty ? "Черновик" : `Сохранено · REV ${revision}`}</span></header>
+          <header className="flex items-center gap-2 border-b border-slate-800 px-3 text-[12px] text-slate-400"><FileCode2 size={14} /><strong className="text-slate-200">Код Java</strong><span className="truncate font-mono text-slate-500">{activeFile}</span><span className="ml-auto whitespace-nowrap">{dirty ? "Черновик" : `Сохранено · REV ${revision}`}</span><button type="button" className="rounded px-1.5 text-[11px] text-slate-400 hover:bg-slate-800 hover:text-slate-200" title="Высота панелей" onClick={() => setCodeTall((value) => !value)}>{codeTall ? "▾ меньше" : "▴ больше"}</button></header>
             <div className="min-h-0 min-w-0"><JavaEditor key={`${activeFile}:${revision}:${savedSource.length}`} ref={editorRef} value={source} diagnostics={activeDiagnostics} focusRange={range} onDirtyChange={(next) => { dirtyRef.current = next; setDirty(next); }} onMetricsChange={() => {}} onSourceSelection={(selection) => setRange(selection ? { ...selection, file: activeFile } : null)} /></div>
         </div>
         {panes.console ? <ConsolePane lines={logLines} /> : null}
@@ -460,11 +493,11 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
       </section>
 
       {workbench !== "code" ? (
-        <div className="fixed inset-x-0 bottom-0 top-[52px] z-30 grid grid-rows-[40px_minmax(0,1fr)] bg-[#0a1220]" role="dialog" aria-label={overlayTitle}>
+        <div className="fixed inset-x-0 bottom-0 top-[78px] z-30 grid grid-rows-[40px_minmax(0,1fr)] bg-[#0a1220]" role="dialog" aria-label={overlayTitle}>
           <header className="flex items-center gap-3 border-b border-slate-700 bg-[#0d1625] px-4"><strong className="text-[14px] text-slate-100">{overlayTitle}</strong><button className="ml-auto rounded border border-slate-700 px-3 py-1 text-[12px] text-slate-200 hover:border-cyan-700" type="button" onClick={() => setWorkbench("code")}>Код</button></header>
           <div className="min-h-0 overflow-auto">
         {workbench === "verify" ? <VerificationWorkbench revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} cases={cases} onCases={setCases} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} repeats={repeats} onRepeats={setRepeats} report={verifyReport} error={verifyError} busy={verifyBusy} onRun={() => void runFunctionalVerification()} /> : null}
-        {workbench === "benchmark" ? <BenchmarkWorkbench revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} workload={workload} onWorkload={setWorkload} iterations={measuredIterations} onIterations={setMeasuredIterations} report={benchmarkReport} error={benchmarkError} busy={benchmarkBusy} onRun={() => void runRuntimeBenchmark()} /> : null}
+        {workbench === "benchmark" ? <BenchmarkWorkbench cases={cases} revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} workload={workload} onWorkload={setWorkload} iterations={measuredIterations} onIterations={setMeasuredIterations} report={benchmarkReport} error={benchmarkError} busy={benchmarkBusy} onRun={() => void runRuntimeBenchmark()} /> : null}
         {workbench === "diff" ? <DiffWorkbench revisions={revisions} from={diffFrom} to={diffTo} onFrom={setDiffFrom} onTo={setDiffTo} files={revisionDiff} onLoad={() => void loadDiff()} /> : null}
         {workbench === "history" ? <HistoryPanel projectId={project.id} revision={revision} dirty={dirty} onRolledBack={async () => { await reloadCurrentRevision(); setWorkbench("code"); }} onVerify={(baseline, candidate) => { setBaselineRevision(baseline); setCandidateRevision(candidate); setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }} /> : null}
         {workbench === "decompose" ? <DecompositionPanel key={`${revision}:${sourceLevel}`} projectId={project.id} revision={revision} sourceLevel={sourceLevel} dirty={dirty} onApplied={reloadCurrentRevision} /> : null}
@@ -564,11 +597,17 @@ function VerificationReportView({ report }: { report: VerificationReport }) {
     {report.warnings?.length ? <div className="grid gap-1 rounded border border-amber-900/60 bg-amber-950/20 p-2" aria-label="Предупреждения проверки">{report.warnings.map((warning) => <p className="m-0 text-amber-200" key={warning.code}><code className="mr-1 text-amber-400">{warning.code}</code>{warning.message}</p>)}</div> : null}<div className="flex gap-4 text-slate-400"><span>Сборка baseline: {report.baseline_compilation.status}</span><span>candidate: {report.candidate_compilation.status}</span><span>Сценариев: {report.executed_test_cases}/{report.requested_test_cases}</span></div><button className="w-fit text-cyan-300" type="button" onClick={() => navigator.clipboard?.writeText(JSON.stringify(report, null, 2))}>Скопировать реальный JSON-отчёт</button>{report.test_cases.map((item) => <details className="border-t border-slate-800 pt-2" key={item.name}><summary className="cursor-pointer text-slate-300">{item.passed ? "✓" : "!"} {item.name} · {item.mismatches.length ? "различия" : "совпало"}</summary>{item.mismatches.map((mismatch) => <p className={`m-0 mt-1 ${mismatch.field === "unstable" ? "text-amber-300" : "text-rose-300"}`} key={mismatch.field}>{mismatch.field}: {mismatch.explanation}</p>)}{item.expectation_failures?.map((failure) => <p className="m-0 mt-1 text-rose-300" key={`expected-${failure.field}`}>ожидание {failure.field}: {failure.explanation}</p>)}</details>)}{report.not_covered?.length ? <details className="border-t border-slate-800 pt-2"><summary className="cursor-pointer text-slate-400">Чего эта проверка не показывает · {report.not_covered.length}</summary><ul className="m-0 mt-1 grid gap-1 pl-4 text-slate-500">{report.not_covered.map((note) => <li key={note}>{note}</li>)}</ul></details> : null}<small className="text-slate-500">Проверка относится только к введённым сценариям, полной эквивалентности не доказывает.</small></section>;
 }
 
-function BenchmarkWorkbench({ revisions, baseline, candidate, onBaseline, onCandidate, mainClass, onMainClass, sourceLevel, onSourceLevel, workload, onWorkload, iterations, onIterations, report, error, busy, onRun }: {
-  revisions: { revision: number; has_analysis: boolean }[]; baseline: number; candidate: number; onBaseline: (revision: number) => void; onCandidate: (revision: number) => void; mainClass: string; onMainClass: (value: string) => void; sourceLevel: string; onSourceLevel: (value: string) => void;
+function BenchmarkWorkbench({ cases, revisions, baseline, candidate, onBaseline, onCandidate, mainClass, onMainClass, sourceLevel, onSourceLevel, workload, onWorkload, iterations, onIterations, report, error, busy, onRun }: {
+  cases: VerifyTestCase[]; revisions: { revision: number; has_analysis: boolean }[]; baseline: number; candidate: number; onBaseline: (revision: number) => void; onCandidate: (revision: number) => void; mainClass: string; onMainClass: (value: string) => void; sourceLevel: string; onSourceLevel: (value: string) => void;
   workload: { name: string; size: string; stdin: string }; onWorkload: (value: { name: string; size: string; stdin: string }) => void; iterations: number; onIterations: (value: number) => void; report: BenchmarkReport | null; error: string; busy: boolean; onRun: () => void;
 }) {
-  return <div className="grid min-h-full content-start gap-3 p-3" aria-label="Измерение производительности"><header className="flex items-center gap-2 text-[14px] font-semibold text-slate-200">Runtime benchmark <span className="text-[12px] font-normal text-slate-500">реальные JVM-измерения; Big O отдельно</span></header><div className="grid max-w-5xl grid-cols-[1fr_1fr_220px_130px] gap-2"><RevisionSelect label="Baseline" values={revisions} value={baseline} onChange={onBaseline} /><RevisionSelect label="Candidate" values={revisions} value={candidate} onChange={onCandidate} /><label className="grid gap-1 text-[12px] text-slate-400">Главный класс<input aria-label="Главный класс для бенчмарка" className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[12px] text-slate-200" value={mainClass} onChange={(event) => onMainClass(event.target.value)} placeholder="shop.Main" /></label><label className="grid gap-1 text-[12px] text-slate-400">Java<select className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" value={sourceLevel} onChange={(event) => onSourceLevel(event.target.value)}>{["8", "11", "17", "21"].map((level) => <option key={level} value={level}>{level}</option>)}</select></label></div><div className="grid max-w-5xl grid-cols-[180px_100px_minmax(300px,1fr)_100px] gap-2"><label className="grid gap-1 text-[12px] text-slate-400">Нагрузка<input className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" value={workload.name} onChange={(event) => onWorkload({ ...workload, name: event.target.value })} /></label><label className="grid gap-1 text-[12px] text-slate-400">Размер<input type="number" min="0" className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" value={workload.size} onChange={(event) => onWorkload({ ...workload, size: event.target.value })} /></label><label className="grid gap-1 text-[12px] text-slate-400">stdin<textarea className="min-h-12 rounded border border-slate-700 bg-[#08101d] p-2 font-mono text-[12px] text-slate-200" value={workload.stdin} onChange={(event) => onWorkload({ ...workload, stdin: event.target.value })} /></label><label className="grid gap-1 text-[12px] text-slate-400">Итерации<input aria-label="Число измерений" type="number" min="1" max="100" className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" value={iterations} onChange={(event) => onIterations(Math.max(1, Math.min(100, Number(event.target.value))))} /></label></div>{error ? <p role="alert" className="m-0 text-[13px] text-rose-300">{error}{error.includes("main_class_required") ? " Введите класс с main(String[])." : ""}</p> : null}<Button className="w-fit" disabled={busy || !workload.name.trim()} onClick={onRun}>{busy ? <LoaderCircle className="spin" /> : <GitCompareArrows />} Измерить ревизии</Button>{report ? <BenchmarkReportView report={report} /> : null}</div>;
+  return <div className="grid min-h-full content-start gap-3 p-3" aria-label="Измерение производительности"><header className="flex items-center gap-2 text-[14px] font-semibold text-slate-200">Runtime benchmark <span className="text-[12px] font-normal text-slate-500">реальные JVM-измерения; Big O отдельно</span></header><div className="grid max-w-5xl grid-cols-[1fr_1fr_220px_130px] gap-2"><RevisionSelect label="Baseline" values={revisions} value={baseline} onChange={onBaseline} /><RevisionSelect label="Candidate" values={revisions} value={candidate} onChange={onCandidate} /><label className="grid gap-1 text-[12px] text-slate-400">Главный класс<input aria-label="Главный класс для бенчмарка" className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[12px] text-slate-200" value={mainClass} onChange={(event) => onMainClass(event.target.value)} placeholder="shop.Main" /></label><label className="grid gap-1 text-[12px] text-slate-400">Java<select className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" value={sourceLevel} onChange={(event) => onSourceLevel(event.target.value)}>{["8", "11", "17", "21"].map((level) => <option key={level} value={level}>{level}</option>)}</select></label></div><label className="flex max-w-5xl flex-wrap items-center gap-2 text-[12px] text-slate-400">Взять нагрузку из сценария проверки
+        <select aria-label="Сценарий для нагрузки" className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" value="" onChange={(event) => { const chosen = cases.find((item) => item.name === event.target.value); if (chosen) onWorkload({ ...workload, name: chosen.name, stdin: chosen.stdin }); }}>
+          <option value="">— выбрать —</option>
+          {cases.filter((item) => item.stdin.trim()).map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
+        </select>
+        <span className="text-slate-500">ввод должен подходить вашей программе, иначе замер ничего не покажет</span>
+      </label><div className="grid max-w-5xl grid-cols-[180px_100px_minmax(300px,1fr)_100px] gap-2"><label className="grid gap-1 text-[12px] text-slate-400">Нагрузка<input className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" value={workload.name} onChange={(event) => onWorkload({ ...workload, name: event.target.value })} /></label><label className="grid gap-1 text-[12px] text-slate-400">Размер<input type="number" min="0" className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" value={workload.size} onChange={(event) => onWorkload({ ...workload, size: event.target.value })} /></label><label className="grid gap-1 text-[12px] text-slate-400">stdin<textarea className="min-h-12 rounded border border-slate-700 bg-[#08101d] p-2 font-mono text-[12px] text-slate-200" value={workload.stdin} onChange={(event) => onWorkload({ ...workload, stdin: event.target.value })} /></label><label className="grid gap-1 text-[12px] text-slate-400">Итерации<input aria-label="Число измерений" type="number" min="1" max="100" className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" value={iterations} onChange={(event) => onIterations(Math.max(1, Math.min(100, Number(event.target.value))))} /></label></div>{error ? <p role="alert" className="m-0 text-[13px] text-rose-300">{error}{error.includes("main_class_required") ? " Введите класс с main(String[])." : ""}</p> : null}<Button className="w-fit" disabled={busy || !workload.name.trim()} onClick={onRun}>{busy ? <LoaderCircle className="spin" /> : <GitCompareArrows />} Измерить ревизии</Button>{report ? <BenchmarkReportView report={report} /> : null}</div>;
 }
 
 function BenchmarkReportView({ report }: { report: BenchmarkReport }) {

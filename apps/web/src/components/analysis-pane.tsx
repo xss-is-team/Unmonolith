@@ -45,14 +45,14 @@ export function AnalysisPane({
   const current = complexity?.methods.find((item) => item.method_id === selectedMethodId)?.time_complexity ?? null;
   const proposalBefore = selectedProposal && selectedProposal.method_id === selectedMethodId ? (selectedProposal.complexity.method_before ?? selectedProposal.complexity.scan_before) : null;
   const proposalAfter = selectedProposal && selectedProposal.method_id === selectedMethodId ? selectedProposal.complexity.scan_after : null;
-  const tabs: [Tab, string][] = [["problems", `Проблемы (${list.length})`], ["recommendations", `Рекомендации (${proposals.length})`], ["metrics", "Метрики"], ["edit", "Правка графа"]];
+  const tabs: [Tab, string, string][] = [["problems", `Проблемы ${list.length}`, `Проблемы (${list.length})`], ["recommendations", `Советы ${proposals.length}`, `Рекомендации (${proposals.length})`], ["metrics", "Метрики", "Метрики"], ["edit", "Правка", "Правка графа"]];
   return (
     <aside className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] bg-[#0b1120]" aria-label="Анализ">
-      <div className="grid gap-2 border-b border-slate-800 p-3">
+      <div className="grid gap-1.5 border-b border-slate-800 px-3 py-2">
         <div className="flex items-center justify-between"><h2 className="m-0 text-[14px] font-semibold text-slate-100">Анализ</h2><span className="font-mono text-[11px] text-slate-500">REV {analysis?.revision ?? "—"}</span></div>
-        <div className="grid grid-cols-2 gap-0.5 rounded-md bg-slate-900 p-0.5" role="tablist" aria-label="Разделы анализа">
-          {tabs.map(([id, label]) => (
-            <button key={id} type="button" role="tab" aria-selected={tab === id} className={`h-7 rounded text-[12px] ${tab === id ? "bg-cyan-500/20 text-cyan-200" : "text-slate-400 hover:text-slate-200"}`} onClick={() => onTab(id)}>{label}</button>
+        <div className="grid grid-cols-4 gap-0.5 rounded-md bg-slate-900 p-0.5" role="tablist" aria-label="Разделы анализа">
+          {tabs.map(([id, label, full]) => (
+            <button key={id} type="button" role="tab" aria-label={full} aria-selected={tab === id} className={`h-7 rounded text-[12px] ${tab === id ? "bg-cyan-500/20 text-cyan-200" : "text-slate-400 hover:text-slate-200"}`} onClick={() => onTab(id)}>{label}</button>
           ))}
         </div>
         {loading ? <p className="m-0 flex items-center gap-2 text-[12px] text-slate-400" role="status"><LoaderCircle className="spin" size={14} /> Анализ проекта…</p> : null}
@@ -72,9 +72,9 @@ export function AnalysisPane({
                     <div className="grid flex-1 gap-1">
                       <div className="flex flex-wrap items-center gap-2"><strong className="text-[13px] text-slate-100">{FINDING_TITLES[finding.id] ?? finding.message}</strong>
                         <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${high ? "bg-rose-500/20 text-rose-300" : "bg-amber-500/20 text-amber-300"}`}>{high ? "Высокая" : finding.severity === "warning" ? "Средняя" : "Низкая"}</span></div>
-                      <p className="m-0 text-[12px] leading-5 text-slate-400">{finding.explanation}</p>
+                      <details open><summary className="cursor-pointer text-[12px] text-slate-400 hover:text-slate-200">Почему это проблема</summary><p className="m-0 mt-1 text-[12px] leading-5 text-slate-400">{finding.explanation}</p>{finding.recommendation ? <p className="m-0 mt-1 text-[12px] leading-5 text-emerald-300/90"><strong>Рекомендация:</strong> {finding.recommendation}</p> : null}</details>
                       <small className="truncate font-mono text-[11px] text-slate-500" title={method_id}>{(file ?? "").split("/").at(-1)}:{finding.source_range.line ?? "—"} · {method_id}</small>
-                      <button type="button" className="w-fit text-[12px] text-cyan-300 hover:text-cyan-100" onClick={() => onOpenRange(finding.source_range, file ?? finding.source_range.file ?? null)}>К исходнику</button>
+                      <div className="flex gap-3"><button type="button" className="w-fit text-[12px] text-cyan-300 hover:text-cyan-100" onClick={() => onOpenMethod(method_id, finding.source_range, file ?? finding.source_range.file ?? null)}>Показать на графе</button><button type="button" className="w-fit text-[12px] text-slate-400 hover:text-slate-200" onClick={() => onOpenRange(finding.source_range, file ?? finding.source_range.file ?? null)}>К исходнику</button></div>
                     </div>
                   </div>
                 </article>
