@@ -143,11 +143,11 @@ final class StatementMove {
         String methodId = request.path("method_id").asText("");
         JsonNode op = request.path("operation");
         String type = op.path("type").asText("");
-        if (type.equals("insert_statement") || type.equals("delete_statement") || type.equals("extract_method")) {
+        if (type.equals("insert_statement") || type.equals("delete_statement") || type.equals("replace_statement") || type.equals("extract_method")) {
             return editStructural(root, request, outputDir, type);
         }
         if (!type.equals("move_statement")) {
-            return failure("unsupported_operation", "Supported operations: move_statement, insert_statement, delete_statement, extract_method.", null);
+            return failure("unsupported_operation", "Supported operations: move_statement, insert_statement, delete_statement, replace_statement, extract_method.", null);
         }
         String nodeId = op.path("node_id").asText("");
         String targetId = op.path("target_node_id").asText("");
@@ -344,6 +344,29 @@ final class StatementMove {
             }
             rewrite.getListRewrite((Block) statement.getParent(), Block.STATEMENTS_PROPERTY).remove(statement, null);
             operation.put("deleted", describe(r, statement));
+        } else if (type.equals("replace_statement")) {
+            String nodeId = op.path("node_id").asText("");
+            String code = op.path("code").asText("");
+            Statement statement = statementOf(r, nodeId);
+            if (nodeId.isEmpty() || statement == null) {
+                return failure("unsupported_node", "Node '" + nodeId + "' is not a whole statement of a block that can be replaced.", null);
+            }
+            if (code.isBlank() || code.length() > MAX_INSERT_CHARS) {
+                return failure("invalid_operation", "code is required and at most " + MAX_INSERT_CHARS + " characters.", null);
+            }
+            List<String> pieces = parseStatements(code);
+            if (pieces == null) {
+                return failure("invalid_operation", "The code is not a sequence of valid Java statements.", null);
+            }
+            Block block = (Block) statement.getParent();
+            ListRewrite list = rewrite.getListRewrite(block, Block.STATEMENTS_PROPERTY);
+            int base = block.statements().indexOf(statement);
+            for (int i = 0; i < pieces.size(); i++) {
+                list.insertAt(rewrite.createStringPlaceholder(pieces.get(i), ASTNode.EMPTY_STATEMENT), base + i, null);
+            }
+            list.remove(statement, null);
+            operation.put("replaced", describe(r, statement));
+            operation.put("with", pieces);
         } else {
             String targetId = op.path("target_node_id").asText("");
             String position = op.path("position").asText("");

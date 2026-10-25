@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BlockEditor } from "@/components/block-editor";
+import { ruFinding, ruText } from "@/lib/ru";
 import { DiffView } from "@/components/diff-view";
 import {
   ApiError,
@@ -512,18 +513,18 @@ function BigOPanel({
         <small className="text-slate-500">уверенность: {confidenceLabel(analysis.complexity.confidence)}</small>
       </div>
       <div className="grid content-start gap-1.5 text-[13px] leading-5 text-slate-400">
-        <p className="m-0">{analysis.complexity.reason}</p>
+        <p className="m-0">{ruText(analysis.complexity.reason)}</p>
         {analysis.complexity.assumptions.length ? (
-          <details className="text-[12px]"><summary className="cursor-pointer text-slate-500">Допущения · {analysis.complexity.assumptions.length}</summary><ul className="mt-1 [&_li]:leading-5">{analysis.complexity.assumptions.map((item) => <li key={item}>{item}</li>)}</ul></details>
+          <details className="text-[12px]"><summary className="cursor-pointer text-slate-500">Допущения · {analysis.complexity.assumptions.length}</summary><ul className="mt-1 [&_li]:leading-5">{analysis.complexity.assumptions.map((item) => <li key={item}>{ruText(item)}</li>)}</ul></details>
         ) : null}
         {analysis.findings.length ? (
           <div className="grid gap-1.5">
             {analysis.findings.map((finding) => (
               <details key={finding.id} className="rounded border border-slate-700 bg-slate-900">
-                <summary className="cursor-pointer p-2 text-[13px] text-slate-300">{finding.message}</summary>
+                <summary className="cursor-pointer p-2 text-[13px] text-slate-300">{ruFinding(finding).title}</summary>
                 <div className="border-t border-slate-800 p-2 text-[12px] leading-5">
-                  <p className="m-0">{finding.explanation}</p>
-                  <p className="mt-1 mb-0 text-slate-300">Рекомендация: {finding.recommendation}</p>
+                  <p className="m-0">{ruFinding(finding).explanation}</p>
+                  <p className="mt-1 mb-0 text-slate-300">Рекомендация: {ruFinding(finding).recommendation}</p>
                   <Button variant="ghost" size="sm" className="mt-1.5" onClick={() => onSelect(finding.source_range)}>К коду</Button>
                 </div>
               </details>

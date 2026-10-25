@@ -190,7 +190,7 @@ test("real ZIP workflow: tree, graph/CFG, optimization, verification and measure
   await page.getByLabel("stdin").fill("1200\n800\n997\n");
   await page.getByRole("button", { name: "Измерить ревизии" }).click();
   const benchmark = page.getByRole("region", { name: "Результат runtime benchmark" });
-  await expect(benchmark).toContainText("samples:", { timeout: 120_000 });
+  await expect(benchmark).toContainText("измерений:", { timeout: 120_000 });
   await expect(benchmark).toContainText("Статическая сложность (Big O)");
   await expect(benchmark).toContainText("Функционально:");
   await expect(benchmark).toContainText("JVM");
@@ -327,4 +327,25 @@ test("extract method turns a statement into a private method and refuses a selec
   await editor.getByLabel("Имя нового метода").fill("pair");
   await editor.getByRole("button", { name: "Показать извлечение" }).click();
   await expect(page.getByLabel("Добавление и удаление блоков").locator('[role="alert"]')).toContainText("More than one value");
+});
+
+test("a block template lands in the editor and a statement can be edited by hand", async ({ page }) => {
+  test.setTimeout(45_000);
+  await uploadZip(page);
+  await page.locator('button[title="calc.Pricing.price(int,int,int)"]').click();
+  await page.getByText("Блоки", { exact: false }).first().click();
+  await page.getByRole("button", { name: "Условие" }).click();
+  await expect(page.getByLabel("Java-код блока")).toHaveValue(/if \(true\)/);
+  const cfg = page.getByRole("region", { name: "Граф потока управления" });
+  await cfg.getByText("int tax = base / 5;", { exact: true }).click();
+  await page.waitForTimeout(600);
+  await page.getByRole("button", { name: "Править выбранный оператор" }).click();
+  await expect(page.getByLabel("Java-код блока")).toHaveValue("int tax = base / 5;");
+  await page.getByLabel("Java-код блока").fill("int tax = base / 4;");
+  await page.getByRole("button", { name: "Показать замену" }).click();
+  await expect(page.getByLabel("Предпросмотр правки блока")).toContainText("base / 4");
+  await page.getByRole("button", { name: /Применить · REV 2/ }).click();
+  await expect(page.getByTestId("revision")).toContainText("REV 2");
+  await page.getByTestId("file-src/main/java/calc/Pricing.java").click();
+  await expect(page.locator(".cm-content")).toContainText("int tax = base / 4;");
 });

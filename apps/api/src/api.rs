@@ -583,6 +583,14 @@ enum CfgEditOperation {
         /// CFG node of the statement to delete.
         node_id: String,
     },
+    /// Replaces one whole statement of a block with other Java statements (edit a statement by hand). The code must
+    /// parse and the result must analyse without a new error.
+    ReplaceStatement {
+        /// CFG node of the statement to replace.
+        node_id: String,
+        /// One or more Java statements (at most 4000 characters).
+        code: String,
+    },
     /// Turns consecutive statements of one block into a private method of the same class and replaces them with a
     /// call. Values that flow in become parameters; at most one value may flow out. Refused when the selection
     /// returns, jumps out of itself or lets more than one value out.
@@ -2673,6 +2681,11 @@ async fn build_edit_candidate(
         CfgEditOperation::DeleteStatement { node_id } => serde_json::json!({
             "type": "delete_statement",
             "node_id": node_id,
+        }),
+        CfgEditOperation::ReplaceStatement { node_id, code } => serde_json::json!({
+            "type": "replace_statement",
+            "node_id": node_id,
+            "code": code,
         }),
         CfgEditOperation::ExtractMethod {
             first_node_id,

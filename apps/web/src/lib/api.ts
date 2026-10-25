@@ -340,6 +340,7 @@ export type CfgEditOperation =
   | { type: "move_statement"; node_id: string; target_node_id: string; position: "before" | "after" }
   | { type: "insert_statement"; target_node_id: string; position: "before" | "after"; code: string }
   | { type: "delete_statement"; node_id: string }
+  | { type: "replace_statement"; node_id: string; code: string }
   | { type: "extract_method"; first_node_id: string; last_node_id: string; name: string };
 
 export type CfgEditPreview = {

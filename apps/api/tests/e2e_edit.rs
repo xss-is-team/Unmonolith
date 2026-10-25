@@ -977,3 +977,36 @@ async fn a_selection_can_be_extracted_into_a_method_over_http() {
         .await
         .expect_error(400, "invalid_operation");
 }
+
+#[tokio::test]
+async fn a_statement_can_be_edited_by_hand_over_http() {
+    let (_server, project, _original) = pricing().await;
+    let tax = project.cfg_node(PRICE, "int tax = base / 5;").await;
+    let body = json!({
+        "base_revision": 1, "source_level": "8", "method_id": PRICE,
+        "operation": {"type": "replace_statement", "node_id": tax, "code": "int tax = base / 4;"},
+    });
+    let preview = project.cfg_preview(&body).await.expect_status(200).json();
+    let unified = preview["diff"][0]["unified_diff"].as_str().unwrap();
+    assert!(
+        unified.contains("-        int tax = base / 5;")
+            && unified.contains("+        int tax = base / 4;"),
+        "{unified}"
+    );
+    project
+        .cfg_apply(&body, &preview["preview_sha256"])
+        .await
+        .expect_status(200);
+    assert!(project
+        .source(PRICING, None)
+        .await
+        .contains("int tax = base / 4;"));
+    let broken = json!({
+        "base_revision": 2, "source_level": "8", "method_id": PRICE,
+        "operation": {"type": "replace_statement", "node_id": tax, "code": "int = ;"},
+    });
+    project
+        .cfg_preview(&broken)
+        .await
+        .expect_error(400, "invalid_operation");
+}

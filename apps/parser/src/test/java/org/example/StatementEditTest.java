@@ -143,4 +143,23 @@ class StatementEditTest {
         assertEquals(0, code, stdout.toString(StandardCharsets.UTF_8));
         assertEquals(SOURCE, Files.readString(dir.resolve("out2/Main.java")), "insert then delete restores the original text");
     }
+
+    @Test
+    void replacesAStatementWithEditedCodeAndRefusesWhatBreaksTheMethod(@TempDir Path dir) throws Exception {
+        Map<String, Object> op = new LinkedHashMap<>();
+        op.put("type", "replace_statement");
+        op.put("node_id", nodeId(SOURCE, "int x = a + 1;"));
+        op.put("code", "int x = a + 100;");
+        Run run = edit(dir.resolve("in"), op, dir.resolve("out"));
+        assertEquals(0, run.code, run.json.toString());
+        String result = Files.readString(dir.resolve("out/Main.java"));
+        assertTrue(result.contains("int x = a + 100;") && !result.contains("int x = a + 1;"), result);
+        assertEquals(1, run.json.get("operation").get("with").size());
+
+        op.put("code", "int renamed = a;");
+        Run broken = edit(dir.resolve("in2"), op, dir.resolve("out2"));
+        assertEquals("transformation_invalid", broken.json.at("/error/code").asText(), "y = x * 2 still needs x: " + broken.json);
+        op.put("code", "int = ;");
+        assertEquals("invalid_operation", edit(dir.resolve("in3"), op, dir.resolve("out3")).json.at("/error/code").asText());
+    }
 }

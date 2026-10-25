@@ -4,17 +4,13 @@ import type { ReactNode } from "react";
 import { AlertTriangle, ArrowRight, Check, Gauge, LoaderCircle, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ComplexityOverview } from "@/components/complexity-overview";
+import { ruFinding } from "@/lib/ru";
 import type {
   AnalysisResult, ComplexityReport, Diagnostic, FindingsReport, OptimizationProposal, SourceRange,
 } from "@/lib/api";
 
 export type Tab = "problems" | "recommendations" | "metrics" | "edit";
 
-const FINDING_TITLES: Record<string, string> = {
-  repeated_collection_scan: "Повторный линейный перебор коллекции в цикле",
-  nested_collection_iteration: "Вложенный перебор одной и той же коллекции",
-  string_concat_in_loop: "Склейка строки в цикле: каждый раз копируется всё накопленное",
-};
 const HIGH = new Set(["repeated_collection_scan", "nested_collection_iteration"]);
 
 /** «Анализ» of the mockup: Problems / Recommendations / Metrics tabs and the complexity card with the measured effect. */
@@ -70,9 +66,9 @@ export function AnalysisPane({
                   <div className="flex items-start gap-2">
                     <AlertTriangle size={16} className={`mt-0.5 shrink-0 ${high ? "text-rose-400" : "text-amber-400"}`} />
                     <div className="grid flex-1 gap-1">
-                      <div className="flex flex-wrap items-center gap-2"><strong className="text-[13px] text-slate-100">{FINDING_TITLES[finding.id] ?? finding.message}</strong>
+                      <div className="flex flex-wrap items-center gap-2"><strong className="text-[13px] text-slate-100">{ruFinding(finding).title}</strong>
                         <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${high ? "bg-rose-500/20 text-rose-300" : "bg-amber-500/20 text-amber-300"}`}>{high ? "Высокая" : finding.severity === "warning" ? "Средняя" : "Низкая"}</span></div>
-                      <details open><summary className="cursor-pointer text-[12px] text-slate-400 hover:text-slate-200">Почему это проблема</summary><p className="m-0 mt-1 text-[12px] leading-5 text-slate-400">{finding.explanation}</p>{finding.recommendation ? <p className="m-0 mt-1 text-[12px] leading-5 text-emerald-300/90"><strong>Рекомендация:</strong> {finding.recommendation}</p> : null}</details>
+                      <details open><summary className="cursor-pointer text-[12px] text-slate-400 hover:text-slate-200">Почему это проблема</summary><p className="m-0 mt-1 text-[12px] leading-5 text-slate-400">{ruFinding(finding).explanation}</p>{finding.recommendation ? <p className="m-0 mt-1 text-[12px] leading-5 text-emerald-300/90"><strong>Рекомендация:</strong> {ruFinding(finding).recommendation}</p> : null}</details>
                       <small className="truncate font-mono text-[11px] text-slate-500" title={method_id}>{(file ?? "").split("/").at(-1)}:{finding.source_range.line ?? "—"} · {method_id}</small>
                       <div className="flex gap-3"><button type="button" className="w-fit text-[12px] text-cyan-300 hover:text-cyan-100" onClick={() => onOpenMethod(method_id, finding.source_range, file ?? finding.source_range.file ?? null)}>Показать на графе</button><button type="button" className="w-fit text-[12px] text-slate-400 hover:text-slate-200" onClick={() => onOpenRange(finding.source_range, file ?? finding.source_range.file ?? null)}>К исходнику</button></div>
                     </div>

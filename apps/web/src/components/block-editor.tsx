@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertCircle, Check, LoaderCircle, Plus, Scissors, Trash2 } from "lucide-react";
+import { AlertCircle, Check, LoaderCircle, Pencil, Plus, Scissors, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DiffView } from "@/components/diff-view";
 import {
@@ -100,8 +100,13 @@ export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, 
             </select>
           </label>
           <Button size="sm" variant="outline" disabled={!nodeId || !code.trim() || busy} onClick={() => void request({ type: "insert_statement", target_node_id: nodeId, position, code })}>{busy ? <LoaderCircle className="spin" /> : <Plus />} Показать вставку</Button>
+          <Button size="sm" variant="outline" disabled={!nodeId || !code.trim() || busy} title="Заменить выбранный оператор кодом из поля слева" onClick={() => void request({ type: "replace_statement", node_id: nodeId, code })}><Pencil /> Показать замену</Button>
           <Button size="sm" variant="outline" disabled={!nodeId || busy} onClick={() => void request({ type: "delete_statement", node_id: nodeId })}><Trash2 /> Показать удаление</Button>
         </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[12px]">
+        <Button size="sm" variant="ghost" disabled={!nodeId || !nodeLabel} title="Положить код выбранного оператора в поле, чтобы изменить его вручную" onClick={() => { setCode(nodeLabel); setPreview(null); }}><Pencil /> Править выбранный оператор</Button>
+        <span className="text-slate-500">как пользоваться: 1) нажмите оператор на графе 2) возьмите шаблон из «Блоков» слева или правьте код 3) «Показать вставку» или «Показать замену» 4) «Применить»</span>
       </div>
       <small className="font-mono text-slate-500">Выбран: {nodeId ? `${nodeId} · ${nodeLabel}` : "нажмите на оператор в графе"}</small>
       <div className="flex flex-wrap items-end gap-2 border-t border-slate-800 pt-2 text-[12px] text-slate-400" aria-label="Выделение метода">

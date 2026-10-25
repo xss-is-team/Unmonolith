@@ -3,6 +3,7 @@
 import { CheckCircle2, CircleAlert, CircleHelp, Play, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { VerificationReport } from "@/lib/api";
+import { ruWarning } from "@/lib/ru";
 
 export type LogLine = { time: string; kind: "info" | "ok" | "error"; text: string };
 
@@ -65,7 +66,7 @@ export function TestsPane({ report, busy, onRun }: { report: VerificationReport 
                 ))}
               </tbody>
             </table>
-            {report.warnings?.length ? <p className="m-0 text-amber-300">Предупреждения: {report.warnings.map((w) => w.code).join(", ")}</p> : null}
+            {report.warnings?.length ? <p className="m-0 text-amber-300">Предупреждения: {report.warnings.map((w) => ruWarning(w)).join(" ")}</p> : null}
           </div>
         )}
       </div>
