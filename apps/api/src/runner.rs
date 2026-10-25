@@ -16,6 +16,51 @@ use crate::error::ApiError;
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const STDERR_BYTES: u64 = 16 * 1024;
 const WORK_DIRECTORY: &str = "/work";
+const BENCH_SOURCE: &str = include_str!("../../runner/Bench.java");
+
+/// CPU and memory caps of a runner container (`docker create --cpus/--memory`).
+#[derive(Clone, Copy, Debug)]
+pub struct ContainerLimits {
+    pub cpus: &'static str,
+    pub memory: &'static str,
+}
+
+impl ContainerLimits {
+    pub const VERIFY: Self = Self {
+        cpus: "0.5",
+        memory: "256m",
+    };
+    /// One full CPU and a bigger heap: less scheduler noise, room for the harness plus the program.
+    pub const BENCHMARK: Self = Self {
+        cpus: "1",
+        memory: "512m",
+    };
+}
+
+/// Raw result of benchmarking one revision (statistics and comparison happen in `benchmark.rs`).
+#[derive(Debug)]
+pub struct RevisionBenchmark {
+    pub compilation: CompilationResult,
+    /// Container create+start, source copy, javac and main-class inspection. Not algorithm time.
+    pub setup_ms: u64,
+    /// Copying and compiling the benchmark harness. Not algorithm time.
+    pub harness_setup_ms: u64,
+    /// Wall time of the whole in-container benchmark JVM, including its startup.
+    pub execution_ms: u64,
+    pub limits: ContainerLimits,
+    pub timed_out: bool,
+    pub environment: Option<serde_json::Value>,
+    pub workloads: Vec<serde_json::Value>,
+    pub harness_stderr_tail: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct BenchmarkSettings {
+    pub warmup_iterations: u32,
+    pub measured_iterations: u32,
+    pub fresh_class_loader: bool,
+    pub iteration_timeout_ms: u64,
+}
 
 #[derive(Clone, Debug)]
 pub struct JavaRunner {
@@ -24,6 +69,7 @@ pub struct JavaRunner {
     compile_timeout: Duration,
     case_timeout: Duration,
     max_output_bytes: u64,
+    benchmark_timeout: Duration,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -34,6 +80,33 @@ pub struct VerifyRequest {
     #[schema(minimum = 1)]
     pub candidate_revision: u64,
     pub test_cases: Vec<VerifyTestCase>,
+    /// Archive projects only: fully qualified class with `public static void main(String[])`
+    /// (e.g. `com.acme.Main`). Required when the project has no single `main` method.
+    #[serde(default)]
+    pub main_class: Option<String>,
+    /// Archive projects only: Java language level of the sources (8, 11, 17 or 21; default 21).
+    #[serde(default)]
+    pub source_level: Option<String>,
+}
+
+/// What to compile in a runner container: the Java files of one revision (container path = project path).
+#[derive(Clone, Debug)]
+pub struct CompileTarget {
+    pub files: Vec<(String, PathBuf)>,
+    /// Fully qualified main class; when `None` the single file's own name is used (legacy single-file mode).
+    pub main_class: Option<String>,
+    /// `javac --release` value.
+    pub release: String,
+}
+
+impl CompileTarget {
+    pub fn single(filename: &str, source: PathBuf) -> Self {
+        Self {
+            files: vec![(filename.to_owned(), source)],
+            main_class: None,
+            release: "21".to_owned(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -172,20 +245,30 @@ impl JavaRunner {
             compile_timeout,
             case_timeout,
             max_output_bytes,
+            benchmark_timeout: Duration::from_secs(120),
         }
+    }
+
+    pub fn image(&self) -> Option<&str> {
+        self.image.as_deref()
+    }
+
+    /// Wall-clock limit of one revision's whole benchmark run (all workloads, all iterations).
+    pub fn with_benchmark_timeout(mut self, timeout: Duration) -> Self {
+        self.benchmark_timeout = timeout;
+        self
     }
 
     pub async fn verify(
         &self,
-        filename: &str,
         baseline_revision: u64,
-        baseline_source: &Path,
+        baseline_target: &CompileTarget,
         candidate_revision: u64,
-        candidate_source: &Path,
+        candidate_target: &CompileTarget,
         test_cases: &[VerifyTestCase],
     ) -> Result<VerificationReport, ApiError> {
-        let mut baseline = self.compile_revision(filename, baseline_source).await?;
-        let mut candidate = match self.compile_revision(filename, candidate_source).await {
+        let mut baseline = self.compile_revision(baseline_target).await?;
+        let mut candidate = match self.compile_revision(candidate_target).await {
             Ok(candidate) => candidate,
             Err(error) => {
                 cleanup_optional(&mut baseline.container).await?;
@@ -258,12 +341,12 @@ impl JavaRunner {
 
             if index + 1 < test_cases.len() && baseline_needs_restart {
                 cleanup_optional(&mut baseline.container).await?;
-                baseline = self.compile_revision(filename, baseline_source).await?;
+                baseline = self.compile_revision(baseline_target).await?;
                 ensure_recompile_succeeded(&baseline.report)?;
             }
             if index + 1 < test_cases.len() && candidate_needs_restart {
                 cleanup_optional(&mut candidate.container).await?;
-                candidate = self.compile_revision(filename, candidate_source).await?;
+                candidate = self.compile_revision(candidate_target).await?;
                 ensure_recompile_succeeded(&candidate.report)?;
             }
         }
@@ -291,16 +374,234 @@ impl JavaRunner {
         })
     }
 
-    async fn compile_revision(
+    /// Compiles one revision in a fresh container and runs the in-container benchmark harness over the
+    /// workloads. Compilation, container start and harness setup are timed separately from the iterations.
+    pub async fn benchmark_revision(
         &self,
-        filename: &str,
-        source: &Path,
+        target: &CompileTarget,
+        workloads: &[Vec<u8>],
+        settings: &BenchmarkSettings,
+    ) -> Result<RevisionBenchmark, ApiError> {
+        let limits = ContainerLimits::BENCHMARK;
+        let setup_started = std::time::Instant::now();
+        let mut attempt = self.compile_revision_with(target, limits).await?;
+        let setup_ms = setup_started.elapsed().as_millis() as u64;
+        let compilation = attempt.report.clone();
+        let Some(container) = attempt.container.as_mut() else {
+            return Ok(RevisionBenchmark {
+                compilation,
+                setup_ms,
+                harness_setup_ms: 0,
+                execution_ms: 0,
+                limits,
+                timed_out: false,
+                environment: None,
+                workloads: Vec::new(),
+                harness_stderr_tail: String::new(),
+            });
+        };
+        let main_class = compilation
+            .main_class
+            .clone()
+            .expect("completed compilation has a main class");
+        let result = self
+            .run_harness(container, &main_class, workloads, settings)
+            .await;
+        let cleanup = container.cleanup().await;
+        let (harness_setup_ms, execution_ms, timed_out, environment, lines, stderr_tail) = result?;
+        cleanup?;
+        Ok(RevisionBenchmark {
+            compilation,
+            setup_ms,
+            harness_setup_ms,
+            execution_ms,
+            limits,
+            timed_out,
+            environment,
+            workloads: lines,
+            harness_stderr_tail: stderr_tail,
+        })
+    }
+
+    #[allow(clippy::type_complexity)]
+    async fn run_harness(
+        &self,
+        container: &ContainerGuard,
+        main_class: &str,
+        workloads: &[Vec<u8>],
+        settings: &BenchmarkSettings,
+    ) -> Result<
+        (
+            u64,
+            u64,
+            bool,
+            Option<serde_json::Value>,
+            Vec<serde_json::Value>,
+            String,
+        ),
+        ApiError,
+    > {
+        let harness_started = std::time::Instant::now();
+        let copy = self
+            .docker(
+                &[
+                    "exec",
+                    "--interactive",
+                    "--workdir",
+                    WORK_DIRECTORY,
+                    &container.name,
+                    "dd",
+                    &format!("of={WORK_DIRECTORY}/Bench.java"),
+                    "status=none",
+                ],
+                Some(BENCH_SOURCE.as_bytes()),
+                CONTROL_TIMEOUT,
+            )
+            .await?;
+        ensure_control_success(&copy, "could not copy the benchmark harness")?;
+        let made = self
+            .docker(
+                &[
+                    "exec",
+                    "--workdir",
+                    WORK_DIRECTORY,
+                    &container.name,
+                    "mkdir",
+                    "-p",
+                    "/work/bench-classes",
+                ],
+                None,
+                CONTROL_TIMEOUT,
+            )
+            .await?;
+        ensure_control_success(&made, "could not create the harness directory")?;
+        let compile = self
+            .docker(
+                &[
+                    "exec",
+                    "--workdir",
+                    WORK_DIRECTORY,
+                    &container.name,
+                    "javac",
+                    "-nowarn",
+                    "-d",
+                    "/work/bench-classes",
+                    "/work/Bench.java",
+                ],
+                None,
+                self.compile_timeout,
+            )
+            .await?;
+        if !compile.success {
+            tracing::error!("benchmark harness did not compile");
+            return Err(runner_failed("the benchmark harness could not be compiled"));
+        }
+        let mut workload_files = Vec::new();
+        for (index, stdin) in workloads.iter().enumerate() {
+            let path = format!("{WORK_DIRECTORY}/w{index}.in");
+            let copy = self
+                .docker(
+                    &[
+                        "exec",
+                        "--interactive",
+                        "--workdir",
+                        WORK_DIRECTORY,
+                        &container.name,
+                        "dd",
+                        &format!("of={path}"),
+                        "status=none",
+                    ],
+                    Some(stdin),
+                    CONTROL_TIMEOUT,
+                )
+                .await?;
+            ensure_control_success(&copy, "could not copy a benchmark workload")?;
+            workload_files.push(path);
+        }
+        let harness_setup_ms = harness_started.elapsed().as_millis() as u64;
+
+        let warmup = settings.warmup_iterations.to_string();
+        let measured = settings.measured_iterations.to_string();
+        let iteration_timeout = settings.iteration_timeout_ms.to_string();
+        let mut args: Vec<&str> = vec![
+            "exec",
+            "--workdir",
+            WORK_DIRECTORY,
+            &container.name,
+            "java",
+            "-Xmx256m",
+            "-XX:+UseSerialGC",
+            "-Djava.security.manager=allow",
+            "-Dfile.encoding=UTF-8",
+            "-cp",
+            "/work/bench-classes",
+            "Bench",
+            WORK_DIRECTORY,
+            main_class,
+            &warmup,
+            &measured,
+            if settings.fresh_class_loader {
+                "fresh"
+            } else {
+                "shared"
+            },
+            &iteration_timeout,
+        ];
+        args.extend(workload_files.iter().map(String::as_str));
+        let started = std::time::Instant::now();
+        let run = self.docker(&args, None, self.benchmark_timeout).await?;
+        let execution_ms = started.elapsed().as_millis() as u64;
+        let mut environment = None;
+        let mut lines = Vec::new();
+        for line in String::from_utf8_lossy(&run.stdout.bytes).lines() {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if value.get("environment").is_some() {
+                environment = value.get("environment").cloned();
+            } else if value.get("workload").is_some() {
+                lines.push(value);
+            }
+        }
+        let stderr_tail = {
+            let text = String::from_utf8_lossy(&run.stderr.bytes);
+            let skip = text.chars().count().saturating_sub(2000);
+            text.chars().skip(skip).collect::<String>()
+        };
+        Ok((
+            harness_setup_ms,
+            execution_ms,
+            run.timed_out,
+            environment,
+            lines,
+            stderr_tail,
+        ))
+    }
+
+    async fn compile_revision(&self, target: &CompileTarget) -> Result<CompileAttempt, ApiError> {
+        self.compile_revision_with(target, ContainerLimits::VERIFY)
+            .await
+    }
+
+    async fn compile_revision_with(
+        &self,
+        target: &CompileTarget,
+        limits: ContainerLimits,
     ) -> Result<CompileAttempt, ApiError> {
         let image = self.image.as_deref().ok_or_else(runner_unavailable)?;
-        let source = tokio::fs::canonicalize(source).await.map_err(|error| {
-            tracing::error!(%error, path = %source.display(), "runner source is unavailable");
-            runner_failed("source revision is unavailable to the runner")
-        })?;
+        let mut files = Vec::with_capacity(target.files.len());
+        for (path, source) in &target.files {
+            let source = tokio::fs::canonicalize(source).await.map_err(|error| {
+                tracing::error!(%error, path = %source.display(), "runner source is unavailable");
+                runner_failed("source revision is unavailable to the runner")
+            })?;
+            files.push((path.clone(), source));
+        }
+        let target = &CompileTarget {
+            files,
+            main_class: target.main_class.clone(),
+            release: target.release.clone(),
+        };
         let name = format!("java-blueprints-{}", Uuid::new_v4());
         let create = self
             .docker(
@@ -320,11 +621,11 @@ impl JavaRunner {
                     "--user",
                     "65532:65532",
                     "--cpus",
-                    "0.5",
+                    limits.cpus,
                     "--memory",
-                    "256m",
+                    limits.memory,
                     "--memory-swap",
-                    "256m",
+                    limits.memory,
                     "--pids-limit",
                     "64",
                     "--cap-drop",
@@ -354,9 +655,7 @@ impl JavaRunner {
             active: true,
         };
 
-        let result = self
-            .compile_in_container(&container, filename, &source)
-            .await;
+        let result = self.compile_in_container(&container, target).await;
         match result {
             Ok((report, true)) => Ok(CompileAttempt {
                 report,
@@ -381,57 +680,75 @@ impl JavaRunner {
     async fn compile_in_container(
         &self,
         container: &ContainerGuard,
-        filename: &str,
-        source: &Path,
+        target: &CompileTarget,
     ) -> Result<(CompilationResult, bool), ApiError> {
         let start = self
             .docker(&["start", &container.name], None, CONTROL_TIMEOUT)
             .await?;
         ensure_control_success(&start, "could not start runner container")?;
-        let source = tokio::fs::read(source).await.map_err(|error| {
-            tracing::error!(%error, "could not read source for isolated runner");
-            runner_failed("source revision is unavailable to the runner")
-        })?;
-        let destination = format!("of={WORK_DIRECTORY}/{filename}");
-        let copy = self
-            .docker(
-                &[
-                    "exec",
-                    "--interactive",
-                    "--workdir",
-                    WORK_DIRECTORY,
-                    &container.name,
-                    "dd",
-                    &destination,
-                    "status=none",
-                ],
-                Some(&source),
-                CONTROL_TIMEOUT,
-            )
-            .await?;
-        ensure_control_success(&copy, "could not copy source into runner container")?;
+        let mut container_sources = Vec::with_capacity(target.files.len());
+        for (path, source) in &target.files {
+            let bytes = tokio::fs::read(source).await.map_err(|error| {
+                tracing::error!(%error, "could not read source for isolated runner");
+                runner_failed("source revision is unavailable to the runner")
+            })?;
+            if let Some((directory, _)) = path.rsplit_once('/') {
+                let made = self
+                    .docker(
+                        &[
+                            "exec",
+                            "--workdir",
+                            WORK_DIRECTORY,
+                            &container.name,
+                            "mkdir",
+                            "-p",
+                            &format!("{WORK_DIRECTORY}/{directory}"),
+                        ],
+                        None,
+                        CONTROL_TIMEOUT,
+                    )
+                    .await?;
+                ensure_control_success(
+                    &made,
+                    "could not create source directory in runner container",
+                )?;
+            }
+            let destination = format!("of={WORK_DIRECTORY}/{path}");
+            let copy = self
+                .docker(
+                    &[
+                        "exec",
+                        "--interactive",
+                        "--workdir",
+                        WORK_DIRECTORY,
+                        &container.name,
+                        "dd",
+                        &destination,
+                        "status=none",
+                    ],
+                    Some(&bytes),
+                    CONTROL_TIMEOUT,
+                )
+                .await?;
+            ensure_control_success(&copy, "could not copy source into runner container")?;
+            container_sources.push(format!("{WORK_DIRECTORY}/{path}"));
+        }
 
-        let container_source = format!("{WORK_DIRECTORY}/{filename}");
-        let compile = self
-            .docker(
-                &[
-                    "exec",
-                    "--workdir",
-                    WORK_DIRECTORY,
-                    &container.name,
-                    "javac",
-                    "-encoding",
-                    "UTF-8",
-                    "--release",
-                    "21",
-                    "-d",
-                    WORK_DIRECTORY,
-                    &container_source,
-                ],
-                None,
-                self.compile_timeout,
-            )
-            .await?;
+        let mut javac_args: Vec<&str> = vec![
+            "exec",
+            "--workdir",
+            WORK_DIRECTORY,
+            &container.name,
+            "javac",
+            "-encoding",
+            "UTF-8",
+            "--release",
+            &target.release,
+            "-d",
+            WORK_DIRECTORY,
+        ];
+        javac_args.extend(container_sources.iter().map(String::as_str));
+        let compile = self.docker(&javac_args, None, self.compile_timeout).await?;
         if compile.timed_out {
             return Ok((
                 compilation_result(
@@ -474,33 +791,41 @@ impl JavaRunner {
             ));
         }
 
-        let class_filename = format!(
-            "{}.class",
-            filename
-                .strip_suffix(".java")
-                .expect("project filenames end in .java")
-        );
-        let find = self
-            .docker(
-                &[
-                    "exec",
-                    "--workdir",
-                    WORK_DIRECTORY,
-                    &container.name,
-                    "find",
-                    WORK_DIRECTORY,
-                    "-type",
-                    "f",
-                    "-name",
-                    &class_filename,
-                    "-print",
-                ],
-                None,
-                CONTROL_TIMEOUT,
-            )
-            .await?;
-        ensure_control_success(&find, "could not locate the compiled main class")?;
-        let main_class = class_name(&find.stdout.bytes, &class_filename);
+        let main_class = match &target.main_class {
+            Some(explicit) => Some(explicit.clone()),
+            None => {
+                let (filename, _) = &target.files[0];
+                let class_filename = format!(
+                    "{}.class",
+                    filename
+                        .rsplit('/')
+                        .next()
+                        .and_then(|name| name.strip_suffix(".java"))
+                        .expect("project filenames end in .java")
+                );
+                let find = self
+                    .docker(
+                        &[
+                            "exec",
+                            "--workdir",
+                            WORK_DIRECTORY,
+                            &container.name,
+                            "find",
+                            WORK_DIRECTORY,
+                            "-type",
+                            "f",
+                            "-name",
+                            &class_filename,
+                            "-print",
+                        ],
+                        None,
+                        CONTROL_TIMEOUT,
+                    )
+                    .await?;
+                ensure_control_success(&find, "could not locate the compiled main class")?;
+                class_name(&find.stdout.bytes, &class_filename)
+            }
+        };
         let Some(main_class) = main_class else {
             return Ok((
                 compilation_result(
@@ -530,6 +855,18 @@ impl JavaRunner {
                 CONTROL_TIMEOUT,
             )
             .await?;
+        if !inspect.success && target.main_class.is_some() {
+            return Ok((
+                compilation_result(
+                    CompilationStatus::MissingMain,
+                    compile,
+                    Some(main_class),
+                    "main_class_not_found",
+                    "the requested main class was not produced by the compilation",
+                ),
+                false,
+            ));
+        }
         ensure_control_success(&inspect, "could not inspect the compiled main class")?;
         if !String::from_utf8_lossy(&inspect.stdout.bytes)
             .contains("public static void main(java.lang.String[])")

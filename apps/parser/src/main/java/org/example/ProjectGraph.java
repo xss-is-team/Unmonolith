@@ -22,8 +22,8 @@ final class ProjectGraph {
     record Link(String methodId, String cfgEntry) {
     }
 
-    private final AstJson json;
-    private final CompilationUnit cu;
+    private final List<AstJson> units;
+    private final Map<ASTNode, AstJson> jsonByUnit = new IdentityHashMap<>();
     private final Map<MethodDeclaration, Link> links;
 
     private final List<Object> nodes = new ArrayList<>();
@@ -38,15 +38,39 @@ final class ProjectGraph {
     private int internalCalls;
     private int externalCalls;
 
+    /** Graph of one compilation unit. */
     ProjectGraph(AstJson json, CompilationUnit cu, Map<MethodDeclaration, Link> links) {
-        this.json = json;
-        this.cu = cu;
+        this(List.of(json), links);
+    }
+
+    /** Graph over several compilation units that were bound together, so cross-file references resolve. */
+    ProjectGraph(List<AstJson> units, Map<MethodDeclaration, Link> links) {
+        this.units = units;
         this.links = links;
+        for (AstJson unit : units) {
+            jsonByUnit.put(unit.unit(), unit);
+        }
+    }
+
+    private Map<String, Object> range(ASTNode node) {
+        return jsonByUnit.get(node.getRoot()).range(node);
+    }
+
+    private String text(ASTNode node) {
+        return jsonByUnit.get(node.getRoot()).text(node);
+    }
+
+    private String fileOf(ASTNode node) {
+        return jsonByUnit.get(node.getRoot()).file();
     }
 
     Map<String, Object> build() {
-        cu.accept(new Declarations());
-        cu.accept(new Relations());
+        for (AstJson unit : units) {
+            unit.unit().accept(new Declarations());
+        }
+        for (AstJson unit : units) {
+            unit.unit().accept(new Relations());
+        }
 
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("resolved_internal_calls", internalCalls);
@@ -55,7 +79,7 @@ final class ProjectGraph {
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("version", 1);
-        out.put("scope", "compilation_unit");
+        out.put("scope", units.size() == 1 && units.get(0).file() == null ? "compilation_unit" : "project");
         out.put("nodes", nodes);
         out.put("edges", new ArrayList<>(edges.values()));
         out.put("unresolved_calls", unresolved);
@@ -98,7 +122,10 @@ final class ProjectGraph {
             n.put("name", node.getName().getIdentifier());
             ITypeBinding tb = node.resolveBinding();
             n.put("qualified_name", tb == null ? null : tb.getQualifiedName());
-            n.put("source_range", json.range(node));
+            n.put("source_range", range(node));
+            if (fileOf(node) != null) {
+                n.put("file", fileOf(node));
+            }
             nodes.add(n);
             ids.put(node, id);
             typeNodes.put(node, n);
@@ -118,7 +145,10 @@ final class ProjectGraph {
             n.put("name", node.getName().getIdentifier());
             n.put("method_id", link == null ? null : link.methodId());
             n.put("cfg_entry", link == null ? null : link.cfgEntry());
-            n.put("source_range", json.range(node));
+            n.put("source_range", range(node));
+            if (fileOf(node) != null) {
+                n.put("file", fileOf(node));
+            }
             nodes.add(n);
             ids.put(node, id);
             IMethodBinding mb = node.resolveBinding();
@@ -233,7 +263,7 @@ final class ProjectGraph {
                     edge(id, target, superclass || isInterface ? "extends" : "implements", parent);
                 } else {
                     Map<String, Object> e = new LinkedHashMap<>();
-                    e.put("name", resolved ? pb.getTypeDeclaration().getQualifiedName() : json.text(parent));
+                    e.put("name", resolved ? pb.getTypeDeclaration().getQualifiedName() : text(parent));
                     e.put("relation", superclass || isInterface ? "extends" : "implements");
                     e.put("resolved", resolved);
                     external.add(e);
@@ -266,7 +296,7 @@ final class ProjectGraph {
 
         @Override
         public boolean visit(ClassInstanceCreation node) {
-            call(node, "constructor_call", json.text(node.getType()), node.resolveConstructorBinding());
+            call(node, "constructor_call", text(node.getType()), node.resolveConstructorBinding());
             return true;
         }
 
@@ -293,8 +323,8 @@ final class ProjectGraph {
                 u.put("from", from);
                 u.put("kind", kind);
                 u.put("name", name);
-                u.put("expression", json.text(node));
-                u.put("source_range", json.range(node));
+                u.put("expression", text(node));
+                u.put("source_range", range(node));
                 u.put("reason", "unresolved_binding");
                 unresolved.add(u);
                 return;
@@ -344,7 +374,7 @@ final class ProjectGraph {
         });
         e.put("count", (Integer) e.get("count") + 1);
         if (site != null) {
-            ((List<Object>) e.get("sites")).add(json.range(site));
+            ((List<Object>) e.get("sites")).add(range(site));
         }
     }
 }

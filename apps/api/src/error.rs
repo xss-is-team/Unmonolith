@@ -10,6 +10,10 @@ use utoipa::ToSchema;
 pub struct ApiErrorBody {
     pub code: &'static str,
     pub message: String,
+    /// Structured context for some errors, e.g. the `reasons` of a rejected CFG edit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub details: Option<serde_json::Value>,
 }
 
 #[derive(Debug)]
@@ -17,6 +21,7 @@ pub struct ApiError {
     pub status: StatusCode,
     pub code: &'static str,
     pub message: String,
+    pub details: Option<serde_json::Value>,
 }
 
 impl ApiError {
@@ -25,7 +30,13 @@ impl ApiError {
             status,
             code,
             message: message.into(),
+            details: None,
         }
+    }
+
+    pub fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.details = Some(details);
+        self
     }
 
     pub fn bad_request(message: impl Into<String>) -> Self {
@@ -65,6 +76,7 @@ impl IntoResponse for ApiError {
             Json(ApiErrorBody {
                 code: self.code,
                 message: self.message,
+                details: self.details,
             }),
         )
             .into_response()

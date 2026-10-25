@@ -21,7 +21,37 @@ pub struct JavaAnalyzer {
     java_bin: PathBuf,
     timeout: Duration,
     max_output_bytes: u64,
+    project_timeout: Duration,
+    project_output_bytes: u64,
 }
+
+/// Output of one `optimize` invocation. The candidate tree (for `apply`) lives in a staging directory
+/// that is removed when this value is dropped.
+pub struct OptimizationRun {
+    pub stage: PathBuf,
+    /// Complete candidate project (every file), present after a successful `apply`.
+    pub tree: PathBuf,
+    pub result: serde_json::Value,
+}
+
+impl Drop for OptimizationRun {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.stage);
+    }
+}
+
+pub enum OptimizeRequest<'a> {
+    Discover,
+    Apply {
+        proposal_id: &'a str,
+        acknowledged: &'a [String],
+        /// A preview produces the same rewrite without requiring the assumptions to be acknowledged.
+        preview: bool,
+    },
+}
+
+/// Java source levels the bundled Eclipse JDT 3.47 can honour (it clamps anything below 1.8).
+pub const SOURCE_LEVELS: [&str; 4] = ["8", "11", "17", "21"];
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct AnalysisResult {
@@ -133,6 +163,8 @@ impl JavaAnalyzer {
             java_bin,
             timeout,
             max_output_bytes,
+            project_timeout: timeout.saturating_mul(6),
+            project_output_bytes: max_output_bytes.saturating_mul(16),
         }
     }
 
@@ -335,12 +367,251 @@ impl JavaAnalyzer {
         current_dir: &Path,
         revision: u64,
     ) -> Result<(AnalysisResult, Vec<u8>), ApiError> {
+        self.run_parser(
+            &[input.as_os_str()],
+            current_dir,
+            revision,
+            self.timeout,
+            self.max_output_bytes,
+        )
+        .await
+    }
+
+    /// Analyses every Java file of an archive revision together (`project` subcommand).
+    pub async fn analyze_project(
+        &self,
+        project_dir: PathBuf,
+        revision: u64,
+        java_files: &[String],
+        source_level: &str,
+    ) -> Result<AnalysisResult, ApiError> {
+        check_source_level(source_level)?;
+        let root = fs::canonicalize(project::revision_dir(&project_dir, revision)).await?;
+        let analysis_dir = project_dir.join("analysis");
+        fs::create_dir_all(&analysis_dir).await?;
+        let stage = project_dir.join(format!(".analyze-{}", Uuid::new_v4()));
+        fs::create_dir(&stage).await?;
+        let request = serde_json::json!({"source_level": source_level, "files": java_files});
+        let result = async {
+            fs::write(stage.join("request.json"), request.to_string()).await?;
+            let request_path = fs::canonicalize(stage.join("request.json")).await?;
+            self.run_parser(
+                &[
+                    "project".as_ref(),
+                    "--root".as_ref(),
+                    root.as_os_str(),
+                    "--input".as_ref(),
+                    request_path.as_os_str(),
+                ],
+                &stage,
+                revision,
+                self.project_timeout,
+                self.project_output_bytes,
+            )
+            .await
+        }
+        .await;
+        let _ = fs::remove_dir_all(&stage).await;
+        let (result, artifact) = result?;
+        project::atomic_write(&analysis_dir.join(format!("{revision}.json")), &artifact).await?;
+        Ok(result)
+    }
+
+    /// Runs the parser's `optimize` subcommand over a revision's files (single-file projects pass one file).
+    pub async fn optimize(
+        &self,
+        project_dir: &Path,
+        revision: u64,
+        files: &[String],
+        source_level: &str,
+        request: OptimizeRequest<'_>,
+    ) -> Result<OptimizationRun, ApiError> {
+        check_source_level(source_level)?;
+        let root = fs::canonicalize(project::revision_dir(project_dir, revision)).await?;
+        let stage = project_dir.join(format!(".optimize-{}", Uuid::new_v4()));
+        fs::create_dir(&stage).await?;
+        let tree = stage.join("tree");
+        let mut run = OptimizationRun {
+            stage: stage.clone(),
+            tree: tree.clone(),
+            result: serde_json::Value::Null,
+        };
+        let body = match &request {
+            OptimizeRequest::Discover => serde_json::json!({
+                "source_level": source_level, "files": files, "action": "discover",
+            }),
+            OptimizeRequest::Apply {
+                proposal_id,
+                acknowledged,
+                preview,
+            } => serde_json::json!({
+                "source_level": source_level, "files": files, "action": "apply",
+                "proposal_id": proposal_id, "acknowledged_assumptions": acknowledged,
+                "preview": preview,
+            }),
+        };
+        fs::write(stage.join("request.json"), body.to_string()).await?;
+        let request_path = fs::canonicalize(stage.join("request.json")).await?;
+        let mut args: Vec<&std::ffi::OsStr> = vec![
+            "optimize".as_ref(),
+            "--root".as_ref(),
+            root.as_os_str(),
+            "--input".as_ref(),
+            request_path.as_os_str(),
+        ];
+        if matches!(request, OptimizeRequest::Apply { .. }) {
+            args.push("--output-dir".as_ref());
+            args.push(tree.as_os_str());
+        }
+        let (status, stdout, stderr) = self
+            .exec_parser(
+                &args,
+                &stage,
+                self.project_timeout,
+                self.project_output_bytes,
+            )
+            .await?;
+        let result: serde_json::Value =
+            serde_json::from_slice(&stdout.bytes).map_err(|_| invalid_output())?;
+        if status.success() && result.get("status").and_then(|v| v.as_str()) == Some("completed") {
+            run.result = result;
+            return Ok(run);
+        }
+        tracing::warn!(
+            exit_code = status.code(),
+            stderr_bytes = stderr.bytes.len(),
+            "Java optimizer rejected the request"
+        );
+        if status.code() != Some(1)
+            || result.get("status").and_then(|v| v.as_str()) != Some("failed")
+        {
+            return Err(analyzer_failed());
+        }
+        Err(parser_failure(&result))
+    }
+
+    /// Runs the parser's `edit` subcommand (structured CFG edits). `single_file` selects the id scheme of
+    /// single-file analyses (`m3.n5`) instead of project analyses (`f1m3.n5`).
+    pub async fn edit(
+        &self,
+        project_dir: &Path,
+        revision: u64,
+        files: &[String],
+        single_file: bool,
+        source_level: &str,
+        method_id: &str,
+        operation: &serde_json::Value,
+    ) -> Result<OptimizationRun, ApiError> {
+        check_source_level(source_level)?;
+        let root = fs::canonicalize(project::revision_dir(project_dir, revision)).await?;
+        let stage = project_dir.join(format!(".edit-{}", Uuid::new_v4()));
+        fs::create_dir(&stage).await?;
+        let tree = stage.join("tree");
+        let mut run = OptimizationRun {
+            stage: stage.clone(),
+            tree: tree.clone(),
+            result: serde_json::Value::Null,
+        };
+        let body = serde_json::json!({
+            "mode": if single_file { "single" } else { "project" },
+            "source_level": source_level,
+            "files": files,
+            "method_id": method_id,
+            "operation": operation,
+        });
+        fs::write(stage.join("request.json"), body.to_string()).await?;
+        let request_path = fs::canonicalize(stage.join("request.json")).await?;
+        let args: Vec<&std::ffi::OsStr> = vec![
+            "edit".as_ref(),
+            "--root".as_ref(),
+            root.as_os_str(),
+            "--input".as_ref(),
+            request_path.as_os_str(),
+            "--output-dir".as_ref(),
+            tree.as_os_str(),
+        ];
+        let (status, stdout, stderr) = self
+            .exec_parser(
+                &args,
+                &stage,
+                self.project_timeout,
+                self.project_output_bytes,
+            )
+            .await?;
+        let result: serde_json::Value =
+            serde_json::from_slice(&stdout.bytes).map_err(|_| invalid_output())?;
+        if status.success() && result.get("status").and_then(|v| v.as_str()) == Some("completed") {
+            run.result = result;
+            return Ok(run);
+        }
+        tracing::warn!(
+            exit_code = status.code(),
+            stderr_bytes = stderr.bytes.len(),
+            "Java editor rejected the request"
+        );
+        if status.code() != Some(1)
+            || result.get("status").and_then(|v| v.as_str()) != Some("failed")
+        {
+            return Err(analyzer_failed());
+        }
+        Err(parser_failure(&result))
+    }
+
+    /// Analyses a candidate tree of an archive project as revision `revision`; nothing is persisted.
+    pub async fn analyze_tree(
+        &self,
+        tree: &Path,
+        stage: &Path,
+        revision: u64,
+        java_files: &[String],
+        source_level: &str,
+    ) -> Result<(AnalysisResult, Vec<u8>), ApiError> {
+        check_source_level(source_level)?;
+        let root = fs::canonicalize(tree).await?;
+        let request = serde_json::json!({"source_level": source_level, "files": java_files});
+        fs::write(stage.join("analyze-request.json"), request.to_string()).await?;
+        let request_path = fs::canonicalize(stage.join("analyze-request.json")).await?;
+        self.run_parser(
+            &[
+                "project".as_ref(),
+                "--root".as_ref(),
+                root.as_os_str(),
+                "--input".as_ref(),
+                request_path.as_os_str(),
+            ],
+            stage,
+            revision,
+            self.project_timeout,
+            self.project_output_bytes,
+        )
+        .await
+    }
+
+    /// Analyses a candidate single-file source as revision `revision`; nothing is persisted.
+    pub async fn analyze_file(
+        &self,
+        file: &Path,
+        stage: &Path,
+        revision: u64,
+    ) -> Result<(AnalysisResult, Vec<u8>), ApiError> {
+        let input = fs::canonicalize(file).await?;
+        self.run_analysis(&input, stage, revision).await
+    }
+
+    /// Runs the parser JAR with `args`, bounded in time and output. Never interprets the result.
+    async fn exec_parser(
+        &self,
+        args: &[&std::ffi::OsStr],
+        current_dir: &Path,
+        run_timeout: Duration,
+        max_output_bytes: u64,
+    ) -> Result<(std::process::ExitStatus, CapturedOutput, CapturedOutput), ApiError> {
         let jar = self.canonical_jar().await?;
 
         let mut child = Command::new(&self.java_bin)
             .arg("-jar")
             .arg(&jar)
-            .arg(input)
+            .args(args)
             .current_dir(current_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -354,7 +625,7 @@ impl JavaAnalyzer {
         let run = async {
             let (status, stdout, stderr) = tokio::join!(
                 child.wait(),
-                read_bounded(stdout, self.max_output_bytes),
+                read_bounded(stdout, max_output_bytes),
                 read_bounded(stderr, STDERR_BYTES)
             );
             Ok::<_, ApiError>((
@@ -364,7 +635,7 @@ impl JavaAnalyzer {
             ))
         };
 
-        let (status, stdout, stderr) = match timeout(self.timeout, run).await {
+        let (status, stdout, stderr) = match timeout(run_timeout, run).await {
             Ok(result) => result?,
             Err(_) => {
                 let _ = child.kill().await;
@@ -379,6 +650,20 @@ impl JavaAnalyzer {
         if stdout.overflowed {
             return Err(invalid_output());
         }
+        Ok((status, stdout, stderr))
+    }
+
+    async fn run_parser(
+        &self,
+        args: &[&std::ffi::OsStr],
+        current_dir: &Path,
+        revision: u64,
+        run_timeout: Duration,
+        max_output_bytes: u64,
+    ) -> Result<(AnalysisResult, Vec<u8>), ApiError> {
+        let (status, stdout, stderr) = self
+            .exec_parser(args, current_dir, run_timeout, max_output_bytes)
+            .await?;
 
         if !status.success() {
             tracing::warn!(
@@ -419,6 +704,20 @@ impl JavaAnalyzer {
         };
         Ok((result, artifact))
     }
+}
+
+pub fn check_source_level(level: &str) -> Result<(), ApiError> {
+    if SOURCE_LEVELS.contains(&level) {
+        return Ok(());
+    }
+    Err(ApiError::new(
+        StatusCode::BAD_REQUEST,
+        "unsupported_source_level",
+        format!(
+            "source_level must be one of {}; Java 1.2-1.7 cannot be parsed by the bundled Eclipse JDT",
+            SOURCE_LEVELS.join(", ")
+        ),
+    ))
 }
 
 fn contains_cfg_method(value: &serde_json::Value, method_id: &str) -> bool {
@@ -462,6 +761,53 @@ async fn read_bounded(
     }
 
     Ok(CapturedOutput { bytes, overflowed })
+}
+
+/// Maps the `{"status":"failed","error":{code,message,reasons?}}` document of `optimize` / `edit` to an API error.
+fn parser_failure(result: &serde_json::Value) -> ApiError {
+    let message = result
+        .pointer("/error/message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("the Java tool rejected the request")
+        .to_owned();
+    let error = match result.pointer("/error/code").and_then(|v| v.as_str()) {
+        Some("proposal_not_found") => {
+            ApiError::new(StatusCode::NOT_FOUND, "proposal_not_found", message)
+        }
+        Some("not_applicable") => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "optimization_not_applicable",
+            message,
+        ),
+        Some("assumptions_not_acknowledged") => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "assumptions_not_acknowledged",
+            message,
+        ),
+        Some("transformation_invalid") => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "transformation_invalid",
+            message,
+        ),
+        Some("move_rejected") => {
+            ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "move_rejected", message)
+        }
+        Some("unknown_method") => ApiError::new(StatusCode::NOT_FOUND, "method_not_found", message),
+        Some("unsupported_node") => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported_node",
+            message,
+        ),
+        Some("no_change") => ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "no_change", message),
+        Some("invalid_operation") | Some("unsupported_operation") => {
+            ApiError::new(StatusCode::BAD_REQUEST, "invalid_operation", message)
+        }
+        _ => return analyzer_failed(),
+    };
+    match result.pointer("/error/reasons") {
+        Some(reasons) => error.with_details(serde_json::json!({ "reasons": reasons })),
+        None => error,
+    }
 }
 
 fn unavailable() -> ApiError {
