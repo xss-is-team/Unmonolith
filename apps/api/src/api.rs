@@ -36,6 +36,7 @@ use crate::{
         self, FileEntry, FileRole, Manifest, Project, ProjectKind, RevisionDetail, RevisionSummary,
         UpdateFileRequest, UpdateSourceRequest,
     },
+    report,
     runner::{
         BehaviorMismatch, CapturedStream, CompilationResult, CompilationStatus,
         ExecutionObservation, JavaRunner, MismatchField, RunnerDiagnostic, TestCaseResult,
@@ -124,6 +125,7 @@ impl AppState {
         apply_cfg_edit,
         compare_revisions,
         get_project_findings,
+        get_project_report,
         transform_project,
         verify_project,
         get_verification_report
@@ -345,6 +347,7 @@ pub fn app(state: AppState) -> Router {
             get(compare_revisions),
         )
         .route("/projects/{project_id}/findings", get(get_project_findings))
+        .route("/projects/{project_id}/report", get(get_project_report))
         .route("/projects/{project_id}/transform", post(transform_project))
         .route("/projects/{project_id}/verify", post(verify_project))
         .route(
@@ -1897,6 +1900,99 @@ async fn get_project_findings(
         "revision": project.revision,
         "findings": findings,
     })))
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+struct ReportQuery {
+    /// Revision to compare from (default 1).
+    baseline: Option<u64>,
+    /// Revision to report on (default: the current revision).
+    candidate: Option<u64>,
+}
+
+/// The newest stored report in `dir_name` whose `baseline_revision` / `candidate_revision` match.
+async fn latest_report(
+    directory: &std::path::Path,
+    dir_name: &str,
+    baseline: u64,
+    candidate: u64,
+) -> Option<Value> {
+    let mut entries = fs::read_dir(directory.join(dir_name)).await.ok()?;
+    let mut best: Option<(String, Value)> = None;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let Ok(bytes) = fs::read(entry.path()).await else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+            continue;
+        };
+        if value.get("baseline_revision").and_then(Value::as_u64) != Some(baseline)
+            || value.get("candidate_revision").and_then(Value::as_u64) != Some(candidate)
+        {
+            continue;
+        }
+        let created = value
+            .get("created_at")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        if best.as_ref().is_none_or(|(newest, _)| created > *newest) {
+            best = Some((created, value));
+        }
+    }
+    best.map(|(_, value)| value)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/report",
+    tag = "Reports",
+    security(("guestSession" = [])),
+    params(("project_id" = Uuid, Path), ReportQuery),
+    responses(
+        (status = 200, description = "Markdown report: Big O before/after, findings, the latest behaviour check and benchmark of the revision pair", content_type = "text/markdown", body = String),
+        (status = 400, body = ApiErrorBody),
+        (status = 401, body = ApiErrorBody),
+        (status = 404, body = ApiErrorBody)
+    )
+)]
+async fn get_project_report(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Query(query): Query<ReportQuery>,
+) -> Result<Response, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let session_dir = session::authenticate(&state.0.data_dir, &headers).await?;
+    let (project, directory) = project::load(&session_dir, project_id).await?;
+    let baseline = query.baseline.unwrap_or(1);
+    let candidate = query.candidate.unwrap_or(project.revision);
+    if baseline == 0
+        || candidate == 0
+        || baseline > project.revision
+        || candidate > project.revision
+    {
+        return Err(revision_not_found());
+    }
+    let candidate_analysis = load_analysis(&directory, candidate).await?;
+    let baseline_analysis = load_analysis(&directory, baseline).await.ok();
+    let verification = latest_report(&directory, "verification", baseline, candidate).await;
+    let benchmark = latest_report(&directory, "benchmarks", baseline, candidate).await;
+    let text = report::build(&report::ReportInput {
+        project_name: &project.filename,
+        baseline_revision: baseline,
+        candidate_revision: candidate,
+        baseline_analysis: baseline_analysis.as_ref(),
+        candidate_analysis: &candidate_analysis,
+        verification: verification.as_ref(),
+        benchmark: benchmark.as_ref(),
+    });
+    let mut response = Response::new(Body::from(text));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/markdown; charset=utf-8"),
+    );
+    Ok(response)
 }
 
 fn parse_proposal_id(value: &str) -> Result<&str, ApiError> {

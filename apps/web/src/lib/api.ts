@@ -672,7 +672,16 @@ export function applyCfgEdit(projectId: string, baseRevision: number, methodId: 
   });
 }
 
-export type DecompositionMember = { id: string; name: string; lines: number };
+export async function getProjectReport(projectId: string, baseline: number, candidate: number) {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/report?baseline=${baseline}&candidate=${candidate}`,
+    { credentials: "include", cache: "no-store" },
+  );
+  if (!response.ok) throw await responseError(response);
+  return response.text();
+}
+
+export type DecompositionMember ={ id: string; name: string; lines: number };
 
 export type DecompositionCheck = { id: string; status: "satisfied" | "violated"; detail: string };
 

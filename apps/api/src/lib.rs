@@ -5,6 +5,7 @@ mod benchmark;
 mod diff;
 mod error;
 mod project;
+mod report;
 mod runner;
 mod session;
 mod verify_hints;

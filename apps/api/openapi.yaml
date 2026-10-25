@@ -350,6 +350,28 @@ paths:
               schema: {$ref: '#/components/schemas/FindingsReport'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /projects/{project_id}/report:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: getProjectReport
+      tags: [Reports]
+      security: [{guestSession: []}]
+      summary: Markdown report of a revision pair
+      description: |
+        Big O before/after, findings, the latest stored behaviour check (`POST /verify`) and runtime benchmark
+        (`POST /benchmark`) of the pair. It restates stored results only; sections without a stored result say so.
+      parameters:
+        - {name: baseline, in: query, schema: {type: integer, minimum: 1}, description: 'Revision to compare from (default 1)'}
+        - {name: candidate, in: query, schema: {type: integer, minimum: 1}, description: 'Revision to report on (default: current)'}
+      responses:
+        '200':
+          description: Markdown document
+          content:
+            text/markdown:
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /projects/{project_id}/methods/{method_selector}/cfg:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}

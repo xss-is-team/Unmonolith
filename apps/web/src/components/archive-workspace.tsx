@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle, ArrowLeft, Check, ChevronRight, Code2, Download, FileCode2, FolderOpen,
-  GitCompareArrows, LoaderCircle, Network, Save, Scissors, ShieldCheck, Waypoints,
+  FileText, GitCompareArrows, LoaderCircle, Network, Save, Scissors, ShieldCheck, Waypoints,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Brand } from "@/components/brand";
@@ -15,7 +15,7 @@ import { DiffView } from "@/components/diff-view";
 import {
   analyzeProjectStream, ApiError, applyOptimization, compareRevisions, exportProject,
   getOptimizations, getProject, getProjectComplexity, getProjectFile,
-  getProjectFiles, getProjectFindings, getProjectMethods, getProjectRevisions,
+  getProjectFiles, getProjectFindings, getProjectMethods, getProjectReport, getProjectRevisions,
   MAX_SOURCE_BYTES, previewOptimization, runBenchmark, updateProjectFile, verifyRevisions,
   type AnalysisResult, type BenchmarkReport, type CfgMethod, type ComplexityReport,
   type FileDiff, type FindingsReport, type OptimizationList, type OptimizationPreview,
@@ -303,6 +303,20 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
     }
   }
 
+  async function downloadReport() {
+    try {
+      const text = await getProjectReport(project.id, Math.min(baselineRevision, revision), revision);
+      const url = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `report-${project.filename.replace(/\.[^.]+$/, "")}-rev${revision}.md`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
   async function downloadProject() {
     try {
       const result = await exportProject(project.id);
@@ -335,6 +349,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
         <Button variant="outline" size="sm" onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}><ShieldCheck /> Проверка</Button>
         <Button variant="outline" size="sm" onClick={() => { setWorkbench("benchmark"); void getProjectRevisions(project.id).then(setRevisions); }}>Бенчмарк</Button>
         <Button variant="outline" size="sm" onClick={() => setWorkbench("decompose")}><Scissors /> Разбор монолита</Button>
+        <Button variant="outline" size="sm" onClick={() => void downloadReport()} disabled={loading}><FileText /> Отчёт</Button>
         <Button variant="ghost" size="sm" aria-label="Экспортировать проект" onClick={() => void downloadProject()}><Download /></Button>
         <Link className="inline-flex items-center gap-1 whitespace-nowrap text-[13px] text-slate-400 hover:text-cyan-300" href="/"><ArrowLeft size={15} /> Другой проект</Link>
       </header>

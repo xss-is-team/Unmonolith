@@ -13,7 +13,8 @@ export function complexityRank(value: string): number {
   const power = /\^(\d+)/.exec(text);
   if (power) return 2 + Number(power[1]);
   const variables = text.slice(2, -1).split("+").map((term) => term.split("*").length);
-  return 2 + Math.max(...variables) - 1;
+  const degree = Math.max(...variables);
+  return degree === 1 ? 2 : 2 + degree;
 }
 
 function tone(rank: number) {

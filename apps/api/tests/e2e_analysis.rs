@@ -502,3 +502,46 @@ async fn organizer_monolith_workflow_still_works_end_to_end() {
         "O(n + m)"
     );
 }
+
+#[tokio::test]
+async fn markdown_report_restates_the_analysis_and_says_what_was_not_run() {
+    let server = TestServer::start().await;
+    let api = server.client().await;
+    let project = api
+        .create_project("Main.java", demo_source().into_bytes())
+        .await;
+    project.analyze_single_file().await;
+
+    let response = api.get(&project.path("/report")).await.expect_status(200);
+    assert!(
+        response
+            .header("content-type")
+            .is_some_and(|value| value.starts_with("text/markdown")),
+        "markdown content type"
+    );
+    let text = response.text();
+    assert!(text.starts_with("# Отчёт по проекту Main.java"), "{text}");
+    assert!(
+        text.contains("Методов оценено: 64") || text.contains("Методов оценено:"),
+        "{text}"
+    );
+    assert!(
+        text.contains("DataOptimizer.mergeDuplicateItemsQuadratic"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Проверка для этой пары ревизий не запускалась"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Измерение для этой пары ревизий не запускалось"),
+        "{text}"
+    );
+
+    api.get(&project.path("/report?candidate=9"))
+        .await
+        .expect_error(404, "revision_not_found");
+    api.get(&project.path("/report?baseline=0"))
+        .await
+        .expect_error(404, "revision_not_found");
+}
