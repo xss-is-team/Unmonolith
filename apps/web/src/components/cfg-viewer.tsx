@@ -20,17 +20,23 @@ import {
   Check,
   GitBranch,
   LoaderCircle,
+  MoveRight,
   RefreshCw,
   Sparkles,
   WandSparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DiffView } from "@/components/diff-view";
 import {
   ApiError,
   getMethodAnalysis,
   getMethodCfg,
+  applyCfgEdit,
+  previewCfgEdit,
   replaceCondition,
   type Cfg,
+  type CfgEditOperation,
+  type CfgEditPreview,
   type CfgEdge,
   type CfgMethod,
   type CfgNode,
@@ -123,6 +129,12 @@ export function CfgViewer({
   const [conditionDraft, setConditionDraft] = useState<{ nodeId: string; value: string } | null>(null);
   const [transformState, setTransformState] = useState<"idle" | "saving" | "done" | "error">("idle");
   const [transformError, setTransformError] = useState("");
+  const [moveNodeId, setMoveNodeId] = useState("");
+  const [targetNodeId, setTargetNodeId] = useState("");
+  const [movePosition, setMovePosition] = useState<"before" | "after">("before");
+  const [movePreview, setMovePreview] = useState<CfgEditPreview | null>(null);
+  const [moveBusy, setMoveBusy] = useState(false);
+  const [moveError, setMoveError] = useState("");
   const flowRef = useRef<ReactFlowInstance<FlowNode, Edge> | null>(null);
 
   const cfgRequest = useSWR(
@@ -247,6 +259,9 @@ export function CfgViewer({
   }), [activeEdges, cfg, highlighted, positions, selectedNode?.id]);
 
   const onNodeClick = useCallback((_event: MouseEvent, node: FlowNode) => {
+    setMoveNodeId(node.data.kind === "statement" ? node.id : "");
+    setMovePreview(null);
+    setMoveError("");
     onSourceRangeSelect(node.data.source_range, node.data.kind === "branch");
     if (!cfg || node.data.kind !== "branch") {
       setActiveBranch(null);
@@ -257,6 +272,42 @@ export function CfgViewer({
       return findBranch(cfg, node.id, nextKind) ?? findBranch(cfg, node.id, "true");
     });
   }, [cfg, onSourceRangeSelect]);
+
+  const moveSource = cfg?.nodes.find((node) => node.id === moveNodeId);
+  const moveTarget = cfg?.nodes.find((node) => node.id === targetNodeId);
+
+  async function requestMovePreview() {
+    if (!method || !moveSource || !moveTarget || moveSource.id === moveTarget.id) return;
+    const operation: CfgEditOperation = { type: "move_statement", node_id: moveSource.id, target_node_id: moveTarget.id, position: movePosition };
+    setMoveBusy(true);
+    setMoveError("");
+    setMovePreview(null);
+    try {
+      setMovePreview(await previewCfgEdit(projectId, revision, method.id, operation));
+    } catch (cause) {
+      setMoveError(cfgEditErrorMessage(cause));
+    } finally {
+      setMoveBusy(false);
+    }
+  }
+
+  async function confirmMove() {
+    if (!method || !movePreview || !moveSource || !moveTarget) return;
+    const operation: CfgEditOperation = { type: "move_statement", node_id: moveSource.id, target_node_id: moveTarget.id, position: movePosition };
+    setMoveBusy(true);
+    setMoveError("");
+    try {
+      await applyCfgEdit(projectId, revision, method.id, operation, movePreview.preview_sha256);
+      setMovePreview(null);
+      setMoveNodeId("");
+      setTargetNodeId("");
+      await onTransformed();
+    } catch (cause) {
+      setMoveError(cfgEditErrorMessage(cause));
+    } finally {
+      setMoveBusy(false);
+    }
+  }
 
   async function applyCondition() {
     if (!cfg || !method || selectedNode?.kind !== "branch" || !conditionExpression.trim()) return;
@@ -390,6 +441,32 @@ export function CfgViewer({
           {transformState === "done" ? <p className="col-start-2 col-end-[-1] m-0 flex items-center gap-1.5 text-[12px] text-emerald-300"><Check size={14} /> Новая ревизия создана. Сравните её с текущей и запустите проверку поведения.</p> : null}
         </div>
       ) : null}
+      {method ? (
+        <section className="grid gap-2 border-t border-slate-800 bg-[#0d1625] px-3 py-2.5" aria-label="Перемещение оператора в исходном коде">
+          <div className="flex flex-wrap items-center gap-2">
+            <strong className="flex items-center gap-1.5 text-[13px] text-slate-300"><MoveRight size={15} /> Переместить оператор</strong>
+            <span className="text-[12px] text-slate-500">Это меняет Java только после проверки и подтверждения.</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-[12px]">
+            <span className="font-mono text-slate-400">Источник: {moveSource?.id ?? "нажмите на оператор"}</span>
+            <label className="text-slate-400">Цель
+              <select aria-label="Целевой оператор" className="ml-1 h-8 max-w-[360px] rounded border border-slate-700 bg-[#08101d] px-2 text-slate-200" value={targetNodeId} onChange={(event) => setTargetNodeId(event.target.value)}>
+                <option value="">Не выбрана</option>
+                {(cfg?.nodes ?? []).filter((node) => node.kind === "statement" && node.id !== moveNodeId).map((node) => <option value={node.id} key={node.id}>{node.id} · {node.text || node.statement_kind}</option>)}
+              </select>
+            </label>
+            <label className="text-slate-400">Позиция
+              <select aria-label="Позиция перемещения" className="ml-1 h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-slate-200" value={movePosition} onChange={(event) => setMovePosition(event.target.value as "before" | "after")}>
+                <option value="before">Перед целью</option><option value="after">После цели</option>
+              </select>
+            </label>
+            <Button variant="outline" size="sm" disabled={!moveSource || !moveTarget || moveBusy} onClick={() => void requestMovePreview()}>{moveBusy ? <LoaderCircle className="spin" /> : <MoveRight />} Предпросмотр</Button>
+          </div>
+          <p className="m-0 text-[11px] text-slate-500">Перетаскивание узлов меняет только раскладку; неподдерживаемые и зависимые перемещения отклоняются API.</p>
+          {moveError ? <p className="m-0 text-[12px] text-rose-300" role="alert">{moveError}</p> : null}
+          {movePreview ? <div className="grid gap-2" aria-label="Предпросмотр перемещения"><DiffView files={movePreview.diff} label="Diff перемещения CFG" /><div className="flex flex-wrap items-center gap-2"><Button onClick={() => void confirmMove()} disabled={moveBusy}>{moveBusy ? <LoaderCircle className="spin" /> : <Check />} Подтвердить перемещение</Button><Button variant="outline" onClick={() => setMovePreview(null)} disabled={moveBusy}>Отмена</Button><small className="text-slate-500">Preview привязан к ревизии {movePreview.base_revision}.</small></div></div> : null}
+        </section>
+      ) : null}
     </section>
   );
 }
@@ -474,6 +551,16 @@ function matchingNode(cfg: Cfg, range: SourceRange) {
     }))
     .filter(({ start, end }) => start < selectionEnd && range.start < end)
     .sort((left, right) => (left.end - left.start) - (right.end - right.start))[0]?.node ?? null;
+}
+
+function cfgEditErrorMessage(error: unknown) {
+  if (!(error instanceof ApiError)) return "Не удалось получить предпросмотр перемещения.";
+  const details = error.details as { reasons?: { code?: string; message?: string }[] } | undefined;
+  const reasons = details?.reasons?.map((reason) => reason.message ?? reason.code).filter(Boolean).join("; ");
+  if (error.code === "move_rejected") return reasons || "Перемещение небезопасно или не поддерживается для этих операторов.";
+  if (error.code === "revision_conflict") return "Ревизия устарела. Обновите CFG перед следующим действием.";
+  if (error.code === "unsupported_node") return "Выберите обычные операторы, а не узлы входа, слияния или выхода.";
+  return error.message;
 }
 
 function findBranch(cfg: Cfg, source: string, kind: "true" | "false") {

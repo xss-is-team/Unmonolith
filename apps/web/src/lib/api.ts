@@ -1,8 +1,25 @@
 export type Project = {
   id: string;
   filename: string;
+  kind: "single_file" | "archive";
+  file_count: number;
   revision: number;
   created_at: string;
+};
+
+export type ProjectFile = {
+  path: string;
+  kind: "java" | "resource";
+  role: "main" | "test" | "resource";
+  source_root: string | null;
+  size: number;
+  sha256: string;
+};
+
+export type ProjectFileManifest = {
+  revision: number;
+  files: ProjectFile[];
+  skipped: { path: string; reason: string }[];
 };
 
 export type SourceRange = {
@@ -232,6 +249,141 @@ export type VerificationReport = {
   explanation: string;
 };
 
+export type ComplexityReport = {
+  revision: number;
+  methods: {
+    method_id: string;
+    file: string | null;
+    time_complexity: string;
+    space_complexity: string | null;
+    confidence: "high" | "medium" | "low";
+    reason: string;
+    assumptions: string[];
+    limitations: string[];
+    source_range: SourceRange;
+    cfg_node_ids: string[];
+  }[];
+};
+
+export type FindingRecord = {
+  method_id: string;
+  file: string | null;
+  finding: AnalysisFinding;
+};
+
+export type FindingsReport = { revision: number; findings: FindingRecord[] };
+
+export type OptimizationProposal = {
+  id: string;
+  rule: "nested_scan_to_hashmap" | string;
+  title?: string;
+  summary?: string;
+  applicability: "applicable" | "not_applicable";
+  not_applicable_reasons?: string[];
+  preconditions: { id: string; status: "satisfied" | "violated"; detail: string }[];
+  assumptions: { id: string; text: string }[];
+  method_id: string | null;
+  file: string;
+  affected_files: string[];
+  shape?: "first_match" | "all_matches";
+  outer_loop?: SourceRange;
+  complexity: {
+    method_before?: string;
+    scan_before?: string;
+    scan_after?: string;
+    note?: string;
+  };
+};
+
+export type OptimizationList = { revision: number; rule: string; proposals: OptimizationProposal[] };
+
+export type FileDiff = {
+  path: string;
+  status: "added" | "removed" | "modified";
+  additions: number;
+  deletions: number;
+  unified_diff: string;
+};
+
+export type OptimizationPreview = {
+  base_revision: number;
+  proposal: OptimizationProposal;
+  diff: FileDiff[];
+  preview_sha256: string;
+  method_complexity_before: string | null;
+  method_complexity_after: string | null;
+  validation: "valid";
+};
+
+export type OptimizationApplyResult = {
+  revision: number;
+  base_revision: number;
+  proposal: OptimizationProposal;
+  diff: FileDiff[];
+  analysis_status: "completed" | "partial";
+};
+
+export type CfgEditOperation = {
+  type: "move_statement";
+  node_id: string;
+  target_node_id: string;
+  position: "before" | "after";
+};
+
+export type CfgEditPreview = {
+  base_revision: number;
+  method_id: string;
+  operation: Record<string, unknown>;
+  diff: FileDiff[];
+  preview_sha256: string;
+  node_mapping: { old_id: string; new_id: string | null }[];
+};
+
+export type CfgEditApplyResult = {
+  revision: number;
+  base_revision: number;
+  method_id: string;
+  operation: Record<string, unknown>;
+  diff: FileDiff[];
+  node_mapping: { old_id: string; new_id: string | null }[];
+  analysis_status: "completed" | "partial";
+};
+
+export type BenchmarkWorkloadInput = { name: string; size?: number; stdin: string };
+export type BenchmarkWorkloadResult = {
+  name: string;
+  declared_size: number | null;
+  stdin_sha256: string;
+  stdin_bytes: number;
+  baseline: { status: string; samples_ns: number[]; warmup_ns: number[]; outcome?: string | null } | null;
+  candidate: { status: string; samples_ns: number[]; warmup_ns: number[]; outcome?: string | null } | null;
+  baseline_stats: { iterations: number; median_ns: number; min_ns: number; max_ns: number; p25_ns: number; p75_ns: number; relative_spread: number; mean_ns: number; stddev_ns: number; mad_ns: number } | null;
+  candidate_stats: { iterations: number; median_ns: number; min_ns: number; max_ns: number; p25_ns: number; p75_ns: number; relative_spread: number; mean_ns: number; stddev_ns: number; mad_ns: number } | null;
+  equivalent: boolean | null;
+  verdict: string;
+  speedup: number | null;
+  speedup_ci95: [number, number] | null;
+  p_value: number | null;
+  notes: string[];
+};
+
+export type BenchmarkReport = {
+  report_id: string;
+  created_at: string;
+  status: "completed" | "compilation_failed" | "incomplete";
+  baseline_revision: number;
+  candidate_revision: number;
+  settings: { warmup_iterations: number; measured_iterations: number; class_loading: "fresh" | "shared"; iteration_timeout_ms: number; source_level: string; main_class: string | null };
+  environment: { runner_image: string | null; cpu_limit: string; memory_limit: string; network: string; baseline_jvm: Record<string, unknown> | null; candidate_jvm: Record<string, unknown> | null };
+  timings: { baseline: { compile_and_setup_ms: number; harness_setup_ms: number; benchmark_process_ms: number }; candidate: { compile_and_setup_ms: number; harness_setup_ms: number; benchmark_process_ms: number } };
+  static_complexity: { changes: { method_id: string; before: string; after: string; confidence_before: string; confidence_after: string }[]; unchanged_methods: number; note: string };
+  functional: { equivalent_on_all_workloads: boolean; non_equivalent_workloads: string[]; note: string };
+  runtime: { workloads: BenchmarkWorkloadResult[]; overall: { verdict: string; summary: string; equivalent_on_all_workloads?: boolean } };
+  baseline_compilation: CompilationResult | null;
+  candidate_compilation: CompilationResult | null;
+  limitations: string[];
+};
+
 export const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 
 export class ApiError extends Error {
@@ -239,6 +391,7 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly code: string,
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -247,12 +400,13 @@ export class ApiError extends Error {
 
 async function responseError(response: Response) {
   const body = (await response.json().catch(() => null)) as
-    | { code?: string; message?: string }
+    | { code?: string; message?: string; details?: unknown }
     | null;
   return new ApiError(
     body?.message ?? `Запрос завершился с кодом ${response.status}`,
     response.status,
     body?.code ?? "request_failed",
+    body?.details,
   );
 }
 
@@ -270,7 +424,7 @@ export function checkHealth() {
   return request<{ status: "ok" }>("/healthz");
 }
 
-export async function uploadJavaFile(file: File): Promise<Project> {
+export async function uploadProjectFile(file: File): Promise<Project> {
   const form = new FormData();
   form.append("file", file, file.name);
   const upload = () => request<Project>("/projects", { method: "POST", body: form });
@@ -284,8 +438,39 @@ export async function uploadJavaFile(file: File): Promise<Project> {
   }
 }
 
+export const uploadJavaFile = uploadProjectFile;
+
 export function getProject(projectId: string) {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`);
+}
+
+export function getProjectFiles(projectId: string, revision?: number) {
+  const query = revision === undefined ? "" : `?revision=${revision}`;
+  return request<ProjectFileManifest>(`/projects/${encodeURIComponent(projectId)}/files${query}`);
+}
+
+function projectFileUrl(projectId: string, path: string, revision?: number) {
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  const query = revision === undefined ? "" : `?revision=${revision}`;
+  return `/api/v1/projects/${encodeURIComponent(projectId)}/files/${encodedPath}${query}`;
+}
+
+export async function getProjectFile(projectId: string, path: string, revision?: number) {
+  const response = await fetch(projectFileUrl(projectId, path, revision), { credentials: "include", cache: "no-store" });
+  if (!response.ok) throw await responseError(response);
+  const sourceRevision = Number(response.headers.get("X-Source-Revision"));
+  if (!Number.isSafeInteger(sourceRevision) || sourceRevision < 1) {
+    throw new ApiError("API вернул некорректную ревизию файла.", 502, "invalid_response");
+  }
+  return { source: await response.text(), revision: sourceRevision };
+}
+
+export function updateProjectFile(projectId: string, path: string, source: string, expectedRevision: number) {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/files/${path.split("/").map(encodeURIComponent).join("/")}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, expected_revision: expectedRevision }),
+  });
 }
 
 export async function getProjectGraph(projectId: string): Promise<ProjectGraphResponse> {
@@ -415,12 +600,16 @@ export async function getProjectSource(projectId: string) {
 
 export async function getProjectWorkspace(projectId: string) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const [project, current] = await Promise.all([
-      getProject(projectId),
-      getProjectSource(projectId),
-    ]);
+    const project = await getProject(projectId);
+    const manifest = await getProjectFiles(projectId, project.revision);
+    if (manifest.revision !== project.revision) continue;
+    const firstJava = manifest.files.find((file) => file.kind === "java");
+    if (!firstJava) throw new ApiError("В проекте нет Java-файлов.", 422, "no_java_sources");
+    const current = project.kind === "archive"
+      ? await getProjectFile(projectId, firstJava.path, project.revision)
+      : await getProjectSource(projectId);
     if (project.revision === current.revision) {
-      return { project, source: current.source, revision: current.revision };
+      return { project, source: current.source, revision: current.revision, activeFilePath: firstJava.path, files: manifest.files };
     }
   }
   throw new ApiError(
@@ -428,6 +617,79 @@ export async function getProjectWorkspace(projectId: string) {
     409,
     "revision_conflict",
   );
+}
+
+export function getProjectComplexity(projectId: string) {
+  return request<ComplexityReport>(`/projects/${encodeURIComponent(projectId)}/complexity`);
+}
+
+export function getProjectFindings(projectId: string) {
+  return request<FindingsReport>(`/projects/${encodeURIComponent(projectId)}/findings`);
+}
+
+export function getOptimizations(projectId: string, sourceLevel = "21") {
+  return request<OptimizationList>(`/projects/${encodeURIComponent(projectId)}/optimizations?source_level=${encodeURIComponent(sourceLevel)}`);
+}
+
+export function previewOptimization(projectId: string, proposalId: string, baseRevision: number, sourceLevel = "21") {
+  return request<OptimizationPreview>(`/projects/${encodeURIComponent(projectId)}/optimizations/${encodeURIComponent(proposalId)}/preview`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ base_revision: baseRevision, source_level: sourceLevel }),
+  });
+}
+
+export function applyOptimization(projectId: string, proposalId: string, baseRevision: number, previewHash: string, acknowledgedAssumptions: string[], sourceLevel = "21") {
+  return request<OptimizationApplyResult>(`/projects/${encodeURIComponent(projectId)}/optimizations/${encodeURIComponent(proposalId)}/apply`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ base_revision: baseRevision, preview_sha256: previewHash, acknowledged_assumptions: acknowledgedAssumptions, source_level: sourceLevel }),
+  });
+}
+
+export function previewCfgEdit(projectId: string, baseRevision: number, methodId: string, operation: CfgEditOperation, sourceLevel = "21") {
+  return request<CfgEditPreview>(`/projects/${encodeURIComponent(projectId)}/cfg-edits/preview`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ base_revision: baseRevision, method_id: methodId, operation, source_level: sourceLevel }),
+  });
+}
+
+export function applyCfgEdit(projectId: string, baseRevision: number, methodId: string, operation: CfgEditOperation, previewHash: string, sourceLevel = "21") {
+  return request<CfgEditApplyResult>(`/projects/${encodeURIComponent(projectId)}/cfg-edits/apply`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ base_revision: baseRevision, method_id: methodId, operation, preview_sha256: previewHash, source_level: sourceLevel }),
+  });
+}
+
+export function compareRevisions(projectId: string, from: number, to: number) {
+  return request<{ from_revision: number; to_revision: number; files: FileDiff[] }>(`/projects/${encodeURIComponent(projectId)}/revisions/${from}/diff/${to}`);
+}
+
+export function rollbackProject(projectId: string, baseRevision: number, toRevision: number) {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/rollback`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ base_revision: baseRevision, to_revision: toRevision }),
+  });
+}
+
+export async function exportProject(projectId: string) {
+  const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/export`, { credentials: "include", cache: "no-store" });
+  if (!response.ok) throw await responseError(response);
+  return { blob: await response.blob(), filename: response.headers.get("Content-Disposition")?.match(/filename="?([^";]+)"?/)?.[1] ?? "project.zip" };
+}
+
+export function runBenchmark(projectId: string, body: {
+  baseline_revision: number;
+  candidate_revision: number;
+  workloads: BenchmarkWorkloadInput[];
+  warmup_iterations?: number;
+  measured_iterations?: number;
+  class_loading?: "fresh" | "shared";
+  iteration_timeout_ms?: number;
+  main_class?: string | null;
+  source_level?: string;
+}) {
+  return request<BenchmarkReport>(`/projects/${encodeURIComponent(projectId)}/benchmark`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
 }
 
 export function updateProjectSource(
@@ -565,6 +827,7 @@ export function verifyRevisions(
   baselineRevision: number,
   candidateRevision: number,
   testCases: VerifyTestCase[],
+  options?: { main_class?: string | null; source_level?: string },
 ) {
   return request<VerificationReport>(
     `/projects/${encodeURIComponent(projectId)}/verify`,
@@ -575,6 +838,7 @@ export function verifyRevisions(
         baseline_revision: baselineRevision,
         candidate_revision: candidateRevision,
         test_cases: testCases,
+        ...options,
       }),
     },
   );

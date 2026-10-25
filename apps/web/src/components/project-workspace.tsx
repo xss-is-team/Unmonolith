@@ -32,9 +32,12 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Brand } from "@/components/brand";
+import { ArchiveWorkspace } from "@/components/archive-workspace";
+import { BenchmarkPanel } from "@/components/benchmark-panel";
 import {
   analyzeProjectStream,
   ApiError,
+  runBenchmark,
   getProjectMethods,
   getMethodAnalysis,
   getProjectRevision,
@@ -42,6 +45,7 @@ import {
   getProjectWorkspace,
   MAX_SOURCE_BYTES,
   type AnalysisResult,
+  type BenchmarkReport,
   type CfgMethod,
   type Diagnostic,
   type MethodAnalysis,
@@ -49,6 +53,7 @@ import {
   type SourceRange,
   type VerificationReport,
   type VerifyTestCase,
+  type BenchmarkWorkloadInput,
   updateProjectSource,
   verifyRevisions,
 } from "@/lib/api";
@@ -108,6 +113,10 @@ export function ProjectWorkspace({ projectId }: { projectId: string }) {
     );
   }
 
+  if (data.project.kind === "archive") {
+    return <ArchiveWorkspace project={data.project} initialRevision={data.revision} initialSource={data.source} initialFilePath={data.activeFilePath} initialFiles={data.files} />;
+  }
+
   return (
     <WorkspaceEditor
       key={`${projectId}:${data.revision}`}
@@ -159,17 +168,18 @@ function WorkspaceEditor({
   const initialAnalysisRef = useRef(false);
 
   const [viewMode, setViewMode] = useState<"project" | "cfg">("project");
-  const [dockMode, setDockMode] = useState<"code" | "revisions" | "verification">("code");
+  const [dockMode, setDockMode] = useState<"code" | "revisions" | "verification" | "benchmark">("code");
   const [selectedSourceRange, setSelectedSourceRange] = useState<SourceRange | null>(null);
   const [selectedMethodSelector, setSelectedMethodSelector] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [verificationOpen, setVerificationOpen] = useState(false);
+  const [benchmarkOpen, setBenchmarkOpen] = useState(false);
   const [selectedHistoryRevision, setSelectedHistoryRevision] = useState<number | null>(null);
   const [showRevisionDiff, setShowRevisionDiff] = useState(false);
   const [revisionDiff, setRevisionDiff] = useState<{ key: string; rows: RevisionDiffRow[] } | null>(null);
   const [reloading, setReloading] = useState(false);
 
-  const historyEnabled = historyOpen || verificationOpen;
+  const historyEnabled = historyOpen || verificationOpen || benchmarkOpen;
   const {
     data: revisions,
     error: revisionsError,
@@ -195,6 +205,13 @@ function WorkspaceEditor({
   const [verificationState, setVerificationState] = useState<"idle" | "running" | "complete" | "error">("idle");
   const [verificationReport, setVerificationReport] = useState<VerificationReport | null>(null);
   const [verificationError, setVerificationError] = useState("");
+  const [mainClass, setMainClass] = useState("");
+  const [sourceLevel, setSourceLevel] = useState("21");
+  const [benchmarkState, setBenchmarkState] = useState<"idle" | "running" | "complete" | "error">("idle");
+  const [benchmarkReport, setBenchmarkReport] = useState<BenchmarkReport | null>(null);
+  const [benchmarkError, setBenchmarkError] = useState("");
+  const [benchmarkIterations, setBenchmarkIterations] = useState(12);
+  const [benchmarkWorkload, setBenchmarkWorkload] = useState<BenchmarkWorkloadInput>({ name: "Ввод программы", stdin: "" });
   const paneSizes = useIdePaneSizes();
 
   const activeMethod = methods.find((method) => method.selector === selectedMethodSelector) ?? null;
@@ -390,12 +407,36 @@ function WorkspaceEditor({
         baselineRevision,
         candidateRevision,
         verificationCases.map((item) => ({ name: item.name.trim(), stdin: item.stdin })),
+        { main_class: mainClass || null, source_level: sourceLevel },
       );
       setVerificationReport(report);
       setVerificationState("complete");
     } catch (cause) {
       setVerificationState("error");
       setVerificationError(verificationErrorMessage(cause));
+    }
+  }
+
+  async function runRuntimeBenchmark() {
+    setBenchmarkState("running");
+    setBenchmarkError("");
+    setBenchmarkReport(null);
+    try {
+      const report = await runBenchmark(projectId, {
+        baseline_revision: baselineRevision,
+        candidate_revision: candidateRevision,
+        workloads: [{ ...benchmarkWorkload, name: benchmarkWorkload.name.trim() }],
+        warmup_iterations: 2,
+        measured_iterations: benchmarkIterations,
+        class_loading: "fresh",
+        main_class: mainClass || null,
+        source_level: sourceLevel,
+      });
+      setBenchmarkReport(report);
+      setBenchmarkState("complete");
+    } catch (cause) {
+      setBenchmarkState("error");
+      setBenchmarkError(verificationErrorMessage(cause));
     }
   }
 
@@ -419,10 +460,11 @@ function WorkspaceEditor({
     ? analysis?.diagnostics ?? NO_DIAGNOSTICS
     : NO_DIAGNOSTICS;
 
-  function openDock(mode: "code" | "revisions" | "verification") {
+  function openDock(mode: "code" | "revisions" | "verification" | "benchmark") {
     setDockMode(mode);
     setHistoryOpen(mode === "revisions");
     setVerificationOpen(mode === "verification");
+    setBenchmarkOpen(mode === "benchmark");
   }
 
   function openSourceRange(range: SourceRange | null) {
@@ -451,6 +493,9 @@ function WorkspaceEditor({
           </Button>
           <Button className="!h-8 !rounded !border-slate-700 !bg-slate-900 !text-[13px] !text-slate-300 hover:!bg-slate-800" onClick={() => openDock("verification")} aria-expanded={verificationOpen}>
             <ShieldCheck /> Проверка
+          </Button>
+          <Button className="!h-8 !rounded !border-slate-700 !bg-slate-900 !text-[13px] !text-slate-300 hover:!bg-slate-800" onClick={() => openDock("benchmark")} aria-expanded={benchmarkOpen}>
+            <GitCompareArrows /> Бенчмарк
           </Button>
         </div>
         <Link className="ml-0.5 inline-flex items-center gap-1 whitespace-nowrap text-[13px] text-slate-400 hover:text-cyan-400" href="/"><ArrowLeft size={15} /> Другой файл</Link>
@@ -629,7 +674,10 @@ function WorkspaceEditor({
             <RevisionPanel currentRevision={revision} dirty={dirty} revisions={revisions} revisionsError={revisionsError} selectedRevision={selectedHistoryRevision} onSelectedRevision={(value) => { setSelectedHistoryRevision(value); setShowRevisionDiff(false); }} historicalRevisionReady={Boolean(historicalRevision)} historicalRevisionError={historicalRevisionError} showDiff={showRevisionDiff} onToggleDiff={() => setShowRevisionDiff((shown) => !shown)} diffRows={revisionDiffRows} onClose={() => openDock("code")} />
           ) : null}
           {dockMode === "verification" ? (
-            <VerificationPanel currentRevision={revision} dirty={dirty} revisions={revisions} revisionsError={revisionsError} baselineRevision={baselineRevision} candidateRevision={candidateRevision} onBaselineRevision={setBaselineRevision} onCandidateRevision={setCandidateRevision} cases={verificationCases} onCases={setVerificationCases} state={verificationState} report={verificationReport} error={verificationError} onRun={() => void runVerification()} onClose={() => openDock("code")} />
+            <VerificationPanel currentRevision={revision} dirty={dirty} revisions={revisions} revisionsError={revisionsError} baselineRevision={baselineRevision} candidateRevision={candidateRevision} onBaselineRevision={setBaselineRevision} onCandidateRevision={setCandidateRevision} cases={verificationCases} onCases={setVerificationCases} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} state={verificationState} report={verificationReport} error={verificationError} onRun={() => void runVerification()} onClose={() => openDock("code")} />
+          ) : null}
+          {dockMode === "benchmark" ? (
+            <BenchmarkPanel revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} workload={benchmarkWorkload} onWorkload={setBenchmarkWorkload} iterations={benchmarkIterations} onIterations={setBenchmarkIterations} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} report={benchmarkReport} error={benchmarkError} busy={benchmarkState === "running"} dirty={dirty} onRun={() => void runRuntimeBenchmark()} onClose={() => openDock("code")} />
           ) : null}
         </div>
       </section>
@@ -707,6 +755,10 @@ function VerificationPanel({
   onCandidateRevision,
   cases,
   onCases,
+  mainClass,
+  onMainClass,
+  sourceLevel,
+  onSourceLevel,
   state,
   report,
   error,
@@ -723,6 +775,10 @@ function VerificationPanel({
   onCandidateRevision: (value: number) => void;
   cases: VerifyTestCase[];
   onCases: (cases: VerifyTestCase[]) => void;
+  mainClass: string;
+  onMainClass: (value: string) => void;
+  sourceLevel: string;
+  onSourceLevel: (value: string) => void;
   state: "idle" | "running" | "complete" | "error";
   report: VerificationReport | null;
   error: string;
@@ -742,6 +798,10 @@ function VerificationPanel({
             <GitCompareArrows />
             <label>Кандидат<select value={candidateRevision} onChange={(event) => onCandidateRevision(Number(event.target.value))}>{revisions.map((item) => <option key={item.revision} value={item.revision}>Ревизия {item.revision}{item.revision === currentRevision ? " · текущая" : ""}</option>)}</select></label>
           </div>
+          <div className="grid max-w-lg grid-cols-[1fr_120px] gap-2 text-[12px] text-slate-500 [&_label]:grid [&_label]:gap-1">
+            <label>Главный класс<input aria-label="Главный класс Java" value={mainClass} onChange={(event) => onMainClass(event.target.value)} placeholder="например Organizer" className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[12px] text-slate-200" /></label>
+            <label>Уровень Java<select aria-label="Уровень Java" value={sourceLevel} onChange={(event) => onSourceLevel(event.target.value)} className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200">{["8", "11", "17", "21"].map((level) => <option key={level} value={level}>{level}</option>)}</select></label>
+          </div>
           <div className="grid gap-1.5">
             {cases.map((item, index) => (
               <div className="grid grid-cols-[minmax(120px,.4fr)_minmax(180px,1fr)_auto] gap-1.5 [&_input]:h-8 [&_input]:w-full [&_input]:rounded [&_input]:border [&_input]:border-slate-700 [&_input]:bg-[#08101d] [&_input]:px-2 [&_input]:font-mono [&_input]:text-[12px] [&_input]:text-slate-300 [&_textarea]:min-h-12 [&_textarea]:w-full [&_textarea]:resize-y [&_textarea]:rounded [&_textarea]:border [&_textarea]:border-slate-700 [&_textarea]:bg-[#08101d] [&_textarea]:p-2 [&_textarea]:font-mono [&_textarea]:text-[12px] [&_textarea]:text-slate-300" key={index}>
@@ -756,7 +816,7 @@ function VerificationPanel({
           {dirty ? <small>Сначала дождитесь автосохранения.</small> : null}
         </div>
       )}
-      {state === "error" ? <div className="col-span-full flex items-center gap-1.5 rounded border border-rose-900 bg-rose-950/20 p-2.5 text-[13px] text-rose-300" role="alert"><AlertCircle />{error}</div> : null}
+      {state === "error" ? <div className="col-span-full flex items-center gap-1.5 rounded border border-rose-900 bg-rose-950/20 p-2.5 text-[13px] text-rose-300" role="alert"><AlertCircle />{error}{error.includes("main_class_required") ? " Укажите класс с main(String[])." : ""}</div> : null}
       {report ? <VerificationResult report={report} /> : null}
     </section>
   );
@@ -871,6 +931,7 @@ function analysisErrorMessage(cause: unknown) {
 
 function verificationErrorMessage(cause: unknown) {
   if (!(cause instanceof ApiError)) return "Не удалось выполнить поведенческую проверку.";
+  if (cause.code === "main_class_required") return `${cause.code}: укажите класс с main(String[]).`;
   if (cause.code === "runner_unavailable") return "Docker runner не настроен. Соберите образ и задайте BLUEPRINTS_RUNNER_IMAGE.";
   if (cause.code === "revision_not_found") return "Одна из выбранных ревизий больше недоступна.";
   return cause.message;
