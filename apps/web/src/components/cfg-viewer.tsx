@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent, ReactNode } from "react";
+import type { DragEvent, MouseEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import useSWR from "swr";
 import {
@@ -13,6 +13,7 @@ import {
   ReactFlow,
   type Edge,
   type Node,
+  type NodeChange,
   type NodeProps,
   type ReactFlowInstance,
 } from "@xyflow/react";
@@ -28,6 +29,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BlockEditor } from "@/components/block-editor";
+import { BLOCK_MIME, type BlockTemplate } from "@/components/block-palette";
 import { PreviewDialog } from "@/components/preview-dialog";
 import { ruFinding, ruText } from "@/lib/ru";
 import { DiffView } from "@/components/diff-view";
@@ -123,6 +125,7 @@ export function CfgViewer({
   onTransformed,
   showAnalysisSummary = true,
   blockTemplate = null,
+  onBlockDrop,
   panelContainer = null,
   onNodeSelected,
 }: {
@@ -135,7 +138,9 @@ export function CfgViewer({
   onSourceRangeSelect: (range: SourceRange | null, keepGraphVisible?: boolean) => void;
   onTransformed: () => Promise<void>;
   showAnalysisSummary?: boolean;
-  blockTemplate?: { code: string; nonce: number } | null;
+  blockTemplate?: { code: string; nonce: number; position?: "before" | "after" } | null;
+  /** A palette block was dropped on a statement node. */
+  onBlockDrop?: (template: BlockTemplate) => void;
   panelContainer?: HTMLElement | null;
   onNodeSelected?: () => void;
 }) {
@@ -153,6 +158,8 @@ export function CfgViewer({
   const [movePosition, setMovePosition] = useState<"before" | "after">("before");
   const [movePreview, setMovePreview] = useState<CfgEditPreview | null>(null);
   const [moveBusy, setMoveBusy] = useState(false);
+  const [drag, setDrag] = useState<{ id: string; position: { x: number; y: number } } | null>(null);
+  const [dropHint, setDropHint] = useState("");
   const [moveError, setMoveError] = useState("");
   const flowRef = useRef<ReactFlowInstance<FlowNode, Edge> | null>(null);
 
@@ -245,7 +252,8 @@ export function CfgViewer({
       type: "cfg" as const,
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
-      position: positions.get(node.id) ?? { x: 0, y: 0 },
+      position: drag?.id === node.id ? drag.position : positions.get(node.id) ?? { x: 0, y: 0 },
+      draggable: node.kind === "statement",
       data: {
         ...node,
         hasFinding: highlighted.findings.has(node.id),
@@ -275,7 +283,48 @@ export function CfgViewer({
         labelBgBorderRadius: 2,
       };
     }) ?? [],
-  }), [activeEdges, cfg, highlighted, positions, selectedNode?.id]);
+  }), [activeEdges, cfg, drag, highlighted, positions, selectedNode?.id]);
+
+  /** The statement node under a screen point, other than `except`. */
+  function statementUnder(clientX: number, clientY: number, except = "") {
+    for (const element of document.elementsFromPoint(clientX, clientY)) {
+      const holder = element.closest(".react-flow__node");
+      const id = holder?.getAttribute("data-id");
+      if (id && id !== except && cfg?.nodes.find((node) => node.id === id)?.kind === "statement") return { id, rect: holder!.getBoundingClientRect() };
+    }
+    return null;
+  }
+
+  function onDropBlock(event: DragEvent<HTMLDivElement>) {
+    const raw = event.dataTransfer.getData(BLOCK_MIME);
+    if (!raw) return;
+    event.preventDefault();
+    const target = statementUnder(event.clientX, event.clientY);
+    setDropHint("");
+    if (!target) { setDropHint("Бросьте блок на оператор (прямоугольный узел), а не на условие или пустое место."); return; }
+    const block = JSON.parse(raw) as { id: string; label: string; code: string };
+    setMoveNodeId(target.id);
+    onBlockDrop?.({ id: block.id, label: block.label, code: block.code, nonce: Date.now(), position: event.clientY < target.rect.top + target.rect.height / 2 ? "before" : "after" });
+  }
+
+  function onNodesChange(changes: NodeChange<FlowNode>[]) {
+    for (const change of changes) {
+      if (change.type === "position" && change.position) setDrag({ id: change.id, position: change.position });
+    }
+  }
+
+  function onNodeDragStop(event: globalThis.MouseEvent | TouchEvent, node: FlowNode) {
+    setDrag(null);
+    const point = "changedTouches" in event ? event.changedTouches[0] : event;
+    const target = point ? statementUnder(point.clientX, point.clientY, node.id) : null;
+    if (!target || !point) return;
+    const where = point.clientY < target.rect.top + target.rect.height / 2 ? "before" : "after";
+    setMoveNodeId(node.id);
+    setTargetNodeId(target.id);
+    setMovePosition(where);
+    onNodeSelected?.();
+    void requestMovePreview(node.id, target.id, where);
+  }
 
   const onNodeClick = useCallback((_event: MouseEvent, node: FlowNode) => {
     setMoveNodeId(node.data.kind === "statement" ? node.id : "");
@@ -300,9 +349,9 @@ export function CfgViewer({
   const moveSource = cfg?.nodes.find((node) => node.id === moveNodeId);
   const moveTarget = cfg?.nodes.find((node) => node.id === targetNodeId);
 
-  async function requestMovePreview() {
-    if (!method || !moveSource || !moveTarget || moveSource.id === moveTarget.id) return;
-    const operation: CfgEditOperation = { type: "move_statement", node_id: moveSource.id, target_node_id: moveTarget.id, position: movePosition };
+  async function requestMovePreview(sourceId = moveSource?.id, targetId = moveTarget?.id, where = movePosition) {
+    if (!method || !sourceId || !targetId || sourceId === targetId) return;
+    const operation: CfgEditOperation = { type: "move_statement", node_id: sourceId, target_node_id: targetId, position: where };
     setMoveBusy(true);
     setMoveError("");
     setMovePreview(null);
@@ -414,8 +463,8 @@ export function CfgViewer({
           <div className="flex min-h-full flex-col items-center justify-center gap-2 p-7 text-center text-slate-500"><GitBranch className="text-cyan-400" /><strong className="text-slate-300">Граф пуст</strong></div>
         ) : null}
         {cfgState === "ready" && cfg?.nodes.length ? (
-          <div className="relative size-full bg-[#080f1b] [background-image:linear-gradient(rgba(51,65,85,.18)_1px,transparent_1px),linear-gradient(90deg,rgba(51,65,85,.18)_1px,transparent_1px)] [background-size:24px_24px]">
-            <p className="absolute top-2 left-2 z-10 m-0 rounded border border-slate-700 bg-slate-950/90 px-2 py-1 text-[12px] text-slate-500">Клик по узлу подсвечивает код; пунктир — возврат цикла.</p>
+          <div onDragOver={(event) => { if (event.dataTransfer.types.includes(BLOCK_MIME)) event.preventDefault(); }} onDrop={onDropBlock} className="relative size-full bg-[#080f1b] [background-image:linear-gradient(rgba(51,65,85,.18)_1px,transparent_1px),linear-gradient(90deg,rgba(51,65,85,.18)_1px,transparent_1px)] [background-size:24px_24px]">
+            <p className="absolute top-2 left-2 z-10 m-0 rounded border border-slate-700 bg-slate-950/90 px-2 py-1 text-[12px] text-slate-400">{dropHint || "Клик — код; перетащите оператор на другой, чтобы переставить; бросьте блок из палитры, чтобы вставить."}</p>
             <ReactFlow
               nodes={flow.nodes}
               edges={flow.edges}
@@ -426,8 +475,10 @@ export function CfgViewer({
               fitViewOptions={{ padding: 0.06, minZoom: 0.5, maxZoom: 1.2 }}
               minZoom={0.04}
               maxZoom={1.6}
-              nodesDraggable={false}
+              nodesDraggable
               nodesConnectable={false}
+              onNodesChange={onNodesChange}
+              onNodeDragStop={onNodeDragStop}
             >
               <Background color="#d7dbd3" gap={20} size={1} />
               <Controls showInteractive={false} />
@@ -493,7 +544,7 @@ export function CfgViewer({
           {movePreview ? <PreviewDialog title="Перемещение оператора: проверьте diff" onClose={() => setMovePreview(null)}><div className="grid gap-2" aria-label="Предпросмотр перемещения"><DiffView files={movePreview.diff} label="Diff перемещения CFG" /><div className="flex flex-wrap items-center gap-2"><Button onClick={() => void confirmMove()} disabled={moveBusy}>{moveBusy ? <LoaderCircle className="spin" /> : <Check />} Подтвердить перемещение</Button><Button variant="outline" onClick={() => setMovePreview(null)} disabled={moveBusy}>Отмена</Button><small className="text-slate-500">Preview привязан к ревизии {movePreview.base_revision}.</small></div></div></PreviewDialog> : null}
         </section>
       ) : null}
-      {method ? <BlockEditor key={`${method.id}:${blockTemplate?.nonce ?? 0}`} initialCode={blockTemplate?.code} projectId={projectId} revision={revision} methodId={method.id} nodeId={moveNodeId} nodeLabel={moveSource?.text ?? ""} statements={(cfg?.nodes ?? []).filter((node) => node.kind === "statement").map((node) => ({ id: node.id, text: (node.text ?? node.statement_kind ?? "").slice(0, 60) }))} onApplied={onTransformed} /> : null}
+      {method ? <BlockEditor key={`${method.id}:${blockTemplate?.nonce ?? 0}`} initialCode={blockTemplate?.code} autoInsert={blockTemplate?.position} projectId={projectId} revision={revision} methodId={method.id} nodeId={moveNodeId} nodeLabel={moveSource?.text ?? ""} statements={(cfg?.nodes ?? []).filter((node) => node.kind === "statement").map((node) => ({ id: node.id, text: (node.text ?? node.statement_kind ?? "").slice(0, 60) }))} onApplied={onTransformed} /> : null}
       </>)}
     </section>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircle, Check, LoaderCircle, Pencil, Plus, Scissors, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DiffView } from "@/components/diff-view";
@@ -30,7 +30,7 @@ function message(cause: unknown) {
 }
 
 /** Insert a block next to the selected statement or delete the selected statement; every edit is previewed and validated. */
-export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, statements, initialCode, onApplied }: {
+export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, statements, initialCode, autoInsert, onApplied }: {
   projectId: string;
   revision: number;
   methodId: string;
@@ -38,6 +38,8 @@ export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, 
   nodeLabel: string;
   statements: { id: string; text: string }[];
   initialCode?: string;
+  /** A block was dropped on the statement: preview its insertion at once. */
+  autoInsert?: "before" | "after";
   onApplied: () => Promise<void>;
 }) {
   const [code, setCode] = useState<string>(initialCode ?? PALETTE[0].code);
@@ -63,6 +65,13 @@ export function BlockEditor({ projectId, revision, methodId, nodeId, nodeLabel, 
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!autoInsert || !nodeId || !initialCode) return;
+    void Promise.resolve().then(() => request({ type: "insert_statement", target_node_id: nodeId, position: autoInsert, code: initialCode }));
+    // only the drop itself (the editor is re-keyed on every drop) triggers a preview
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function confirm() {
     if (!preview || !operation) return;

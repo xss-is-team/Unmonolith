@@ -475,7 +475,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
           </header>
           <div className="min-h-0 min-w-0 overflow-hidden">
             {view === "overview" ? <ProjectGraphViewer projectId={project.id} revision={revision} enabled={!loading && !isDirty} methods={methods} onOpenMethod={(next) => { setSelector(next); setView("cfg"); const found = methods.find((method) => method.selector === next); if (found) void openRange(found.source_range); }} onSourceRangeSelect={(next) => void openRange(next)} /> : (
-              <CfgViewer projectId={project.id} revision={revision} methods={loading || isDirty ? [] : methods} selectedSourceRange={range} selectedMethodSelector={selector} onSelectedMethodSelectorChange={setSelector} onSourceRangeSelect={(next) => { if (next) void openRange(next); }} onTransformed={reloadCurrentRevision} showAnalysisSummary blockTemplate={blockTemplate} panelContainer={editPortal} onNodeSelected={() => setAnalysisTab("edit")} />
+              <CfgViewer onBlockDrop={(template) => { setBlockTemplate(template); setAnalysisTab("edit"); setLogLines((lines) => [...lines, { time: logTime(), kind: "info", text: `Блок «${template.label}» брошен на оператор: проверьте предпросмотр вставки` }]); }} projectId={project.id} revision={revision} methods={loading || isDirty ? [] : methods} selectedSourceRange={range} selectedMethodSelector={selector} onSelectedMethodSelectorChange={setSelector} onSourceRangeSelect={(next) => { if (next) void openRange(next); }} onTransformed={reloadCurrentRevision} showAnalysisSummary blockTemplate={blockTemplate} panelContainer={editPortal} onNodeSelected={() => setAnalysisTab("edit")} />
             )}
           </div>
         </section>

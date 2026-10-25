@@ -333,7 +333,6 @@ test("a block template lands in the editor and a statement can be edited by hand
   test.setTimeout(45_000);
   await uploadZip(page);
   await page.locator('button[title="calc.Pricing.price(int,int,int)"]').click();
-  await page.getByText("Блоки", { exact: false }).first().click();
   await page.getByRole("button", { name: "Условие" }).click();
   await expect(page.getByLabel("Java-код блока")).toHaveValue(/if \(true\)/);
   const cfg = page.getByRole("region", { name: "Граф потока управления" });
@@ -348,4 +347,38 @@ test("a block template lands in the editor and a statement can be edited by hand
   await expect(page.getByTestId("revision")).toContainText("REV 2");
   await page.getByTestId("file-src/main/java/calc/Pricing.java").click();
   await expect(page.locator(".cm-content")).toContainText("int tax = base / 4;");
+});
+
+test("dragging a palette block onto a statement inserts it, dragging a statement onto another moves it", async ({ page }) => {
+  test.setTimeout(60_000);
+  await uploadZip(page);
+  await page.locator('button[title="calc.Pricing.price(int,int,int)"]').click();
+  const cfg = page.getByRole("region", { name: "Граф потока управления" });
+  const tax = cfg.getByText("int tax = base / 5;", { exact: true });
+  await expect(tax).toBeVisible();
+
+  await page.getByRole("button", { name: "Переменная" }).dragTo(tax);
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("int value = 0;");
+  await dialog.getByRole("button", { name: /Применить · REV 2/ }).click();
+  await expect(page.getByTestId("revision")).toContainText("REV 2");
+  await expect(cfg.getByText("int value = 0;", { exact: true })).toBeVisible();
+
+  await cfg.getByText("int tax = base / 5;", { exact: true }).dragTo(cfg.getByText("int bonus = qty * 2;", { exact: true }));
+  await expect(page.getByRole("dialog")).toContainText("int tax = base / 5;");
+  await page.getByRole("button", { name: "Подтвердить перемещение" }).click();
+  await expect(page.getByTestId("revision")).toContainText("REV 3");
+});
+
+test("an own block is saved in the palette and can be dropped on the graph", async ({ page }) => {
+  test.setTimeout(60_000);
+  await uploadZip(page);
+  await page.locator('button[title="calc.Pricing.price(int,int,int)"]').click();
+  await page.getByRole("button", { name: "Свой блок" }).click();
+  await page.getByLabel("Название своего блока").fill("Мой лог");
+  await page.getByLabel("Java-код своего блока").fill('System.out.println("log");');
+  await page.getByRole("button", { name: "Сохранить блок" }).click();
+  const cfg = page.getByRole("region", { name: "Граф потока управления" });
+  await page.getByRole("button", { name: "Мой лог" }).dragTo(cfg.getByText("int tax = base / 5;", { exact: true }));
+  await expect(page.getByRole("dialog")).toContainText('System.out.println("log");');
 });
