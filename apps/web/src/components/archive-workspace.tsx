@@ -72,7 +72,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   const [acknowledged, setAcknowledged] = useState<string[]>([]);
   const [optimizationError, setOptimizationError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [workbench, setWorkbench] = useState<"code" | "verify" | "benchmark" | "diff" | "decompose" | "history">("code");
+  const [workbench, setWorkbench] = useState<"code" | "run" | "verify" | "benchmark" | "diff" | "decompose" | "history">("code");
   const [repeats, setRepeats] = useState(2);
   const [analysisTab, setAnalysisTab] = useState<"problems" | "recommendations" | "metrics" | "edit">("problems");
   const [editPortal, setEditPortal] = useState<HTMLElement | null>(null);
@@ -129,6 +129,10 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
     if (scenariosLoaded.current) saveScenarios(project.id, cases);
   }, [project.id, cases]);
   const [verifyError, setVerifyError] = useState("");
+  const [runStdin, setRunStdin] = useState<string | null>(null);
+  const [runResult, setRunResult] = useState<{ revision: number; report: VerificationReport } | null>(null);
+  const [runBusy, setRunBusy] = useState(false);
+  const [runError, setRunError] = useState("");
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [benchmarkReport, setBenchmarkReport] = useState<BenchmarkReport | null>(null);
   const [benchmarkError, setBenchmarkError] = useState("");
@@ -343,6 +347,49 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
     }
   }
 
+  /**
+   * Runs a verify request; when the project has several main classes and none is chosen, picks the one called Main
+   * (otherwise the first the API lists), remembers it and retries once.
+   */
+  async function verifyWithMain(baseline: number, candidate: number, scenarios: VerifyTestCase[], runs: number) {
+    try {
+      return await verifyRevisions(project.id, baseline, candidate, scenarios, { main_class: mainClass || null, source_level: sourceLevel, repeats: runs });
+    } catch (cause) {
+      if (!(cause instanceof ApiError) || cause.code !== "main_class_required" || mainClass) throw cause;
+      const listed = (cause.message.split(":").at(-1) ?? "").split(",").map((item) => item.trim()).filter((item) => /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(item));
+      const pick = listed.find((item) => item === "Main" || item.endsWith(".Main")) ?? listed[0];
+      if (!pick) throw cause;
+      setMainClass(pick);
+      setLogLines((lines) => [...lines, { time: logTime(), kind: "info", text: `В проекте несколько классов с main (${listed.join(", ")}); выбран ${pick}. Другой можно указать в «Проверке».` }]);
+      return await verifyRevisions(project.id, baseline, candidate, scenarios, { main_class: pick, source_level: sourceLevel, repeats: runs });
+    }
+  }
+
+  /** «Запуск» of the mockup: the current revision runs once in the Docker runner on the given stdin (the verify endpoint, same revision on both sides). */
+  async function runProgram(stdin: string) {
+    setRunBusy(true);
+    setRunError("");
+    setRunResult(null);
+    const target = revision;
+    try {
+      setLogLines((lines) => [...lines, { time: logTime(), kind: "info", text: `Запуск REV ${target} в Docker…` }]);
+      const report = await verifyWithMain(target, target, [{ name: "Запуск", stdin }], 1);
+      setRunResult({ revision: target, report });
+      const run = report.test_cases[0]?.baseline;
+      const output = (run?.stdout.utf8 ?? "").split("\n").filter((line, index, all) => index < all.length - 1 || line).slice(0, 200);
+      setLogLines((lines) => [...lines,
+        ...output.map((text) => ({ time: logTime(), kind: "info" as const, text: `> ${text}` })),
+        report.status === "compilation_failed"
+          ? { time: logTime(), kind: "error" as const, text: `REV ${target} не компилируется` }
+          : { time: logTime(), kind: run?.exit_code === 0 ? "ok" as const : "error" as const, text: `Программа завершилась: код ${run?.exit_code ?? "—"}${run?.timed_out ? ", превышен лимит времени" : ""}` }]);
+      setPanes((current) => ({ ...current, console: true }));
+    } catch (cause) {
+      setRunError(errorMessage(cause));
+    } finally {
+      setRunBusy(false);
+    }
+  }
+
   /** Quality gate of the case: every new revision is compared with REV 1 on the saved scenarios, without a click. */
   async function runQualityGate(target: number) {
     if (target <= 1) return;
@@ -354,7 +401,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
     setGate({ revision: target, state: "running" });
     setLogLines((lines) => [...lines, { time: logTime(), kind: "info", text: `Автопроверка: REV 1 → REV ${target}, сценариев ${usable.length}…` }]);
     try {
-      const report = await verifyRevisions(project.id, 1, target, usable, { main_class: mainClass || null, source_level: sourceLevel, repeats: 1 });
+      const report = await verifyWithMain(1, target, usable, 1);
       const passedCount = report.test_cases.filter((item) => item.passed).length;
       const state = report.behaviorally_verified ? "passed" : report.status === "unstable" ? "unstable" : "failed";
       setGate({ revision: target, state, passed: passedCount, total: report.test_cases.length });
@@ -439,7 +486,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
     return { value: best.speedup ?? 0, note: `Измерено на нагрузке «${best.name}» (REV ${benchmarkReport?.baseline_revision} → REV ${benchmarkReport?.candidate_revision}); не прогноз.` };
   })();
   const firstApplicable = optimizations?.proposals.find((proposal) => proposal.applicability === "applicable") ?? null;
-  const overlayTitle = workbench === "verify" ? "Проверка поведения" : workbench === "benchmark" ? "Бенчмарк" : workbench === "diff" ? "Diff ревизий" : workbench === "decompose" ? "Разбор монолита" : workbench === "history" ? "История ревизий" : "";
+  const overlayTitle = workbench === "run" ? `Запуск программы · REV ${revision}` : workbench === "verify" ? "Проверка поведения" : workbench === "benchmark" ? "Бенчмарк" : workbench === "diff" ? "Diff ревизий" : workbench === "decompose" ? "Разбор монолита" : workbench === "history" ? "История ревизий" : "";
   const methodGroups = (() => {
     const groups = new Map<string, CfgMethod[]>();
     for (const method of methods) {
@@ -480,7 +527,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
           <Link title="Импорт Java: загрузить другой проект" aria-label="Импорт Java" className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded border border-slate-700 px-2.5 text-[13px] text-slate-200 hover:border-cyan-700" href="/"><Upload size={15} /><span className="hidden min-[1700px]:inline">Импорт Java</span></Link>
           <Button variant="outline" size="sm" aria-label="Экспортировать проект" title="Экспорт Java: скачать проект" onClick={() => void downloadProject()}><Download /><span className="hidden min-[1700px]:inline"> Экспорт Java</span></Button>
           <Button size="sm" className="bg-cyan-600 text-white hover:bg-cyan-500" disabled={loading || !firstApplicable} title={firstApplicable ? "Открыть применимую оптимизацию" : "Применимых оптимизаций нет"} onClick={() => { setAnalysisTab("recommendations"); if (firstApplicable) { setSelectedProposal(firstApplicable.id); setPreview(null); setAcknowledged([]); } }}><Sparkles /> Оптимизировать</Button>
-          <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-500" onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}><Play /> Запуск</Button>
+          <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-500" title="Запустить текущую ревизию в Docker и показать вывод" onClick={() => { setWorkbench("run"); if (runStdin === null) setRunStdin(cases.find((item) => item.stdin.trim())?.stdin ?? ""); }}><Play /> Запуск</Button>
         </div>
         <div className="ml-2 flex items-center gap-1 border-l border-slate-800 pl-2" aria-label="Инструменты">
           <Button variant="ghost" size="sm" aria-label="Проверка" title="Проверка поведения" onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}><ShieldCheck /></Button>
@@ -583,6 +630,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
         <div className="fixed inset-x-0 bottom-0 top-[78px] z-30 grid grid-rows-[40px_minmax(0,1fr)] bg-[#0a1220]" role="dialog" aria-label={overlayTitle}>
           <header className="flex items-center gap-3 border-b border-slate-700 bg-[#0d1625] px-4"><strong className="text-[14px] text-slate-100">{overlayTitle}</strong><button className="ml-auto rounded border border-slate-700 px-3 py-1 text-[12px] text-slate-200 hover:border-cyan-700" type="button" onClick={() => { setWorkbench("code"); setPanes((current) => (current.code ? current : { ...current, code: true })); }}>Код</button></header>
           <div className="min-h-0 overflow-auto">
+        {workbench === "run" ? <RunWorkbench stdin={runStdin ?? ""} onStdin={setRunStdin} mainClass={mainClass} onMainClass={setMainClass} revision={revision} busy={runBusy} error={runError} result={runResult} onRun={() => void runProgram(runStdin ?? "")} scenarios={cases.filter((item) => item.stdin.trim())} /> : null}
         {workbench === "verify" ? <VerificationWorkbench onSuggest={() => void (async () => { const sources = [source]; for (const file of javaFiles.filter((item) => item.path !== activeFile).slice(0, 30)) { try { sources.push((await getProjectFile(project.id, file.path, revision)).source); } catch { /* skip */ } } setCases(suggestScenarios(sources)); })()} revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} cases={cases} onCases={setCases} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} repeats={repeats} onRepeats={setRepeats} report={verifyReport} error={verifyError} busy={verifyBusy} onRun={() => void runFunctionalVerification()} /> : null}
         {workbench === "benchmark" ? <BenchmarkWorkbench cases={cases} revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} workload={workload} onWorkload={setWorkload} iterations={measuredIterations} onIterations={setMeasuredIterations} report={benchmarkReport} error={benchmarkError} busy={benchmarkBusy} onRun={() => void runRuntimeBenchmark()} /> : null}
         {workbench === "diff" ? <DiffWorkbench revisions={revisions} from={diffFrom} to={diffTo} onFrom={setDiffFrom} onTo={setDiffTo} files={revisionDiff} onLoad={() => void loadDiff()} /> : null}
@@ -654,6 +702,36 @@ function OptimizationPanel({ proposals, revision, selectedId, onSelect, selected
 
 function RevisionSelect({ label, values, value, onChange }: { label: string; values: { revision: number; has_analysis: boolean }[]; value: number; onChange: (value: number) => void }) {
   return <label className="grid gap-1 text-[12px] text-slate-400">{label}<select className="h-9 w-full rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[12px] text-slate-200" value={value} onChange={(event) => onChange(Number(event.target.value))}>{values.map((item) => <option key={item.revision} value={item.revision}>REV {item.revision}{item.has_analysis ? " · анализ" : ""}</option>)}</select></label>;
+}
+
+function RunWorkbench({ stdin, onStdin, mainClass, onMainClass, revision, busy, error, result, onRun, scenarios }: {
+  stdin: string; onStdin: (value: string) => void; mainClass: string; onMainClass: (value: string) => void; revision: number; busy: boolean; error: string;
+  result: { revision: number; report: VerificationReport } | null; onRun: () => void; scenarios: VerifyTestCase[];
+}) {
+  const run = result?.report.test_cases[0]?.baseline ?? null;
+  const compilation = result?.report.baseline_compilation ?? null;
+  return <div className="mx-auto grid w-full max-w-[1500px] content-start gap-4 p-4" aria-label="Запуск программы">
+    <header className="flex flex-wrap items-center gap-2 text-[14px] font-semibold text-slate-200"><Play size={16} /> Запуск REV {revision} <span className="text-[12px] font-normal text-slate-500">в изолированном Docker-контейнере: без сети, с лимитами CPU, памяти и времени</span></header>
+    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="grid content-start gap-2">
+        <label className="grid gap-1 text-[12px] text-slate-400">stdin программы<textarea aria-label="stdin запуска" className="min-h-48 w-full resize-y rounded border border-slate-700 bg-[#08101d] p-2 font-mono text-[13px] leading-5 text-slate-200" value={stdin} onChange={(event) => onStdin(event.target.value)} /></label>
+        {scenarios.length ? <div className="flex flex-wrap items-center gap-1.5 text-[12px] text-slate-500">Взять из сценария:{scenarios.slice(0, 8).map((item) => <button key={item.name} type="button" className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:border-cyan-700" onClick={() => onStdin(item.stdin)}>{item.name}</button>)}</div> : null}
+        <label className="grid gap-1 text-[12px] text-slate-400">Класс запуска<input aria-label="Главный класс запуска" className="h-9 w-full rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[12px] text-slate-200" placeholder="если main один — не нужно" value={mainClass} onChange={(event) => onMainClass(event.target.value)} /></label>
+        <Button className="w-fit" onClick={onRun} disabled={busy}>{busy ? <LoaderCircle className="spin" /> : <Play />} Запустить REV {revision}</Button>
+        {error ? <p role="alert" className="m-0 text-[13px] text-rose-300">{error}</p> : null}
+      </div>
+      <section className="grid content-start gap-2" aria-label="Вывод программы">
+        {!result && !busy ? <p className="m-0 rounded border border-dashed border-slate-700 p-4 text-[13px] text-slate-500">Здесь появится вывод программы. Он же дублируется во вкладку «Консоль».</p> : null}
+        {busy ? <p className="m-0 flex items-center gap-2 text-[13px] text-slate-400"><LoaderCircle className="spin" size={14} /> Компиляция и запуск…</p> : null}
+        {result && result.report.status === "compilation_failed" ? <div className="rounded border border-rose-800 bg-rose-950/30 p-3 text-[13px] text-rose-200">REV {result.revision} не компилируется{compilation?.diagnostics.length ? <ul className="mb-0">{compilation.diagnostics.slice(0, 10).map((item, index) => <li key={index}>{item.message}</li>)}</ul> : <pre className="m-0 mt-2 whitespace-pre-wrap font-mono text-[12px]">{compilation?.stderr.utf8 ?? ""}</pre>}</div> : null}
+        {run ? <>
+          <div className="flex flex-wrap gap-2 text-[12px]"><span className={`rounded px-2 py-0.5 ${run.exit_code === 0 ? "bg-emerald-500/15 text-emerald-200" : "bg-rose-500/15 text-rose-200"}`}>код выхода {run.exit_code ?? "—"}</span>{run.timed_out ? <span className="rounded bg-amber-500/15 px-2 py-0.5 text-amber-200">превышен лимит времени</span> : null}{run.stdout.truncated ? <span className="rounded bg-amber-500/15 px-2 py-0.5 text-amber-200">вывод обрезан</span> : null}</div>
+          <pre aria-label="stdout запуска" className="m-0 max-h-[55vh] overflow-auto whitespace-pre-wrap rounded border border-slate-800 bg-[#08101d] p-3 font-mono text-[12px] leading-5 text-slate-200">{run.stdout.utf8 ?? "(вывод не в UTF-8)"}</pre>
+          {run.stderr.utf8 ? <pre aria-label="stderr запуска" className="m-0 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-rose-900/60 bg-rose-950/20 p-3 font-mono text-[12px] leading-5 text-rose-200">{run.stderr.utf8}</pre> : null}
+        </> : null}
+      </section>
+    </div>
+  </div>;
 }
 
 function VerificationWorkbench({ revisions, baseline, candidate, onBaseline, onCandidate, cases, onCases, mainClass, onMainClass, sourceLevel, onSourceLevel, repeats, onRepeats, report, error, busy, onRun, onSuggest }: {

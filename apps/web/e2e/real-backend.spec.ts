@@ -170,6 +170,8 @@ test("real ZIP workflow: tree, graph/CFG, optimization, verification and measure
   await expect(page.getByTestId("revision")).toContainText("REV 2");
   await page.getByTestId("file-src/main/java/shop/service/OrderLinker.java").click();
   await expect(page.locator(".cm-content")).toContainText("HashMap");
+  // the quality gate re-runs the suggested scenarios on its own after the change
+  await expect(page.getByTestId("quality-gate")).toContainText("Поведение сохранено", { timeout: 90_000 });
 
   await page.getByRole("button", { name: "Проверка", exact: true }).click();
   await page.getByLabel("Главный класс Java").fill("shop.Main");
@@ -381,4 +383,15 @@ test("an own block is saved in the palette and can be dropped on the graph", asy
   const cfg = page.getByRole("region", { name: "Граф потока управления" });
   await page.getByRole("button", { name: "Мой лог" }).dragTo(cfg.getByText("int tax = base / 5;", { exact: true }));
   await expect(page.getByRole("dialog")).toContainText('System.out.println("log");');
+});
+
+test("«Запуск» runs the current revision in Docker and shows its output", async ({ page }) => {
+  test.setTimeout(90_000);
+  await uploadZip(page);
+  await expect(page.getByText("Анализ завершён")).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("button", { name: "Запуск", exact: true }).click();
+  await page.getByLabel("stdin запуска").fill("30\n18\n37\n");
+  await page.getByRole("button", { name: "Запустить REV 1" }).click();
+  await expect(page.getByLabel("stdout запуска")).toContainText(/\d+/, { timeout: 60_000 });
+  await expect(page.getByLabel("Вывод программы")).toContainText("код выхода 0");
 });
