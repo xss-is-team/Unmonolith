@@ -122,7 +122,7 @@ final class Optimizer {
         return 1;
     }
 
-    private static Map<String, Object> failure(String code, String message) {
+    static Map<String, Object> failure(String code, String message) {
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("code", code);
         error.put("message", message);
@@ -171,6 +171,7 @@ final class Optimizer {
         for (Candidate c : d.candidates) {
             proposals.add(describe(c, d.analysis));
         }
+        proposals.addAll(StringBuilderRule.discover(d.loaded, d.analysis));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("status", "completed");
         result.put("rule", RULE);
@@ -1057,7 +1058,7 @@ final class Optimizer {
     }
 
     @SuppressWarnings("unchecked")
-    private static Object methodComplexity(Object tree, String methodId) {
+    static Object methodComplexity(Object tree, String methodId) {
         if (methodId == null) {
             return null;
         }
@@ -1095,6 +1096,9 @@ final class Optimizer {
             if (c.id.equals(proposalId)) {
                 chosen = c;
             }
+        }
+        if (chosen == null && StringBuilderRule.owns(d.loaded, proposalId)) {
+            return StringBuilderRule.apply(d.loaded, d.analysis, root, files, level, proposalId, acknowledged, preview, outputDir);
         }
         if (chosen == null) {
             return failure("proposal_not_found", "No optimization proposal with this id exists in this revision.");

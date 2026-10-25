@@ -376,7 +376,7 @@ export function CfgViewer({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1">
+      <div className="min-h-[200px] flex-1">
         {cfgState === "loading" ? (
           <div className="flex min-h-full flex-col items-center justify-center gap-2 p-7 text-center text-slate-500" role="status"><LoaderCircle className="spin text-cyan-400" /><strong className="text-slate-300">Загружаем CFG</strong><span>Селектор {selector} · ревизия {revision}</span></div>
         ) : null}
@@ -411,6 +411,7 @@ export function CfgViewer({
         ) : null}
       </div>
 
+      <div className="max-h-[44%] min-h-0 shrink-0 overflow-auto">
       {showAnalysisSummary && methodAnalysis ? <BigOPanel analysis={methodAnalysis} onSelect={onSourceRangeSelect} /> : showAnalysisSummary && analysisRequest.error ? (
         <div className="flex min-h-[30px] items-center gap-1.5 border-t border-slate-800 bg-[#0d1625] px-3 text-[13px] text-slate-400"><AlertCircle size={15} /> Big O для метода недоступна: {apiMessage(analysisRequest.error)}</div>
       ) : showAnalysisSummary && selector ? (
@@ -467,6 +468,7 @@ export function CfgViewer({
           {movePreview ? <div className="grid gap-2" aria-label="Предпросмотр перемещения"><DiffView files={movePreview.diff} label="Diff перемещения CFG" /><div className="flex flex-wrap items-center gap-2"><Button onClick={() => void confirmMove()} disabled={moveBusy}>{moveBusy ? <LoaderCircle className="spin" /> : <Check />} Подтвердить перемещение</Button><Button variant="outline" onClick={() => setMovePreview(null)} disabled={moveBusy}>Отмена</Button><small className="text-slate-500">Preview привязан к ревизии {movePreview.base_revision}.</small></div></div> : null}
         </section>
       ) : null}
+      </div>
     </section>
   );
 }
