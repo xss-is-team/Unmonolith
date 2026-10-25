@@ -1,0 +1,260 @@
+{
+  "report_id": "0db7e6a6-f8b9-479f-b8e8-54ef13c0d526",
+  "created_at": "2026-10-25T03:19:30.588716Z",
+  "requested_test_cases": 6,
+  "behaviorally_verified": true,
+  "warnings": [],
+  "status": "passed",
+  "baseline_revision": 1,
+  "candidate_revision": 3,
+  "baseline_compilation": {
+    "status": "completed",
+    "exit_code": 0,
+    "timed_out": false,
+    "output_overflow": false,
+    "stdout": {
+      "utf8": "",
+      "base64": "",
+      "truncated": false
+    },
+    "stderr": {
+      "utf8": "",
+      "base64": "",
+      "truncated": false
+    },
+    "main_class": "Main",
+    "diagnostics": []
+  },
+  "candidate_compilation": {
+    "status": "completed",
+    "exit_code": 0,
+    "timed_out": false,
+    "output_overflow": false,
+    "stdout": {
+      "utf8": "",
+      "base64": "",
+      "truncated": false
+    },
+    "stderr": {
+      "utf8": "",
+      "base64": "",
+      "truncated": false
+    },
+    "main_class": "Main",
+    "diagnostics": []
+  },
+  "executed_test_cases": 6,
+  "test_cases": [
+    {
+      "name": "help",
+      "passed": true,
+      "mismatches": [],
+      "baseline": {
+        "stdout": {
+          "utf8": "Java Blueprints — Консольный монолит обработки заказов v1.0 [Java 1.8]\nВведите 'help' для просмотра команд или 'exit' для завершения.\napp> Доступные команды консоли:\n  inventory          - Просмотреть текущий список складских товаров\n  orders             - Просмотреть список всех заказов\n  add_item <CSV>     - Добавить товар (id;name;category;price;quantity)\n  merge_inventory    - Запустить объединение дубликатов склада (алгоритм со слайда 5)\n  add_order <CSV>    - Создать заказ (orderId;customerId;item1:qty:price,item2:qty:price)\n  add_tx <CSV>       - Добавить платеж (txId;orderId;amount;type;success)\n  reconcile          - Сверить оплату заказов с транзакциями\n  report             - Вывести итоговый финансовый отчет\n  help               - Показать эту справку\n  exit               - Завершить сеанс\napp> Завершение работы программы.\n",
+          "base64": "SmF2YSBCbHVlcHJpbnRzIOKAlCDQmtC+0L3RgdC+0LvRjNC90YvQuSDQvNC+0L3QvtC70LjRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0LfQsNC60LDQt9C+0LIgdjEuMCBbSmF2YSAxLjhdCtCS0LLQtdC00LjRgtC1ICdoZWxwJyDQtNC70Y8g0L/RgNC+0YHQvNC+0YLRgNCwINC60L7QvNCw0L3QtCDQuNC70LggJ2V4aXQnINC00LvRjyDQt9Cw0LLQtdGA0YjQtdC90LjRjy4KYXBwPiDQlNC+0YHRgtGD0L/QvdGL0LUg0LrQvtC80LDQvdC00Ysg0LrQvtC90YHQvtC70Lg6CiAgaW52ZW50b3J5ICAgICAgICAgIC0g0J/RgNC+0YHQvNC+0YLRgNC10YLRjCDRgtC10LrRg9GJ0LjQuSDRgdC/0LjRgdC+0Log0YHQutC70LDQtNGB0LrQuNGFINGC0L7QstCw0YDQvtCyCiAgb3JkZXJzICAgICAgICAgICAgIC0g0J/RgNC+0YHQvNC+0YLRgNC10YLRjCDRgdC/0LjRgdC+0Log0LLRgdC10YUg0LfQsNC60LDQt9C+0LIKICBhZGRfaXRlbSA8Q1NWPiAgICAgLSDQlNC+0LHQsNCy0LjRgtGMINGC0L7QstCw0YAgKGlkO25hbWU7Y2F0ZWdvcnk7cHJpY2U7cXVhbnRpdHkpCiAgbWVyZ2VfaW52ZW50b3J5ICAgIC0g0JfQsNC/0YPRgdGC0LjRgtGMINC+0LHRitC10LTQuNC90LXQvdC40LUg0LTRg9Cx0LvQuNC60LDRgtC+0LIg0YHQutC70LDQtNCwICjQsNC70LPQvtGA0LjRgtC8INGB0L4g0YHQu9Cw0LnQtNCwIDUpCiAgYWRkX29yZGVyIDxDU1Y+ICAgIC0g0KHQvtC30LTQsNGC0Ywg0LfQsNC60LDQtyAob3JkZXJJZDtjdXN0b21lcklkO2l0ZW0xOnF0eTpwcmljZSxpdGVtMjpxdHk6cHJpY2UpCiAgYWRkX3R4IDxDU1Y+ICAgICAgIC0g0JTQvtCx0LDQstC40YLRjCDQv9C70LDRgtC10LYgKHR4SWQ7b3JkZXJJZDthbW91bnQ7dHlwZTtzdWNjZXNzKQogIHJlY29uY2lsZSAgICAgICAgICAtINCh0LLQtdGA0LjRgtGMINC+0L/Qu9Cw0YLRgyDQt9Cw0LrQsNC30L7QsiDRgSDRgtGA0LDQvdC30LDQutGG0LjRj9C80LgKICByZXBvcnQgICAgICAgICAgICAgLSDQktGL0LLQtdGB0YLQuCDQuNGC0L7Qs9C+0LLRi9C5INGE0LjQvdCw0L3RgdC+0LLRi9C5INC+0YLRh9C10YIKICBoZWxwICAgICAgICAgICAgICAgLSDQn9C+0LrQsNC30LDRgtGMINGN0YLRgyDRgdC/0YDQsNCy0LrRgwogIGV4aXQgICAgICAgICAgICAgICAtINCX0LDQstC10YDRiNC40YLRjCDRgdC10LDQvdGBCmFwcD4g0JfQsNCy0LXRgNGI0LXQvdC40LUg0YDQsNCx0L7RgtGLINC/0YDQvtCz0YDQsNC80LzRiy4K",
+          "truncated": false
+        },
+        "stderr": {
+          "utf8": "",
+          "base64": "",
+          "truncated": false
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "output_overflow": false
+      },
+      "candidate": {
+        "stdout": {
+          "utf8": "Java Blueprints — Консольный монолит обработки заказов v1.0 [Java 1.8]\nВведите 'help' для просмотра команд или 'exit' для завершения.\napp> Доступные команды консоли:\n  inventory          - Просмотреть текущий список складских товаров\n  orders             - Просмотреть список всех заказов\n  add_item <CSV>     - Добавить товар (id;name;category;price;quantity)\n  merge_inventory    - Запустить объединение дубликатов склада (алгоритм со слайда 5)\n  add_order <CSV>    - Создать заказ (orderId;customerId;item1:qty:price,item2:qty:price)\n  add_tx <CSV>       - Добавить платеж (txId;orderId;amount;type;success)\n  reconcile          - Сверить оплату заказов с транзакциями\n  report             - Вывести итоговый финансовый отчет\n  help               - Показать эту справку\n  exit               - Завершить сеанс\napp> Завершение работы программы.\n",
+          "base64": "SmF2YSBCbHVlcHJpbnRzIOKAlCDQmtC+0L3RgdC+0LvRjNC90YvQuSDQvNC+0L3QvtC70LjRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0LfQsNC60LDQt9C+0LIgdjEuMCBbSmF2YSAxLjhdCtCS0LLQtdC00LjRgtC1ICdoZWxwJyDQtNC70Y8g0L/RgNC+0YHQvNC+0YLRgNCwINC60L7QvNCw0L3QtCDQuNC70LggJ2V4aXQnINC00LvRjyDQt9Cw0LLQtdGA0YjQtdC90LjRjy4KYXBwPiDQlNC+0YHRgtGD0L/QvdGL0LUg0LrQvtC80LDQvdC00Ysg0LrQvtC90YHQvtC70Lg6CiAgaW52ZW50b3J5ICAgICAgICAgIC0g0J/RgNC+0YHQvNC+0YLRgNC10YLRjCDRgtC10LrRg9GJ0LjQuSDRgdC/0LjRgdC+0Log0YHQutC70LDQtNGB0LrQuNGFINGC0L7QstCw0YDQvtCyCiAgb3JkZXJzICAgICAgICAgICAgIC0g0J/RgNC+0YHQvNC+0YLRgNC10YLRjCDRgdC/0LjRgdC+0Log0LLRgdC10YUg0LfQsNC60LDQt9C+0LIKICBhZGRfaXRlbSA8Q1NWPiAgICAgLSDQlNC+0LHQsNCy0LjRgtGMINGC0L7QstCw0YAgKGlkO25hbWU7Y2F0ZWdvcnk7cHJpY2U7cXVhbnRpdHkpCiAgbWVyZ2VfaW52ZW50b3J5ICAgIC0g0JfQsNC/0YPRgdGC0LjRgtGMINC+0LHRitC10LTQuNC90LXQvdC40LUg0LTRg9Cx0LvQuNC60LDRgtC+0LIg0YHQutC70LDQtNCwICjQsNC70LPQvtGA0LjRgtC8INGB0L4g0YHQu9Cw0LnQtNCwIDUpCiAgYWRkX29yZGVyIDxDU1Y+ICAgIC0g0KHQvtC30LTQsNGC0Ywg0LfQsNC60LDQtyAob3JkZXJJZDtjdXN0b21lcklkO2l0ZW0xOnF0eTpwcmljZSxpdGVtMjpxdHk6cHJpY2UpCiAgYWRkX3R4IDxDU1Y+ICAgICAgIC0g0JTQvtCx0LDQstC40YLRjCDQv9C70LDRgtC10LYgKHR4SWQ7b3JkZXJJZDthbW91bnQ7dHlwZTtzdWNjZXNzKQogIHJlY29uY2lsZSAgICAgICAgICAtINCh0LLQtdGA0LjRgtGMINC+0L/Qu9Cw0YLRgyDQt9Cw0LrQsNC30L7QsiDRgSDRgtGA0LDQvdC30LDQutGG0LjRj9C80LgKICByZXBvcnQgICAgICAgICAgICAgLSDQktGL0LLQtdGB0YLQuCDQuNGC0L7Qs9C+0LLRi9C5INGE0LjQvdCw0L3RgdC+0LLRi9C5INC+0YLRh9C10YIKICBoZWxwICAgICAgICAgICAgICAgLSDQn9C+0LrQsNC30LDRgtGMINGN0YLRgyDRgdC/0YDQsNCy0LrRgwogIGV4aXQgICAgICAgICAgICAgICAtINCX0LDQstC10YDRiNC40YLRjCDRgdC10LDQvdGBCmFwcD4g0JfQsNCy0LXRgNGI0LXQvdC40LUg0YDQsNCx0L7RgtGLINC/0YDQvtCz0YDQsNC80LzRiy4K",
+          "truncated": false
+        },
+        "stderr": {
+          "utf8": "",
+          "base64": "",
+          "truncated": false
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "output_overflow": false
+      }
+    },
+    {
+      "name": "inventory",
+      "passed": true,
+      "mismatches": [],
+      "baseline": {
+        "stdout": {
+          "utf8": "Java Blueprints — Консольный монолит обработки заказов v1.0 [Java 1.8]\nВведите 'help' для просмотра команд или 'exit' для завершения.\napp> ================================================================================\n  СКЛАДСКИЕ ОСТАТКИ ТОВАРОВ\n================================================================================\nID         | Наименование              | Категория       | Цена       | Кол-во  \n--------------------------------------------------------------------------------\nITM-101    | Ноутбук Pro 15            | Электроника     |   85000.00 |        5\nITM-102    | Мышь беспроводная         | Аксессуары      |    2500.00 |       20\nITM-101    | Ноутбук Pro 15            | Электроника     |   85000.00 |        3\nITM-103    | Клавиатура Механика       | Аксессуары      |    7200.00 |       10\nITM-102    | Мышь беспроводная         | Аксессуары      |    2400.00 |       15\nITM-104    | Монитор 27 4K             | Электроника     |   35000.00 |        8\n--------------------------------------------------------------------------------\nВсего позиций на складе: 6\n\napp> Завершение работы программы.\n",
+          "base64": "SmF2YSBCbHVlcHJpbnRzIOKAlCDQmtC+0L3RgdC+0LvRjNC90YvQuSDQvNC+0L3QvtC70LjRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0LfQsNC60LDQt9C+0LIgdjEuMCBbSmF2YSAxLjhdCtCS0LLQtdC00LjRgtC1ICdoZWxwJyDQtNC70Y8g0L/RgNC+0YHQvNC+0YLRgNCwINC60L7QvNCw0L3QtCDQuNC70LggJ2V4aXQnINC00LvRjyDQt9Cw0LLQtdGA0YjQtdC90LjRjy4KYXBwPiA9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PQogINCh0JrQm9CQ0JTQodCa0JjQlSDQntCh0KLQkNCi0JrQmCDQotCe0JLQkNCg0J7Qkgo9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PQpJRCAgICAgICAgIHwg0J3QsNC40LzQtdC90L7QstCw0L3QuNC1ICAgICAgICAgICAgICB8INCa0LDRgtC10LPQvtGA0LjRjyAgICAgICB8INCm0LXQvdCwICAgICAgIHwg0JrQvtC7LdCy0L4gIAotLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQpJVE0tMTAxICAgIHwg0J3QvtGD0YLQsdGD0LogUHJvIDE1ICAgICAgICAgICAgfCDQrdC70LXQutGC0YDQvtC90LjQutCwICAgICB8ICAgODUwMDAuMDAgfCAgICAgICAgNQpJVE0tMTAyICAgIHwg0JzRi9GI0Ywg0LHQtdGB0L/RgNC+0LLQvtC00L3QsNGPICAgICAgICAgfCDQkNC60YHQtdGB0YHRg9Cw0YDRiyAgICAgIHwgICAgMjUwMC4wMCB8ICAgICAgIDIwCklUTS0xMDEgICAgfCDQndC+0YPRgtCx0YPQuiBQcm8gMTUgICAgICAgICAgICB8INCt0LvQtdC60YLRgNC+0L3QuNC60LAgICAgIHwgICA4NTAwMC4wMCB8ICAgICAgICAzCklUTS0xMDMgICAgfCDQmtC70LDQstC40LDRgtGD0YDQsCDQnNC10YXQsNC90LjQutCwICAgICAgIHwg0JDQutGB0LXRgdGB0YPQsNGA0YsgICAgICB8ICAgIDcyMDAuMDAgfCAgICAgICAxMApJVE0tMTAyICAgIHwg0JzRi9GI0Ywg0LHQtdGB0L/RgNC+0LLQvtC00L3QsNGPICAgICAgICAgfCDQkNC60YHQtdGB0YHRg9Cw0YDRiyAgICAgIHwgICAgMjQwMC4wMCB8ICAgICAgIDE1CklUTS0xMDQgICAgfCDQnNC+0L3QuNGC0L7RgCAyNyA0SyAgICAgICAgICAgICB8INCt0LvQtdC60YLRgNC+0L3QuNC60LAgICAgIHwgICAzNTAwMC4wMCB8ICAgICAgICA4Ci0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCtCS0YHQtdCz0L4g0L/QvtC30LjRhtC40Lkg0L3QsCDRgdC60LvQsNC00LU6IDYKCmFwcD4g0JfQsNCy0LXRgNGI0LXQvdC40LUg0YDQsNCx0L7RgtGLINC/0YDQvtCz0YDQsNC80LzRiy4K",
+          "truncated": false
+        },
+        "stderr": {
+          "utf8": "",
+          "base64": "",
+          "truncated": false
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "output_overflow": false
+      },
+      "candidate": {
+        "stdout": {
+          "utf8": "Java Blueprints — Консольный монолит обработки заказов v1.0 [Java 1.8]\nВведите 'help' для просмотра команд или 'exit' для завершения.\napp> ================================================================================\n  СКЛАДСКИЕ ОСТАТКИ ТОВАРОВ\n================================================================================\nID         | Наименование              | Категория       | Цена       | Кол-во  \n--------------------------------------------------------------------------------\nITM-101    | Ноутбук Pro 15            | Электроника     |   85000.00 |        5\nITM-102    | Мышь беспроводная         | Аксессуары      |    2500.00 |       20\nITM-101    | Ноутбук Pro 15            | Электроника     |   85000.00 |        3\nITM-103    | Клавиатура Механика       | Аксессуары      |    7200.00 |       10\nITM-102    | Мышь беспроводная         | Аксессуары      |    2400.00 |       15\nITM-104    | Монитор 27 4K             | Электроника     |   35000.00 |        8\n--------------------------------------------------------------------------------\nВсего позиций на складе: 6\n\napp> Завершение работы программы.\n",
+          "base64": "SmF2YSBCbHVlcHJpbnRzIOKAlCDQmtC+0L3RgdC+0LvRjNC90YvQuSDQvNC+0L3QvtC70LjRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0LfQsNC60LDQt9C+0LIgdjEuMCBbSmF2YSAxLjhdCtCS0LLQtdC00LjRgtC1ICdoZWxwJyDQtNC70Y8g0L/RgNC+0YHQvNC+0YLRgNCwINC60L7QvNCw0L3QtCDQuNC70LggJ2V4aXQnINC00LvRjyDQt9Cw0LLQtdGA0YjQtdC90LjRjy4KYXBwPiA9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PQogINCh0JrQm9CQ0JTQodCa0JjQlSDQntCh0KLQkNCi0JrQmCDQotCe0JLQkNCg0J7Qkgo9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PQpJRCAgICAgICAgIHwg0J3QsNC40LzQtdC90L7QstCw0L3QuNC1ICAgICAgICAgICAgICB8INCa0LDRgtC10LPQvtGA0LjRjyAgICAgICB8INCm0LXQvdCwICAgICAgIHwg0JrQvtC7LdCy0L4gIAotLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQpJVE0tMTAxICAgIHwg0J3QvtGD0YLQsdGD0LogUHJvIDE1ICAgICAgICAgICAgfCDQrdC70LXQutGC0YDQvtC90LjQutCwICAgICB8ICAgODUwMDAuMDAgfCAgICAgICAgNQpJVE0tMTAyICAgIHwg0JzRi9GI0Ywg0LHQtdGB0L/RgNC+0LLQvtC00L3QsNGPICAgICAgICAgfCDQkNC60YHQtdGB0YHRg9Cw0YDRiyAgICAgIHwgICAgMjUwMC4wMCB8ICAgICAgIDIwCklUTS0xMDEgICAgfCDQndC+0YPRgtCx0YPQuiBQcm8gMTUgICAgICAgICAgICB8INCt0LvQtdC60YLRgNC+0L3QuNC60LAgICAgIHwgICA4NTAwMC4wMCB8ICAgICAgICAzCklUTS0xMDMgICAgfCDQmtC70LDQstC40LDRgtGD0YDQsCDQnNC10YXQsNC90LjQutCwICAgICAgIHwg0JDQutGB0LXRgdGB0YPQsNGA0YsgICAgICB8ICAgIDcyMDAuMDAgfCAgICAgICAxMApJVE0tMTAyICAgIHwg0JzRi9GI0Ywg0LHQtdGB0L/RgNC+0LLQvtC00L3QsNGPICAgICAgICAgfCDQkNC60YHQtdGB0YHRg9Cw0YDRiyAgICAgIHwgICAgMjQwMC4wMCB8ICAgICAgIDE1CklUTS0xMDQgICAgfCDQnNC+0L3QuNGC0L7RgCAyNyA0SyAgICAgICAgICAgICB8INCt0LvQtdC60YLRgNC+0L3QuNC60LAgICAgIHwgICAzNTAwMC4wMCB8ICAgICAgICA4Ci0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCtCS0YHQtdCz0L4g0L/QvtC30LjRhtC40Lkg0L3QsCDRgdC60LvQsNC00LU6IDYKCmFwcD4g0JfQsNCy0LXRgNGI0LXQvdC40LUg0YDQsNCx0L7RgtGLINC/0YDQvtCz0YDQsNC80LzRiy4K",
+          "truncated": false
+        },
+        "stderr": {
+          "utf8": "",
+          "base64": "",
+          "truncated": false
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "output_overflow": false
+      }
+    },
+    {
+      "name": "merge-seed-duplicates",
+      "passed": true,
+      "mismatches": [],
+      "baseline": {
+        "stdout": {
+          "utf8": "Java Blueprints — Консольный монолит обработки заказов v1.0 [Java 1.8]\nВведите 'help' для просмотра команд или 'exit' для завершения.\napp> Слияние завершено. Уникальных позиций: 4\napp> ================================================================================\n  СКЛАДСКИЕ ОСТАТКИ ТОВАРОВ\n================================================================================\nID         | Наименование              | Категория       | Цена       | Кол-во  \n--------------------------------------------------------------------------------\nITM-101    | Ноутбук Pro 15            | Электроника     |   85000.00 |        8\nITM-102    | Мышь беспроводная         | Аксессуары      |    2500.00 |       35\nITM-103    | Клавиатура Механика       | Аксессуары      |    7200.00 |       10\nITM-104    | Монитор 27 4K             | Электроника     |   35000.00 |        8\n--------------------------------------------------------------------------------\nВсего позиций на складе: 4\n\napp> Завершение работы программы.\n",
+          "base64": "SmF2YSBCbHVlcHJpbnRzIOKAlCDQmtC+0L3RgdC+0LvRjNC90YvQuSDQvNC+0L3QvtC70LjRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0LfQsNC60LDQt9C+0LIgdjEuMCBbSmF2YSAxLjhdCtCS0LLQtdC00LjRgtC1ICdoZWxwJyDQtNC70Y8g0L/RgNC+0YHQvNC+0YLRgNCwINC60L7QvNCw0L3QtCDQuNC70LggJ2V4aXQnINC00LvRjyDQt9Cw0LLQtdGA0YjQtdC90LjRjy4KYXBwPiDQodC70LjRj9C90LjQtSDQt9Cw0LLQtdGA0YjQtdC90L4uINCj0L3QuNC60LDQu9GM0L3Ri9GFINC/0L7Qt9C40YbQuNC5OiA0CmFwcD4gPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0KICDQodCa0JvQkNCU0KHQmtCY0JUg0J7QodCi0JDQotCa0Jgg0KLQntCS0JDQoNCe0JIKPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0KSUQgICAgICAgICB8INCd0LDQuNC80LXQvdC+0LLQsNC90LjQtSAgICAgICAgICAgICAgfCDQmtCw0YLQtdCz0L7RgNC40Y8gICAgICAgfCDQptC10L3QsCAgICAgICB8INCa0L7Quy3QstC+ICAKLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KSVRNLTEwMSAgICB8INCd0L7Rg9GC0LHRg9C6IFBybyAxNSAgICAgICAgICAgIHwg0K3Qu9C10LrRgtGA0L7QvdC40LrQsCAgICAgfCAgIDg1MDAwLjAwIHwgICAgICAgIDgKSVRNLTEwMiAgICB8INCc0YvRiNGMINCx0LXRgdC/0YDQvtCy0L7QtNC90LDRjyAgICAgICAgIHwg0JDQutGB0LXRgdGB0YPQsNGA0YsgICAgICB8ICAgIDI1MDAuMDAgfCAgICAgICAzNQpJVE0tMTAzICAgIHwg0JrQu9Cw0LLQuNCw0YLRg9GA0LAg0JzQtdGF0LDQvdC40LrQsCAgICAgICB8INCQ0LrRgdC10YHRgdGD0LDRgNGLICAgICAgfCAgICA3MjAwLjAwIHwgICAgICAgMTAKSVRNLTEwNCAgICB8INCc0L7QvdC40YLQvtGAIDI3IDRLICAgICAgICAgICAgIHwg0K3Qu9C10LrRgtGA0L7QvdC40LrQsCAgICAgfCAgIDM1MDAwLjAwIHwgICAgICAgIDgKLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0K0JLRgdC10LPQviDQv9C+0LfQuNGG0LjQuSDQvdCwINGB0LrQu9Cw0LTQtTogNAoKYXBwPiDQl9Cw0LLQtdGA0YjQtdC90LjQtSDRgNCw0LHQvtGC0Ysg0L/RgNC+0LPRgNCw0LzQvNGLLgo=",
+          "truncated": false
+        },
+        "stderr": {
+          "utf8": "",
+          "base64": "",
+          "truncated": false
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "output_overflow": false
+      },
+      "candidate": {
+        "stdout": {
+          "utf8": "Java Blueprints — Консольный монолит обработки заказов v1.0 [Java 1.8]\nВведите 'help' для просмотра команд или 'exit' для завершения.\napp> Слияние завершено. Уникальных позиций: 4\napp> ================================================================================\n  СКЛАДСКИЕ ОСТАТКИ ТОВАРОВ\n================================================================================\nID         | Наименование              | Категория       | Цена       | Кол-во  \n--------------------------------------------------------------------------------\nITM-101    | Ноутбук Pro 15            | Электроника     |   85000.00 |        8\nITM-102    | Мышь беспроводная         | Аксессуары      |    2500.00 |       35\nITM-103    | Клавиатура Механика       | Аксессуары      |    7200.00 |       10\nITM-104    | Монитор 27 4K             | Электроника     |   35000.00 |        8\n--------------------------------------------------------------------------------\nВсего позиций на складе: 4\n\napp> Завершение работы программы.\n",
+          "base64": "SmF2YSBCbHVlcHJpbnRzIOKAlCDQmtC+0L3RgdC+0LvRjNC90YvQuSDQvNC+0L3QvtC70LjRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0LfQsNC60LDQt9C+0LIgdjEuMCBbSmF2YSAxLjhdCtCS0LLQtdC00LjRgtC1ICdoZWxwJyDQtNC70Y8g0L/RgNC+0YHQvNC+0YLRgNCwINC60L7QvNCw0L3QtCDQuNC70LggJ2V4aXQnINC00LvRjyDQt9Cw0LLQtdGA0YjQtdC90LjRjy4KYXBwPiDQodC70LjRj9C90LjQtSDQt9Cw0LLQtdGA0YjQtdC90L4uINCj0L3QuNC60LDQu9GM0L3Ri9GFINC/0L7Qt9C40YbQuNC5OiA0CmFwcD4gPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0KICDQodCa0JvQkNCU0KHQmtCY0JUg0J7QodCi0JDQotCa0Jgg0KLQntCS0JDQoNCe0JIKPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0KSUQgICAgICAgICB8INCd0LDQuNC80LXQvdC+0LLQsNC90LjQtSAgICAgICAgICAgICAgfCDQmtCw0YLQtdCz0L7RgNC40Y8gICAgICAgfCDQptC10L3QsCAgICAgICB8INCa0L7Quy3QstC+ICAKLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KSVRNLTEwMSAgICB8INCd0L7Rg9GC0LHRg9C6IFBybyAxNSAgICAgICAgICAgIHwg0K3Qu9C10LrRgtGA0L7QvdC40LrQsCAgICAgfCAgIDg1MDAwLjAwIHwgICAgICAgIDgKSVRNLTEwMiAgICB8INCc0YvRiNGMINCx0LXRgdC/0YDQvtCy0L7QtNC90LDRjyAgICAgICAgIHwg0JDQutGB0LXRgdGB0YPQsNGA0YsgICAgICB8ICAgIDI1MDAuMDAgfCAgICAgICAzNQpJVE0tMTAzICAgIHwg0JrQu9Cw0LLQuNCw0YLRg9GA0LAg0JzQtdGF0LDQvdC40LrQsCAgICAgICB8INCQ0LrRgdC10YHRgdGD0LDRgNGLICAgICAgfCAgICA3MjAwLjAwIHwgICAgICAgMTAKSVRNLTEwNCAgICB8INCc0L7QvdC40YLQvtGAIDI3IDRLICAgICAgICAgICAgIHwg0K3Qu9C10LrRgtGA0L7QvdC40LrQsCAgICAgfCAgIDM1MDAwLjAwIHwgICAgICAgIDgKLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0K0JLRgdC10LPQviDQv9C+0LfQuNGG0LjQuSDQvdCwINGB0LrQu9Cw0LTQtTogNAoKYXBwPiDQl9Cw0LLQtdGA0YjQtdC90LjQtSDRgNCw0LHQvtGC0Ysg0L/RgNC+0LPRgNCw0LzQvNGLLgo=",
+          "truncated": false
+        },
+        "stderr": {
+          "utf8": "",
+          "base64": "",
+          "truncated": false
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "output_overflow": false
+      }
+    },
+    {
+      "name": "merge-after-add",
+      "passed": true,
+      "mismatches": [],
+      "baseline": {
+        "stdout": {
+          "utf8": "Java Blueprints — Консольный монолит обработки заказов v1.0 [Java 1.8]\nВведите 'help' для просмотра команд или 'exit' для завершения.\napp> Товар добавлен: [ITM-101] Ноутбук Pro 15 (Электроника) — 90000.00 руб. x 2 шт.\napp> Товар добавлен: [ITM-105] Кабель (Аксессуары) — 300.00 руб. x 40 шт.\napp> Слияние завершено. Уникальных позиций: 5\napp> ================================================================================\n  СКЛАДСКИЕ ОСТАТКИ ТОВАРОВ\n================================================================================\nID         | Наименование              | Категория       | Цена       | Кол-во  \n--------------------------------------------------------------------------------\nITM-101    | Ноутбук Pro 15            | Электроника     |   90000.00 |       10\nITM-102    | Мышь беспроводная         | Аксессуары      |    2500.00 |       35\nITM-103    | Клавиатура Механика       | Аксессуары      |    7200.00 |       10\nITM-104    | Монитор 27 4K             | Электроника     |   35000.00 |        8\nITM-105    | Кабель                    | Аксессуары      |     300.00 |       40\n--------------------------------------------------------------------------------\nВсего позиций на складе: 5\n\napp> Завершение работы программы.\n",
+          "base64": "SmF2YSBCbHVlcHJpbnRzIOKAlCDQmtC+0L3RgdC+0LvRjNC90YvQuSDQvNC+0L3QvtC70LjRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0LfQsNC60LDQt9C+0LIgdjEuMCBbSmF2YSAxLjhdCtCS0LLQtdC00LjRgtC1ICdoZWxwJyDQtNC70Y8g0L/RgNC+0YHQvNC+0YLRgNCwINC60L7QvNCw0L3QtCDQuNC70LggJ2V4aXQnINC00LvRjyDQt9Cw0LLQtdGA0YjQtdC90LjRjy4KYXBwPiDQotC+0LLQsNGAINC00L7QsdCw0LLQu9C10L06IFtJVE0tMTAxXSDQndC+0YPRgtCx0YPQuiBQcm8gMTUgKNCt0LvQtdC60YLRgNC+0L3QuNC60LApIOKAlCA5MDAwMC4wMCDRgNGD0LEuIHggMiDRiNGCLgphcHA+INCi0L7QstCw0YAg0LTQvtCx0LDQstC70LXQvTogW0lUTS0xMDVdINCa0LDQsdC10LvRjCAo0JDQutGB0LXRgdGB0YPQsNGA0YspIOKAlCAzMDAuMDAg0YDRg9CxLiB4IDQwINGI0YIuCmFwcD4g0KHQu9C40Y/QvdC40LUg0LfQsNCy0LXRgNGI0LXQvdC+LiDQo9C90LjQutCw0LvRjNC90YvRhSDQv9C+0LfQuNGG0LjQuTogNQphcHA+ID09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09CiAg0KHQmtCb0JDQlNCh0JrQmNCVINCe0KHQotCQ0KLQmtCYINCi0J7QktCQ0KDQntCSCj09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09CklEICAgICAgICAgfCDQndCw0LjQvNC10L3QvtCy0LDQvdC40LUgICAgICAgICAgICAgIHwg0JrQsNGC0LXQs9C+0YDQuNGPICAgICAgIHwg0KbQtdC90LAgICAgICAgfCDQmtC+0Lst0LLQviAgCi0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCklUTS0xMDEgICAgfCDQndC+0YPRgtCx0YPQuiBQcm8gMTUgICAgICAgICAgICB8INCt0LvQtdC60YLRgNC+0L3QuNC60LAgICAgIHwgICA5MDAwMC4wMCB8ICAgICAgIDEwCklUTS0xMDIgICAgfCDQnNGL0YjRjCDQsdC10YHQv9GA0L7QstC+0LTQvdCw0Y8gICAgICAgICB8INCQ0LrRgdC10YHRgdGD0LDRgNGLICAgICAgfCAgICAyNTAwLjAwIHwgICAgICAgMzUKSVRNLTEwMyAgICB8INCa0LvQsNCy0LjQsNGC0YPRgNCwINCc0LXRhdCw0L3QuNC60LAgICAgICAgfCDQkNC60YHQtdGB0YHRg9Cw0YDRiyAgICAgIHwgICAgNzIwMC4wMCB8ICAgICAgIDEwCklUTS0xMDQgICAgfCDQnNC+0L3QuNGC0L7RgCAyNyA0SyAgICAgICAgICAgICB8INCt0LvQtdC60YLRgNC+0L3QuNC60LAgICAgIHwgICAzNTAwMC4wMCB8ICAgICAgICA4CklUTS0xMDUgICAgfCDQmtCw0LHQtdC70YwgICAgICAgICAgICAgICAgICAgIHwg0JDQutGB0LXRgdGB0YPQsNGA0YsgICAgICB8ICAgICAzMDAuMDAgfCAgICAgICA0MAotLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQrQktGB0LXQs9C+INC/0L7Qt9C40YbQuNC5INC90LAg0YHQutC70LDQtNC1OiA1CgphcHA+INCX0LDQstC10YDRiNC10L3QuNC1INGA0LDQsdC+0YLRiyDQv9GA0L7Qs9GA0LDQvNC80YsuCg==",
+          "truncated": false
+        },
+        "stderr": {
+          "utf8": "",
+          "base64": "",
+          "truncated": false
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "output_overflow": false
+      },
+      "candidate": {
+        "stdout": {
+          "utf8": "Java Blueprints — Консольный монолит обработки заказов v1.0 [Java 1.8]\nВведите 'help' для просмотра команд или 'exit' для завершения.\napp> Товар добавлен: [ITM-101] Ноутбук Pro 15 (Электроника) — 90000.00 руб. x 2 шт.\napp> Товар добавлен: [ITM-105] Кабель (Аксессуары) — 300.00 руб. x 40 шт.\napp> Слияние завершено. Уникальных позиций: 5\napp> ================================================================================\n  СКЛАДСКИЕ ОСТАТКИ ТОВАРОВ\n================================================================================\nID         | Наименование              | Категория       | Цена       | Кол-во  \n--------------------------------------------------------------------------------\nITM-101    | Ноутбук Pro 15            | Электроника     |   90000.00 |       10\nITM-102    | Мышь беспроводная         | Аксессуары      |    2500.00 |       35\nITM-103    | Клавиатура Механика       | Аксессуары      |    7200.00 |       10\nITM-104    | Монитор 27 4K             | Электроника     |   35000.00 |        8\nITM-105    | Кабель                    | Аксессуары      |     300.00 |       40\n--------------------------------------------------------------------------------\nВсего позиций на складе: 5\n\napp> Завершение работы программы.\n",
+          "base64": "SmF2YSBCbHVlcHJpbnRzIOKAlCDQmtC+0L3RgdC+0LvRjNC90YvQuSDQvNC+0L3QvtC70LjRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0LfQsNC60LDQt9C+0LIgdjEuMCBbSmF2YSAxLjhdCtCS0LLQtdC00LjRgtC1ICdoZWxwJyDQtNC70Y8g0L/RgNC+0YHQvNC+0YLRgNCwINC60L7QvNCw0L3QtCDQuNC70LggJ2V4aXQnINC00LvRjyDQt9Cw0LLQtdGA0YjQtdC90LjRjy4KYXBwPiDQotC+0LLQsNGAINC00L7QsdCw0LLQu9C10L06IFtJVE0tMTAxXSDQndC+0YPRgtCx0YPQuiBQcm8gMTUgKNCt0LvQtdC60YLRgNC+0L3QuNC60LApIOKAlCA5MDAwMC4wMCDRgNGD0LEuIHggMiDRiNGCLgphcHA+INCi0L7QstCw0YAg0LTQvtCx0LDQstC70LXQvTogW0lUTS0xMDVdINCa0LDQsdC10LvRjCAo0JDQutGB0LXRgdGB0YPQsNGA0YspIOKAlCAzMDAuMDAg0YDRg9CxLiB4IDQwINGI0YIuCmFwcD4g0KHQu9C40Y/QvdC40LUg0LfQsNCy0LXRgNGI0LXQvdC+LiDQo9C90LjQutCw0LvRjNC90YvRhSDQv9C+0LfQuNGG0LjQuTogNQphcHA+ID09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09CiAg0KHQmtCb0JDQlNCh0JrQmNCVINCe0KHQotCQ0KLQmtCYINCi0J7QktCQ0KDQntCSCj09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09CklEICAgICAgICAgfCDQndCw0LjQvNC10L3QvtCy0LDQvdC40LUgICAgICAgICAgICAgIHwg0JrQsNGC0LXQs9C+0YDQuNGPICAgICAgIHwg0KbQtdC90LAgICAgICAgfCDQmtC+0Lst0LLQviAgCi0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCklUTS0xMDEgICAgfCDQndC+0YPRgtCx0YPQuiBQcm8gMTUgICAgICAgICAgICB8INCt0LvQtdC60YLRgNC+0L3QuNC60LAgICAgIHwgICA5MDAwMC4wMCB8ICAgICAgIDEwCklUTS0xMDIgICAgfCDQnNGL0YjRjCDQsdC10YHQv9GA0L7QstC+0LTQvdCw0Y8gICAgICAgICB8INCQ0LrRgdC10YHRgdGD0LDRgNGLICAgICAgfCAgICAyNTAwLjAwIHwgICAgICAgMzUKSVRNLTEwMyAgICB8INCa0LvQsNCy0LjQsNGC0YPRgNCwINCc0LXRhdCw0L3QuNC60LAgICAgICAgfCDQkNC60YHQtdGB0YHRg9Cw0YDRiyAgICAgIHwgICAgNzIwMC4wMCB8ICAgICAgIDEwCklUTS0xMDQgICAgfCDQnNC+0L3QuNGC0L7RgCAyNyA0SyAgICAgICAgICAgICB8INCt0LvQtdC60YLRgNC+0L3QuNC60LAgICAgIHwgICAzNTAwMC4wMCB8ICAgICAgICA4CklUTS0xMDUgICAgfCDQmtCw0LHQtdC70YwgICAgICAgICAgICAgICAgICAgIHwg0JDQutGB0LXRgdGB0YPQsNGA0YsgICAgICB8ICAgICAzMDAuMDAgfCAgICAgICA0MAotLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQrQktGB0LXQs9C+INC/0L7Qt9C40YbQuNC5INC90LAg0YHQutC70LDQtNC1OiA1CgphcHA+INCX0LDQstC10YDRiNC10L3QuNC1INGA0LDQsdC+0YLRiyDQv9GA0L7Qs9GA0LDQvNC80YsuCg==",
+          "truncated": false
+        },
+        "stderr": {
+          "utf8": "",
+          "base64": "",
+          "truncated": false
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "output_overflow": false
+      }
+    },
+    {
+      "name": "unknown-command",
+      "passed": true,
+      "mismatches": [],
+      "baseline": {
+        "stdout": {
+          "utf8": "Java Blueprints — Консольный монолит обработки заказов v1.0 [Java 1.8]\nВведите 'help' для просмотра команд или 'exit' для завершения.\napp> Неизвестная команда 'foo'. Введите 'help' для списка.\napp> Завершение работы программы.\n",
+          "base64": "SmF2YSBCbHVlcHJpbnRzIOKAlCDQmtC+0L3RgdC+0LvRjNC90YvQuSDQvNC+0L3QvtC70LjRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0LfQsNC60LDQt9C+0LIgdjEuMCBbSmF2YSAxLjhdCtCS0LLQtdC00LjRgtC1ICdoZWxwJyDQtNC70Y8g0L/RgNC+0YHQvNC+0YLRgNCwINC60L7QvNCw0L3QtCDQuNC70LggJ2V4aXQnINC00LvRjyDQt9Cw0LLQtdGA0YjQtdC90LjRjy4KYXBwPiDQndC10LjQt9Cy0LXRgdGC0L3QsNGPINC60L7QvNCw0L3QtNCwICdmb28nLiDQktCy0LXQtNC40YLQtSAnaGVscCcg0LTQu9GPINGB0L/QuNGB0LrQsC4KYXBwPiDQl9Cw0LLQtdGA0YjQtdC90LjQtSDRgNCw0LHQvtGC0Ysg0L/RgNC+0LPRgNCw0LzQvNGLLgo=",
+          "truncated": false
+        },
+        "stderr": {
+          "utf8": "",
+          "base64": "",
+          "truncated": false
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "output_overflow": false
+      },
+      "candidate": {
+        "stdout": {
+          "utf8": "Java Blueprints — Консольный монолит обработки заказов v1.0 [Java 1.8]\nВведите 'help' для просмотра команд или 'exit' для завершения.\napp> Неизвестная команда 'foo'. Введите 'help' для списка.\napp> Завершение работы программы.\n",
+          "base64": "SmF2YSBCbHVlcHJpbnRzIOKAlCDQmtC+0L3RgdC+0LvRjNC90YvQuSDQvNC+0L3QvtC70LjRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0LfQsNC60LDQt9C+0LIgdjEuMCBbSmF2YSAxLjhdCtCS0LLQtdC00LjRgtC1ICdoZWxwJyDQtNC70Y8g0L/RgNC+0YHQvNC+0YLRgNCwINC60L7QvNCw0L3QtCDQuNC70LggJ2V4aXQnINC00LvRjyDQt9Cw0LLQtdGA0YjQtdC90LjRjy4KYXBwPiDQndC10LjQt9Cy0LXRgdGC0L3QsNGPINC60L7QvNCw0L3QtNCwICdmb28nLiDQktCy0LXQtNC40YLQtSAnaGVscCcg0LTQu9GPINGB0L/QuNGB0LrQsC4KYXBwPiDQl9Cw0LLQtdGA0YjQtdC90LjQtSDRgNCw0LHQvtGC0Ysg0L/RgNC+0LPRgNCw0LzQvNGLLgo=",
+          "truncated": false
+        },
+        "stderr": {
+          "utf8": "",
+          "base64": "",
+          "truncated": false
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "output_overflow": false
+      }
+    },
+    {
+      "name": "eof-without-exit",
+      "passed": true,
+      "mismatches": [],
+      "baseline": {
+        "stdout": {
+          "utf8": "Java Blueprints — Консольный монолит обработки заказов v1.0 [Java 1.8]\nВведите 'help' для просмотра команд или 'exit' для завершения.\napp> ================================================================================\n  СВОДКА ПО ЗАКАЗАМ\n================================================================================\nЗаказ #ORD-501 (Клиент: CUST-001, Позиций: 2, Итого: 90000.00 руб., Статус: NEW)\nЗаказ #ORD-502 (Клиент: CUST-002, Позиций: 1, Итого: 7200.00 руб., Статус: NEW)\n--------------------------------------------------------------------------------\nВсего заказов: 2 | Оплачено: 0 | Выручка: 0.00 руб.\n\napp> ",
+          "base64": "SmF2YSBCbHVlcHJpbnRzIOKAlCDQmtC+0L3RgdC+0LvRjNC90YvQuSDQvNC+0L3QvtC70LjRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0LfQsNC60LDQt9C+0LIgdjEuMCBbSmF2YSAxLjhdCtCS0LLQtdC00LjRgtC1ICdoZWxwJyDQtNC70Y8g0L/RgNC+0YHQvNC+0YLRgNCwINC60L7QvNCw0L3QtCDQuNC70LggJ2V4aXQnINC00LvRjyDQt9Cw0LLQtdGA0YjQtdC90LjRjy4KYXBwPiA9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PQogINCh0JLQntCU0JrQkCDQn9CeINCX0JDQmtCQ0JfQkNCcCj09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09CtCX0LDQutCw0LcgI09SRC01MDEgKNCa0LvQuNC10L3RgjogQ1VTVC0wMDEsINCf0L7Qt9C40YbQuNC5OiAyLCDQmNGC0L7Qs9C+OiA5MDAwMC4wMCDRgNGD0LEuLCDQodGC0LDRgtGD0YE6IE5FVykK0JfQsNC60LDQtyAjT1JELTUwMiAo0JrQu9C40LXQvdGCOiBDVVNULTAwMiwg0J/QvtC30LjRhtC40Lk6IDEsINCY0YLQvtCz0L46IDcyMDAuMDAg0YDRg9CxLiwg0KHRgtCw0YLRg9GBOiBORVcpCi0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCtCS0YHQtdCz0L4g0LfQsNC60LDQt9C+0LI6IDIgfCDQntC/0LvQsNGH0LXQvdC+OiAwIHwg0JLRi9GA0YPRh9C60LA6IDAuMDAg0YDRg9CxLgoKYXBwPiA=",
+          "truncated": false
+        },
+        "stderr": {
+          "utf8": "",
+          "base64": "",
+          "truncated": false
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "output_overflow": false
+      },
+      "candidate": {
+        "stdout": {
+          "utf8": "Java Blueprints — Консольный монолит обработки заказов v1.0 [Java 1.8]\nВведите 'help' для просмотра команд или 'exit' для завершения.\napp> ================================================================================\n  СВОДКА ПО ЗАКАЗАМ\n================================================================================\nЗаказ #ORD-501 (Клиент: CUST-001, Позиций: 2, Итого: 90000.00 руб., Статус: NEW)\nЗаказ #ORD-502 (Клиент: CUST-002, Позиций: 1, Итого: 7200.00 руб., Статус: NEW)\n--------------------------------------------------------------------------------\nВсего заказов: 2 | Оплачено: 0 | Выручка: 0.00 руб.\n\napp> ",
+          "base64": "SmF2YSBCbHVlcHJpbnRzIOKAlCDQmtC+0L3RgdC+0LvRjNC90YvQuSDQvNC+0L3QvtC70LjRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0LfQsNC60LDQt9C+0LIgdjEuMCBbSmF2YSAxLjhdCtCS0LLQtdC00LjRgtC1ICdoZWxwJyDQtNC70Y8g0L/RgNC+0YHQvNC+0YLRgNCwINC60L7QvNCw0L3QtCDQuNC70LggJ2V4aXQnINC00LvRjyDQt9Cw0LLQtdGA0YjQtdC90LjRjy4KYXBwPiA9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PQogINCh0JLQntCU0JrQkCDQn9CeINCX0JDQmtCQ0JfQkNCcCj09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09CtCX0LDQutCw0LcgI09SRC01MDEgKNCa0LvQuNC10L3RgjogQ1VTVC0wMDEsINCf0L7Qt9C40YbQuNC5OiAyLCDQmNGC0L7Qs9C+OiA5MDAwMC4wMCDRgNGD0LEuLCDQodGC0LDRgtGD0YE6IE5FVykK0JfQsNC60LDQtyAjT1JELTUwMiAo0JrQu9C40LXQvdGCOiBDVVNULTAwMiwg0J/QvtC30LjRhtC40Lk6IDEsINCY0YLQvtCz0L46IDcyMDAuMDAg0YDRg9CxLiwg0KHRgtCw0YLRg9GBOiBORVcpCi0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCtCS0YHQtdCz0L4g0LfQsNC60LDQt9C+0LI6IDIgfCDQntC/0LvQsNGH0LXQvdC+OiAwIHwg0JLRi9GA0YPRh9C60LA6IDAuMDAg0YDRg9CxLgoKYXBwPiA=",
+          "truncated": false
+        },
+        "stderr": {
+          "utf8": "",
+          "base64": "",
+          "truncated": false
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "output_overflow": false
+      }
+    }
+  ],
+  "explanation": "all provided test cases produced matching observations; this is not a proof of behavioral equivalence"
+}

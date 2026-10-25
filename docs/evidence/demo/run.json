@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-10-25T02:50:27+00:00",
-  "duration_seconds": 18.3,
-  "git_commit": "5b54fc75f2c8d88018b51b2473fcf6df8cb96ab8",
+  "generated_at": "2026-10-25T03:19:30+00:00",
+  "duration_seconds": 29.5,
+  "git_commit": "480a52f5f2e9976b647a8323dfe1aa29a88ce321",
   "git_dirty": false,
-  "parser_jar_sha256": "0cf4f993be5a3043c6f5fd9333846d5b2512c9c8e802b5e3c4dd3160747f2513",
+  "parser_jar_sha256": "191db625d60858e2c83af62b218629c27e0ff8be2949393d9628b3b72f438097",
   "runner_image": "java-blueprints-runner:java21",
   "runner_image_id": "sha256:73c6a2aa2fce8dd2e85f716597f86bf8b02bc272c32bd8d8824aab2497dc2db1",
   "docker_server_version": "29.1.3",

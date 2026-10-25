@@ -1,6 +1,6 @@
 # Demo run — evidence
 
-Generated 2026-10-25T02:50:27+00:00 by `scripts/demo.py` in 18.3 s against a real API,
+Generated 2026-10-25T03:19:30+00:00 by `scripts/demo.py` in 29.5 s against a real API,
 the real parser JAR and the real Docker runner. All numbers below are copied from the stored responses;
 nothing is estimated by this script.
 
@@ -8,8 +8,8 @@ nothing is estimated by this script.
 |---|---|
 | Monolith | `apps/api/tests/fixtures/demo/Main.java` (799 lines, sha256 `96151d261b3d`) |
 | Optimized method | `Main.DataOptimizer.mergeDuplicateItemsQuadratic(List<Item>)` |
-| Git commit | `5b54fc75f2c8` |
-| Parser JAR sha256 | `0cf4f993be5a` |
+| Git commit | `480a52f5f2e9` |
+| Parser JAR sha256 | `191db625d608` |
 | Runner image | `java-blueprints-runner:java21` (`sha256:73c6a2aa2fce`), Docker 29.1.3 |
 
 ## 1. Diagnosis (static)
@@ -26,9 +26,9 @@ nothing is estimated by this script.
 ## 3. Measured runtime (`POST /benchmark`)
 - Status: completed; functional equivalence on all workloads: True.
 - Overall verdict: **no_significant_difference** — mixed: 2 faster, 0 slower, 1 without a supported claim
-  - `merge-150` (size 150): verdict insufficient_evidence
-  - `merge-600` (size 600): verdict faster, speedup 1.85x (95% CI 1.65–2.13, p=0.0029)
-  - `merge-1200` (size 1200): verdict faster, speedup 2.67x (95% CI 2.38–7.05, p=0.0003)
+  - `merge-150` (size 150): verdict no_significant_difference
+  - `merge-600` (size 600): verdict faster, speedup 2.01x (95% CI 1.89–2.27, p=0.0006)
+  - `merge-1200` (size 1200): verdict faster, speedup 2.54x (95% CI 2.25–2.83, p=0.0004)
 
 Limitations reported by the API:
 - Timings are for in-JVM calls of main(String[]) inside a Docker container with 1 CPU and 512 MB; absolute numbers do not transfer to other machines.
@@ -39,4 +39,9 @@ Limitations reported by the API:
 - Programs that use threads, wall-clock time, randomness without a fixed seed or files may be reported unstable.
 - A speedup on the supplied sizes says nothing about other input sizes; use several sizes to see how the difference scales.
 
-Raw responses: `01`–`08` JSON files in this directory; `run.json` has the environment.
+## 4. Decomposition (`POST /decomposition/apply`)
+- The optimized monolith (revision 2) was split into **17 files** as revision 3: `Main.java` 804 → 224 lines, 16 member types moved into files of their own (`Identifiable.java`, `Formattable.java`, `OrderFilter.java`, `AppException.java`, `ValidationException.java`, `EntityNotFoundException.java`, …).
+- Verify of the **original** (revision 1) against the split project: **passed**, 6/6 scenarios identical; warnings: none.
+- The project is now a multi-file (`archive`) project; revision 1 stays readable and comparable.
+
+Raw responses: `01`–`11` JSON files in this directory; `run.json` has the environment.

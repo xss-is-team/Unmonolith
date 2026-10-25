@@ -1,0 +1,225 @@
+{
+  "analysis_status": "completed",
+  "base_revision": 2,
+  "extracted": [
+    {
+      "from": "Main.java",
+      "id": "Main.Identifiable",
+      "lines": 3,
+      "name": "Identifiable",
+      "new_file": "Identifiable.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.Formattable",
+      "lines": 3,
+      "name": "Formattable",
+      "new_file": "Formattable.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.OrderFilter",
+      "lines": 3,
+      "name": "OrderFilter",
+      "new_file": "OrderFilter.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.AppException",
+      "lines": 19,
+      "name": "AppException",
+      "new_file": "AppException.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.ValidationException",
+      "lines": 8,
+      "name": "ValidationException",
+      "new_file": "ValidationException.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.EntityNotFoundException",
+      "lines": 8,
+      "name": "EntityNotFoundException",
+      "new_file": "EntityNotFoundException.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.Item",
+      "lines": 73,
+      "name": "Item",
+      "new_file": "Item.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.Customer",
+      "lines": 40,
+      "name": "Customer",
+      "new_file": "Customer.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.OrderLine",
+      "lines": 27,
+      "name": "OrderLine",
+      "new_file": "OrderLine.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.Order",
+      "lines": 56,
+      "name": "Order",
+      "new_file": "Order.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.Transaction",
+      "lines": 36,
+      "name": "Transaction",
+      "new_file": "Transaction.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.AppContext",
+      "lines": 14,
+      "name": "AppContext",
+      "new_file": "AppContext.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.InputParser",
+      "lines": 91,
+      "name": "InputParser",
+      "new_file": "InputParser.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.OrderAnalyzer",
+      "lines": 61,
+      "name": "OrderAnalyzer",
+      "new_file": "OrderAnalyzer.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.DataOptimizer",
+      "lines": 105,
+      "name": "DataOptimizer",
+      "new_file": "DataOptimizer.java"
+    },
+    {
+      "from": "Main.java",
+      "id": "Main.OutputFormatter",
+      "lines": 48,
+      "name": "OutputFormatter",
+      "new_file": "OutputFormatter.java"
+    }
+  ],
+  "file_count": 17,
+  "project_kind": "archive",
+  "revision": 3,
+  "diff_files": [
+    {
+      "path": "Main.java",
+      "status": "modified",
+      "additions": 0,
+      "deletions": 580
+    },
+    {
+      "path": "Identifiable.java",
+      "status": "added",
+      "additions": 3,
+      "deletions": 0
+    },
+    {
+      "path": "Formattable.java",
+      "status": "added",
+      "additions": 3,
+      "deletions": 0
+    },
+    {
+      "path": "OrderFilter.java",
+      "status": "added",
+      "additions": 3,
+      "deletions": 0
+    },
+    {
+      "path": "AppException.java",
+      "status": "added",
+      "additions": 19,
+      "deletions": 0
+    },
+    {
+      "path": "ValidationException.java",
+      "status": "added",
+      "additions": 8,
+      "deletions": 0
+    },
+    {
+      "path": "EntityNotFoundException.java",
+      "status": "added",
+      "additions": 8,
+      "deletions": 0
+    },
+    {
+      "path": "Item.java",
+      "status": "added",
+      "additions": 73,
+      "deletions": 0
+    },
+    {
+      "path": "Customer.java",
+      "status": "added",
+      "additions": 40,
+      "deletions": 0
+    },
+    {
+      "path": "OrderLine.java",
+      "status": "added",
+      "additions": 27,
+      "deletions": 0
+    },
+    {
+      "path": "Order.java",
+      "status": "added",
+      "additions": 56,
+      "deletions": 0
+    },
+    {
+      "path": "Transaction.java",
+      "status": "added",
+      "additions": 36,
+      "deletions": 0
+    },
+    {
+      "path": "AppContext.java",
+      "status": "added",
+      "additions": 14,
+      "deletions": 0
+    },
+    {
+      "path": "InputParser.java",
+      "status": "added",
+      "additions": 91,
+      "deletions": 0
+    },
+    {
+      "path": "OrderAnalyzer.java",
+      "status": "added",
+      "additions": 61,
+      "deletions": 0
+    },
+    {
+      "path": "DataOptimizer.java",
+      "status": "added",
+      "additions": 105,
+      "deletions": 0
+    },
+    {
+      "path": "OutputFormatter.java",
+      "status": "added",
+      "additions": 48,
+      "deletions": 0
+    }
+  ]
+}
