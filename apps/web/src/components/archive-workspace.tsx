@@ -335,7 +335,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   const activeDiagnostics = analysis?.diagnostics.filter((diagnostic) => !diagnostic.source_range.file || diagnostic.source_range.file === activeFile) ?? [];
 
   return (
-    <main className={`grid h-svh min-w-[960px] overflow-hidden bg-[#070b14] ${workbench === "code" ? "grid-rows-[48px_minmax(0,1fr)_minmax(210px,30vh)]" : "grid-rows-[48px_minmax(0,1fr)_minmax(260px,58vh)]"}`}>
+    <main className={`grid h-svh min-w-[960px] overflow-hidden bg-[#070b14] ${workbench === "code" ? "grid-rows-[48px_minmax(0,1fr)_minmax(170px,24vh)]" : "grid-rows-[48px_minmax(0,1fr)_minmax(260px,58vh)]"}`}>
       <header className="flex min-w-0 items-center gap-3 border-b border-slate-800 bg-[#0b1220] px-3">
         <Brand compact />
         <strong className="max-w-64 truncate text-[14px] text-slate-200" title={project.filename}>{project.filename}</strong>
@@ -381,11 +381,11 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
 
         <aside className="grid min-h-0 grid-rows-[38px_minmax(0,1fr)] bg-[#0b1120]">
           <div className="flex items-center justify-between border-b border-slate-800 px-3 text-[13px] font-semibold text-slate-300"><span>Анализ</span><span className="font-mono text-[11px] text-slate-500">REV {analysis?.revision ?? revision}</span></div>
-          <div className="min-h-0 overflow-auto p-2.5">
+          <div className="min-h-0 overflow-x-hidden overflow-y-auto p-2.5 [&_*]:min-w-0 [&_button]:break-words [&_small]:break-words [&_strong]:break-words [&_p]:break-words">
             {loading ? <p className="flex items-center gap-2 text-[13px] text-slate-400" role="status"><LoaderCircle className="spin" size={14} /> Анализ проекта…</p> : null}
             {!loading && analysis ? <p className="mb-2 flex items-center gap-2 text-[12px] text-emerald-300" role="status"><Check size={14} /> Анализ завершён · {methods.length} методов · диагностик: {analysis.diagnostics.length}</p> : null}
             <ComplexityOverview report={loading ? null : complexity} onOpen={(row, sourceRange) => { const found = methods.find((method) => method.id === row.method_id); if (found) { setSelector(found.selector); setView("cfg"); } void openRange({ ...sourceRange, file: sourceRange.file ?? row.file ?? activeFile }); }} />
-            <section className="grid gap-1.5" aria-label="Найденные проблемы"><h2 className="m-0 text-[12px] font-semibold text-slate-400">Findings · {findings?.findings.length ?? 0}</h2>{findings?.findings.map(({ method_id, file, finding }) => <article className="rounded border border-slate-800 bg-slate-900/60 p-2" key={`${file}-${finding.id}-${finding.source_range.start}`}><strong className="block text-[12px] leading-5 text-slate-200">{finding.message}</strong><p className="m-0 mt-1 text-[12px] leading-5 text-slate-400">{finding.explanation}</p><small className="mt-1 block truncate font-mono text-[11px] text-slate-500" title={method_id}>{file ?? activeFile} · стр. {finding.source_range.line ?? "—"}</small><button className="mt-1 text-[12px] text-cyan-300 hover:text-cyan-100" type="button" onClick={() => void openRange({ ...finding.source_range, file: finding.source_range.file ?? file ?? activeFile })}>К исходнику</button></article>)}</section>
+            <section className="grid gap-1.5" aria-label="Найденные проблемы"><h2 className="m-0 text-[12px] font-semibold text-slate-400">Findings · {findings?.findings.length ?? 0}</h2>{findings?.findings.map(({ method_id, file, finding }) => <article className="rounded border border-slate-800 bg-slate-900/60 p-2" key={`${file}-${finding.id}-${finding.source_range.start}`}><strong className="block text-[12px] leading-5 text-slate-200">{findingTitle(finding.id, finding.message)}</strong><p className="m-0 mt-1 text-[12px] leading-5 text-slate-400">{finding.explanation}</p><small className="mt-1 block truncate font-mono text-[11px] text-slate-500" title={method_id}>{file ?? activeFile} · стр. {finding.source_range.line ?? "—"}</small><button className="mt-1 text-[12px] text-cyan-300 hover:text-cyan-100" type="button" onClick={() => void openRange({ ...finding.source_range, file: finding.source_range.file ?? file ?? activeFile })}>К исходнику</button></article>)}</section>
             <OptimizationPanel
               proposals={optimizations?.proposals ?? []} revision={revision} selectedId={selectedProposal} onSelect={(id) => { setSelectedProposal(id); setPreview(null); setOptimizationError(""); setAcknowledged([]); }}
               selected={selectedProposalData} preview={preview} acknowledged={acknowledged} busy={busy} error={optimizationError}
@@ -421,6 +421,25 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
       </section>
     </main>
   );
+}
+
+/** Russian heading of an optimization rule; the backend text stays as the detailed explanation. */
+function ruleTitle(rule: string, fallback?: string) {
+  const titles: Record<string, string> = {
+    nested_scan_to_hashmap: "Заменить вложенный перебор индексом HashMap",
+    contains_to_hashset: "Искать в HashSet вместо перебора списка в цикле",
+    string_concat_to_builder: "Собирать строку в StringBuilder вместо склейки в цикле",
+  };
+  return titles[rule] ?? fallback ?? rule;
+}
+
+function findingTitle(id: string, fallback: string) {
+  const titles: Record<string, string> = {
+    repeated_collection_scan: "Повторный линейный перебор коллекции в цикле",
+    nested_collection_iteration: "Вложенный перебор одной и той же коллекции",
+    string_concat_in_loop: "Склейка строки в цикле: каждый раз копируется всё накопленное",
+  };
+  return titles[id] ?? fallback;
 }
 
 function FileTree({ files, activeFile, onOpen }: { files: ProjectFile[]; activeFile: string; onOpen: (path: string) => void }) {
@@ -462,7 +481,7 @@ function OptimizationPanel({ proposals, revision, selectedId, onSelect, selected
 }) {
   return <section className="mt-3 grid gap-2 border-t border-slate-800 pt-2" aria-label="Оптимизации"><h2 className="m-0 text-[12px] font-semibold text-slate-400">Оптимизация · {proposals.length}</h2>
     {proposals.length === 0 ? <p className="m-0 text-[12px] leading-5 text-slate-500">Для текущей ревизии предложений нет.</p> : null}
-    {proposals.map((proposal) => <button key={proposal.id} className={`rounded border px-2 py-1.5 text-left ${selectedId === proposal.id ? "border-cyan-800 bg-cyan-950/30" : "border-slate-800 bg-slate-900/50 hover:border-slate-600"}`} type="button" onClick={() => onSelect(proposal.id)}><strong className="block text-[12px] text-slate-200">{proposal.title ?? proposal.rule}</strong><small className="block truncate font-mono text-[11px] text-slate-500">{proposal.method_id ?? proposal.file}</small><small className={`text-[11px] ${proposal.applicability === "applicable" ? "text-emerald-400" : "text-amber-400"}`}>{proposal.applicability === "applicable" ? "Применимо после preview" : "Не применимо"}</small></button>)}
+    {proposals.map((proposal) => <button key={proposal.id} className={`rounded border px-2 py-1.5 text-left ${selectedId === proposal.id ? "border-cyan-800 bg-cyan-950/30" : "border-slate-800 bg-slate-900/50 hover:border-slate-600"}`} type="button" onClick={() => onSelect(proposal.id)}><strong className="block text-[12px] text-slate-200">{ruleTitle(proposal.rule, proposal.title)}</strong><small className="block truncate font-mono text-[11px] text-slate-500">{proposal.method_id ?? proposal.file}</small><small className={`text-[11px] ${proposal.applicability === "applicable" ? "text-emerald-400" : "text-amber-400"}`}>{proposal.applicability === "applicable" ? "Применимо после preview" : "Не применимо"}</small></button>)}
     {selected ? <div className="grid gap-2 rounded border border-slate-800 bg-slate-950/60 p-2">
       <p className="m-0 text-[12px] leading-5 text-slate-400">{selected.summary ?? selected.complexity.note ?? selected.rule}</p>
       <div className="flex flex-wrap gap-1.5 font-mono text-[11px]"><span className="rounded bg-slate-800 px-1.5 py-1 text-slate-300">{selected.complexity.scan_before ?? selected.complexity.method_before ?? "unknown"}</span><span className="text-slate-600">→</span><span className="rounded bg-slate-800 px-1.5 py-1 text-slate-300">{selected.complexity.scan_after ?? "—"}</span></div>

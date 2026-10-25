@@ -21,7 +21,7 @@ export default function Home() {
           <div className="font-mono text-[9px] font-semibold tracking-[0.11em] text-cyan-400">РАБОЧЕЕ ПРОСТРАНСТВО / JAVA</div>
           <h1 className="my-[22px] text-[clamp(44px,7vw,74px)] font-semibold leading-[.98] tracking-[-0.075em] text-slate-50">Разберите<br /><em className="font-medium not-italic text-cyan-400">Java-код.</em></h1>
           <p className="m-0 max-w-[590px] text-sm leading-7 text-slate-400">
-            Загрузите Java-файл: анализ начнётся автоматически. Изучайте код и CFG, меняйте условия через ASTRewrite и сравнивайте поведение ревизий.
+            Загрузите монолит: анализ начнётся автоматически. Смотрите код как граф, находите узкие места по Big O, оптимизируйте и разбирайте его на классы, а затем докажите в Docker, что поведение не изменилось.
           </p>
           <UploadPanel />
           <div className="mt-[18px] inline-flex items-center gap-1.5 font-mono text-[9px] text-slate-500"><ShieldCheck className="text-green-400" size={15} /><span>Исходник доступен только в вашей гостевой сессии</span></div>

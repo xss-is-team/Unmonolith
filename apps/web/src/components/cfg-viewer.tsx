@@ -177,8 +177,8 @@ export function CfgViewer({
         "elk.algorithm": "layered",
         "elk.direction": "DOWN",
         "elk.edgeRouting": "ORTHOGONAL",
-        "elk.layered.spacing.nodeNodeBetweenLayers": "66",
-        "elk.spacing.nodeNode": "38",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "26",
+        "elk.spacing.nodeNode": "30",
         "elk.layered.cycleBreaking.strategy": "GREEDY",
       },
       children: cfg.nodes.map((node) => ({
@@ -400,6 +400,7 @@ export function CfgViewer({
               onNodeClick={onNodeClick}
               onInit={(instance) => { flowRef.current = instance as ReactFlowInstance<FlowNode, Edge>; }}
               fitView
+              fitViewOptions={{ padding: 0.04, maxZoom: 1.1 }}
               minZoom={0.04}
               maxZoom={1.6}
               nodesDraggable={false}
@@ -412,7 +413,7 @@ export function CfgViewer({
         ) : null}
       </div>
 
-      <div className="max-h-[44%] min-h-0 shrink-0 overflow-auto">
+      <div className="max-h-[34%] min-h-0 shrink-0 overflow-auto">
       {showAnalysisSummary && methodAnalysis ? <BigOPanel analysis={methodAnalysis} onSelect={onSourceRangeSelect} /> : showAnalysisSummary && analysisRequest.error ? (
         <div className="flex min-h-[30px] items-center gap-1.5 border-t border-slate-800 bg-[#0d1625] px-3 text-[13px] text-slate-400"><AlertCircle size={15} /> Big O для метода недоступна: {apiMessage(analysisRequest.error)}</div>
       ) : showAnalysisSummary && selector ? (
