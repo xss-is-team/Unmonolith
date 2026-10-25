@@ -60,10 +60,19 @@ const CfgFlowNode = memo(function CfgFlowNode({ data, selected }: NodeProps<Flow
   const connector = data.kind === "merge";
   const label = data.text || data.statement_kind || data.kind;
   const verticalInset = condition ? 2 : terminal ? 28 : connector ? 26 : 16;
+  const kindName = data.statement_kind ?? "";
+  const loop = condition && ["while", "do_while", "foreach", "for"].includes(kindName);
+  const variable = kindName === "variable_declaration";
+  const returning = data.kind === "return";
+  const throwing = data.kind === "throw";
   const borderClass = selected
     ? "border-cyan-400"
-    : terminal ? "border-emerald-700" : connector ? "border-slate-500" : "border-slate-600";
-  const surfaceClass = terminal ? "bg-[#10231b]" : "bg-slate-900";
+    : terminal ? "border-emerald-700" : connector ? "border-slate-500" : returning ? "border-emerald-500" : throwing ? "border-rose-500"
+      : variable ? "border-sky-500" : data.kind === "statement" ? "border-blue-600" : "border-slate-600";
+  const surfaceClass = terminal ? "bg-[#10231b]" : returning ? "bg-[#0e2a1f]" : throwing ? "bg-[#2a1216]" : variable ? "bg-[#0b2238]" : data.kind === "statement" ? "bg-[#0e1b34]" : "bg-slate-900";
+  const diamondBorder = selected ? "bg-cyan-400" : loop ? "bg-violet-500" : "bg-amber-600";
+  const diamondFill = loop ? "bg-[#1d1730]" : "bg-[#251e15]";
+  const accentText = loop ? "text-violet-300/80" : "text-amber-300/80";
   return (
     <div
       className={[
@@ -75,11 +84,11 @@ const CfgFlowNode = memo(function CfgFlowNode({ data, selected }: NodeProps<Flow
       <Handle type="target" position={Position.Top} style={{ top: verticalInset }} />
       {condition ? (
         <div
-          className={`absolute inset-x-0 inset-y-0 ${selected ? "bg-cyan-400" : "bg-amber-700"}`}
+          className={`absolute inset-x-0 inset-y-0 ${diamondBorder}`}
           style={{ clipPath: "polygon(50% 0, 100% 50%, 50% 100%, 0 50%)" }}
           aria-hidden="true"
         >
-          <div className="absolute inset-[2px] bg-[#251e15]" style={{ clipPath: "polygon(50% 0, 100% 50%, 50% 100%, 0 50%)" }} />
+          <div className={`absolute inset-[2px] ${diamondFill}`} style={{ clipPath: "polygon(50% 0, 100% 50%, 50% 100%, 0 50%)" }} />
         </div>
       ) : connector ? (
         <div className={`absolute top-[26px] left-[88px] size-[72px] rounded-full border ${borderClass} ${surfaceClass}`} aria-hidden="true" />
@@ -88,9 +97,9 @@ const CfgFlowNode = memo(function CfgFlowNode({ data, selected }: NodeProps<Flow
       )}
       {data.hasFinding ? <div className={`pointer-events-none absolute ${condition ? "inset-2 [clip-path:polygon(50%_0,100%_50%,50%_100%,0_50%)]" : terminal ? "inset-x-3 top-7 bottom-7 rounded-full" : connector ? "top-[24px] left-[86px] size-[76px] rounded-full" : "inset-x-0 top-3 bottom-3 rounded"} ring-2 ring-rose-400/35`} aria-hidden="true" /> : null}
       <div className={`relative z-10 flex flex-col items-center justify-center gap-1 ${condition ? "max-w-[154px]" : connector ? "max-w-16" : "max-w-[214px]"}`}>
-        <span className={`font-mono text-[10px] font-semibold tracking-[.06em] ${condition ? "text-amber-300/75" : terminal ? "text-emerald-300/70" : "text-slate-500"}`}>{formatNodeKind(data.kind, data.statement_kind)}</span>
+        <span className={`font-mono text-[10px] font-semibold tracking-[.06em] ${condition ? accentText : terminal ? "text-emerald-300/70" : returning ? "text-emerald-300/80" : variable ? "text-sky-300/80" : data.kind === "statement" ? "text-blue-300/80" : "text-slate-500"}`}>{formatNodeKind(data.kind, data.statement_kind)}</span>
         {!connector ? <strong className="line-clamp-2 max-w-full font-mono text-[13px] font-medium leading-[18px] text-slate-200">{label}</strong> : null}
-        {condition ? <small className="text-[10px] text-amber-300/70">клик — ветвь и код</small> : null}
+        {condition ? <small className={`text-[10px] ${accentText}`}>клик — ветвь и код</small> : null}
       </div>
       {data.complexityFragment ? <small className="absolute top-1 right-1 z-20 rounded border border-rose-900 bg-rose-950 px-1.5 py-1 font-mono text-[10px] font-semibold text-rose-300">{data.complexityFragment}</small> : null}
       <Handle type="source" position={Position.Bottom} style={{ bottom: verticalInset }} />
@@ -605,10 +614,14 @@ function layoutGrid(nodes: CfgNode[]) {
 }
 
 function formatNodeKind(kind: string, statementKind?: string) {
-  if (kind === "branch") return statementKind ? `УСЛОВИЕ · ${statementKind.toLocaleUpperCase("ru-RU")}` : "УСЛОВИЕ";
+  if (kind === "branch") {
+    if (statementKind && ["while", "do_while", "foreach", "for"].includes(statementKind)) return `ЦИКЛ · ${statementKind.replace("_", " ").toLocaleUpperCase("ru-RU")}`;
+    return statementKind ? `УСЛОВИЕ · ${statementKind.toLocaleUpperCase("ru-RU")}` : "УСЛОВИЕ";
+  }
+  if (kind === "statement" && statementKind === "variable_declaration") return "ПЕРЕМЕННАЯ";
   const labels: Record<string, string> = {
-    entry: "ВХОД",
-    exit: "ВЫХОД",
+    entry: "МЕТОД · ВХОД",
+    exit: "МЕТОД · ВЫХОД",
     merge: "СЛИЯНИЕ",
     statement: "ОПЕРАЦИЯ",
     return: "ВОЗВРАТ",
