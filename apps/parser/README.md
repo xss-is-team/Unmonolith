@@ -294,6 +294,18 @@ selection must contain the siblings its types use. The result is re-analysed and
 Failure codes: `class_not_found`, `not_extractable`, `dependency_not_selected`, `nothing_to_extract`,
 `transformation_invalid`.
 
+Method groups (`MethodGroups.java`): `discover` also returns `method_groups`, suggested groups of static methods of one
+class (first word of the method name: `parse*`, `validate*`, `format*`, `calc*`, ...), each with `methods`,
+`moves_along` (private static helpers and constants used only by the group), `preconditions` and
+`not_extractable_reasons`. `apply` takes `"groups":[{"id"?, "name"?, "methods"?}]` (a suggested id, optionally renamed,
+or an explicit method-id list with a name; not together with `classes`) and writes `<Name>.java` (a package-private
+final class with the methods) while the original class keeps the rest. Calls into the group (also from other files and
+`Host::m` references) are re-pointed, references from the moved code back to the original class are qualified, and a
+private member that is called from outside becomes package-private. Refused (`not_extractable`) when the group needs a
+private member that other code also uses, a private instance member, an inherited member, is `synchronized`, or is
+referenced in a form that cannot be re-pointed (static import). Extra failure codes: `method_not_found`,
+`group_overlap`, `invalid_request`.
+
 ## Complexity and defect analysis
 
 Every method with a body gets an additive `analysis` object next to its `cfg` (`null` for abstract
