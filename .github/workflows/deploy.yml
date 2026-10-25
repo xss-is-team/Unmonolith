@@ -8,7 +8,7 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/backend-demo-gate]
   workflow_dispatch:
 
 concurrency:
@@ -19,6 +19,7 @@ jobs:
   build:
     name: Build and push ${{ matrix.image }}
     runs-on: ubuntu-latest
+    environment: production  # the Docker Hub secrets live in this environment
     strategy:
       fail-fast: true
       matrix:

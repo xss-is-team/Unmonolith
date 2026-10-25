@@ -11,3 +11,9 @@ Ubuntu/Debian VDS: base hardening, Docker, host Caddy (automatic HTTPS), and the
 
 DNS `A unmonolith.sh9.top -> VDS IP` must exist before Caddy can obtain a certificate.
 The web container is published on 127.0.0.1:3001 only (Docker would otherwise bypass UFW).
+
+## Ubuntu 25.10+ (sudo-rs)
+The default `sudo` there is `sudo-rs`, whose password prompt Ansible does not recognise ("Timeout waiting for privilege
+escalation prompt"). Either allow passwordless sudo for the deploy user
+(`echo "deploy ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/deploy`) and run `ansible-playbook playbooks/site.yml`,
+or switch back to the classic one: `sudo update-alternatives --set sudo /usr/bin/sudo.ws`.
