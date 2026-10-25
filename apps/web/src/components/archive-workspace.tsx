@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertCircle, Bug, ChevronRight, Code2, Download, FileCode2, FileText, FolderOpen, Gauge, GitCompareArrows, LayoutGrid,
+  AlertCircle, Bug, ChevronRight, Code2, Download, History, FileCode2, FileText, FolderOpen, Gauge, GitCompareArrows, LayoutGrid,
   LoaderCircle, Network, Play, Save, Scissors, ShieldCheck, Sparkles, Upload, Waypoints,
 } from "lucide-react";
 import { AnalysisPane } from "@/components/analysis-pane";
@@ -13,6 +13,7 @@ import { ConsolePane, TestsPane, logTime, type LogLine } from "@/components/bott
 import { Button } from "@/components/ui/button";
 import { DecompositionPanel } from "@/components/decomposition-panel";
 import { DiffView } from "@/components/diff-view";
+import { HistoryPanel } from "@/components/history-panel";
 import {
   analyzeProjectStream, ApiError, applyOptimization, compareRevisions, exportProject,
   getOptimizations, getProject, getProjectComplexity, getProjectFile,
@@ -66,7 +67,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   const [acknowledged, setAcknowledged] = useState<string[]>([]);
   const [optimizationError, setOptimizationError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [workbench, setWorkbench] = useState<"code" | "verify" | "benchmark" | "diff" | "decompose">("code");
+  const [workbench, setWorkbench] = useState<"code" | "verify" | "benchmark" | "diff" | "decompose" | "history">("code");
   const [repeats, setRepeats] = useState(2);
   const [analysisTab, setAnalysisTab] = useState<"problems" | "recommendations" | "metrics" | "edit">("problems");
   const [editPortal, setEditPortal] = useState<HTMLElement | null>(null);
@@ -358,7 +359,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
     return { value: best.speedup ?? 0, note: `Измерено на нагрузке «${best.name}» (REV ${benchmarkReport?.baseline_revision} → REV ${benchmarkReport?.candidate_revision}); не прогноз.` };
   })();
   const firstApplicable = optimizations?.proposals.find((proposal) => proposal.applicability === "applicable") ?? null;
-  const overlayTitle = workbench === "verify" ? "Проверка поведения" : workbench === "benchmark" ? "Бенчмарк" : workbench === "diff" ? "Diff ревизий" : workbench === "decompose" ? "Разбор монолита" : "";
+  const overlayTitle = workbench === "verify" ? "Проверка поведения" : workbench === "benchmark" ? "Бенчмарк" : workbench === "diff" ? "Diff ревизий" : workbench === "decompose" ? "Разбор монолита" : workbench === "history" ? "История ревизий" : "";
 
   return (
     <main className="grid h-svh min-w-[1100px] grid-rows-[52px_minmax(0,1fr)_auto] overflow-hidden bg-[#070b14]">
@@ -380,6 +381,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
           <Button variant="ghost" size="sm" aria-label="Проверка" title="Проверка поведения" onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}><ShieldCheck /></Button>
           <Button variant="ghost" size="sm" aria-label="Бенчмарк" title="Измерение времени выполнения" onClick={() => { setWorkbench("benchmark"); void getProjectRevisions(project.id).then(setRevisions); }}><Gauge /></Button>
           <Button variant="ghost" size="sm" onClick={() => setWorkbench("decompose")}><Scissors /> Разбор монолита</Button>
+          <Button variant="ghost" size="sm" aria-label="История" title="История ревизий и откат" onClick={() => setWorkbench("history")}><History /></Button>
           <Button variant="ghost" size="sm" aria-label="Diff ревизий" title="Сравнение ревизий" onClick={() => { setWorkbench("diff"); void getProjectRevisions(project.id).then(setRevisions); }}><GitCompareArrows /></Button>
           <Button variant="ghost" size="sm" onClick={() => void downloadReport()} disabled={loading}><FileText /> Отчёт</Button>
         </div>
@@ -464,6 +466,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
         {workbench === "verify" ? <VerificationWorkbench revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} cases={cases} onCases={setCases} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} repeats={repeats} onRepeats={setRepeats} report={verifyReport} error={verifyError} busy={verifyBusy} onRun={() => void runFunctionalVerification()} /> : null}
         {workbench === "benchmark" ? <BenchmarkWorkbench revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} workload={workload} onWorkload={setWorkload} iterations={measuredIterations} onIterations={setMeasuredIterations} report={benchmarkReport} error={benchmarkError} busy={benchmarkBusy} onRun={() => void runRuntimeBenchmark()} /> : null}
         {workbench === "diff" ? <DiffWorkbench revisions={revisions} from={diffFrom} to={diffTo} onFrom={setDiffFrom} onTo={setDiffTo} files={revisionDiff} onLoad={() => void loadDiff()} /> : null}
+        {workbench === "history" ? <HistoryPanel projectId={project.id} revision={revision} dirty={dirty} onRolledBack={async () => { await reloadCurrentRevision(); setWorkbench("code"); }} onVerify={(baseline, candidate) => { setBaselineRevision(baseline); setCandidateRevision(candidate); setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }} /> : null}
         {workbench === "decompose" ? <DecompositionPanel key={`${revision}:${sourceLevel}`} projectId={project.id} revision={revision} sourceLevel={sourceLevel} dirty={dirty} onApplied={reloadCurrentRevision} /> : null}
           </div>
         </div>

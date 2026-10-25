@@ -6,7 +6,7 @@ ENV BLUEPRINTS_API_ORIGIN=$BLUEPRINTS_API_ORIGIN \
 RUN corepack enable
 WORKDIR /app
 COPY apps/web/package.json apps/web/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY apps/web .
 RUN pnpm build
 
