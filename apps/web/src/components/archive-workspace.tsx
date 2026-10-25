@@ -5,10 +5,12 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle, ArrowLeft, ChevronRight, Code2, Download, FileCode2, FolderOpen,
-  GitCompareArrows, LoaderCircle, Network, Save, ShieldCheck, Waypoints,
+  GitCompareArrows, LoaderCircle, Network, Save, Scissors, ShieldCheck, Waypoints,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Brand } from "@/components/brand";
+import { ComplexityOverview } from "@/components/complexity-overview";
+import { DecompositionPanel } from "@/components/decomposition-panel";
 import { DiffView } from "@/components/diff-view";
 import {
   analyzeProjectStream, ApiError, applyOptimization, compareRevisions, exportProject,
@@ -63,7 +65,8 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   const [acknowledged, setAcknowledged] = useState<string[]>([]);
   const [optimizationError, setOptimizationError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [workbench, setWorkbench] = useState<"code" | "verify" | "benchmark" | "diff">("code");
+  const [workbench, setWorkbench] = useState<"code" | "verify" | "benchmark" | "diff" | "decompose">("code");
+  const [repeats, setRepeats] = useState(2);
   const [revisions, setRevisions] = useState<{ revision: number; has_analysis: boolean }[]>([]);
   const [baselineRevision, setBaselineRevision] = useState(1);
   const [candidateRevision, setCandidateRevision] = useState(initialRevision);
@@ -104,7 +107,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
     setOptimizations(optimizationResult);
     setSelector((current) => methodResult.methods.some((method) => method.selector === current) ? current : methodResult.methods[0]?.selector ?? "");
     setSelectedProposal((current) => optimizationResult.proposals.some((proposal) => proposal.id === current) ? current : "");
-  }, [project.id, sourceLevel, setSelectedProposal]);
+  }, [project.id, sourceLevel, setSelector, setSelectedProposal]);
 
   useEffect(() => {
     let cancelled = false;
@@ -260,7 +263,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
     setVerifyError("");
     setVerifyReport(null);
     try {
-      setVerifyReport(await verifyRevisions(project.id, baselineRevision, candidateRevision, cases, { main_class: mainClass || null, source_level: sourceLevel }));
+      setVerifyReport(await verifyRevisions(project.id, baselineRevision, candidateRevision, cases, { main_class: mainClass || null, source_level: sourceLevel, repeats }));
     } catch (cause) {
       setVerifyError(errorMessage(cause));
     } finally {
@@ -318,7 +321,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
   const activeDiagnostics = analysis?.diagnostics.filter((diagnostic) => !diagnostic.source_range.file || diagnostic.source_range.file === activeFile) ?? [];
 
   return (
-    <main className="grid h-svh min-w-[960px] grid-rows-[48px_minmax(0,1fr)_minmax(210px,30vh)] overflow-hidden bg-[#070b14]">
+    <main className={`grid h-svh min-w-[960px] overflow-hidden bg-[#070b14] ${workbench === "code" ? "grid-rows-[48px_minmax(0,1fr)_minmax(210px,30vh)]" : "grid-rows-[48px_minmax(0,1fr)_minmax(260px,58vh)]"}`}>
       <header className="flex min-w-0 items-center gap-3 border-b border-slate-800 bg-[#0b1220] px-3">
         <Brand compact />
         <strong className="max-w-64 truncate text-[14px] text-slate-200" title={project.filename}>{project.filename}</strong>
@@ -331,6 +334,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
         <Button variant="outline" size="sm" onClick={() => void saveFile()} disabled={!isDirty || busy}>{busy ? <LoaderCircle className="spin" /> : <Save />} Сохранить</Button>
         <Button variant="outline" size="sm" onClick={() => { setWorkbench("verify"); void getProjectRevisions(project.id).then(setRevisions); }}><ShieldCheck /> Проверка</Button>
         <Button variant="outline" size="sm" onClick={() => { setWorkbench("benchmark"); void getProjectRevisions(project.id).then(setRevisions); }}>Бенчмарк</Button>
+        <Button variant="outline" size="sm" onClick={() => setWorkbench("decompose")}><Scissors /> Разбор монолита</Button>
         <Button variant="ghost" size="sm" aria-label="Экспортировать проект" onClick={() => void downloadProject()}><Download /></Button>
         <Link className="inline-flex items-center gap-1 whitespace-nowrap text-[13px] text-slate-400 hover:text-cyan-300" href="/"><ArrowLeft size={15} /> Другой проект</Link>
       </header>
@@ -343,7 +347,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
           <FileTree files={files} activeFile={activeFile} onOpen={(path) => void openFile(path)} />
           <div className="mt-2 border-t border-slate-800 px-3 py-2 text-[12px] font-semibold text-slate-400">Методы · {methods.length}</div>
           <div className="grid gap-0.5 px-1.5 pb-3">
-            {methods.map((method) => <button key={method.selector} type="button" title={method.id} className={`flex min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] ${selector === method.selector ? "bg-slate-800 text-slate-100" : "text-slate-400 hover:bg-slate-900"}`} onClick={() => { setSelector(method.selector); setView("cfg"); void openRange(method.source_range); }}><Code2 size={14} className="shrink-0 text-blue-400" /><span className="min-w-0 flex-1 truncate">{method.id}</span></button>)}
+            {methods.map((method, index) => <button key={`${method.selector}:${index}`} type="button" title={method.id} className={`flex min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] ${selector === method.selector ? "bg-slate-800 text-slate-100" : "text-slate-400 hover:bg-slate-900"}`} onClick={() => { setSelector(method.selector); setView("cfg"); void openRange(method.source_range); }}><Code2 size={14} className="shrink-0 text-blue-400" /><span className="min-w-0 flex-1 truncate">{method.id}</span></button>)}
           </div>
         </aside>
 
@@ -364,7 +368,7 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
           <div className="flex items-center justify-between border-b border-slate-800 px-3 text-[13px] font-semibold text-slate-300"><span>Анализ</span><span className="font-mono text-[11px] text-slate-500">REV {analysis?.revision ?? revision}</span></div>
           <div className="min-h-0 overflow-auto p-2.5">
             {loading ? <p className="flex items-center gap-2 text-[13px] text-slate-400" role="status"><LoaderCircle className="spin" size={14} /> Анализ проекта…</p> : null}
-            {!loading && activeDiagnostics.length ? <section className="mb-3 grid gap-1" aria-label="Диагностики файла"><h2 className="m-0 text-[12px] font-semibold text-slate-400">Диагностики · {activeDiagnostics.length}</h2>{activeDiagnostics.map((item, index) => <button type="button" key={`${item.code}-${index}`} className="rounded border border-slate-800 bg-slate-900/60 p-2 text-left text-[12px] text-slate-300 hover:border-slate-600" onClick={() => void openRange(item.source_range)}><span>{item.message}</span><small className="mt-1 block font-mono text-[11px] text-slate-500">{item.code} · строка {item.source_range.line ?? "—"}</small></button>)}</section> : null}
+            <ComplexityOverview report={loading ? null : complexity} onOpen={(row, sourceRange) => { const found = methods.find((method) => method.id === row.method_id); if (found) { setSelector(found.selector); setView("cfg"); } void openRange({ ...sourceRange, file: sourceRange.file ?? row.file ?? activeFile }); }} />
             <section className="grid gap-1.5" aria-label="Найденные проблемы"><h2 className="m-0 text-[12px] font-semibold text-slate-400">Findings · {findings?.findings.length ?? 0}</h2>{findings?.findings.map(({ method_id, file, finding }) => <article className="rounded border border-slate-800 bg-slate-900/60 p-2" key={`${file}-${finding.id}-${finding.source_range.start}`}><strong className="block text-[12px] leading-5 text-slate-200">{finding.message}</strong><p className="m-0 mt-1 text-[12px] leading-5 text-slate-400">{finding.explanation}</p><small className="mt-1 block truncate font-mono text-[11px] text-slate-500" title={method_id}>{file ?? activeFile} · стр. {finding.source_range.line ?? "—"}</small><button className="mt-1 text-[12px] text-cyan-300 hover:text-cyan-100" type="button" onClick={() => void openRange({ ...finding.source_range, file: finding.source_range.file ?? file ?? activeFile })}>К исходнику</button></article>)}</section>
             <OptimizationPanel
               proposals={optimizations?.proposals ?? []} revision={revision} selectedId={selectedProposal} onSelect={(id) => { setSelectedProposal(id); setPreview(null); setOptimizationError(""); setAcknowledged([]); }}
@@ -373,23 +377,32 @@ function ArchiveWorkspaceEditor({ project: initialProject, initialRevision, init
               onPreview={() => void previewSelectedOptimization()} onApply={() => void applySelectedOptimization()}
               onOpenFile={(path, sourceRange) => void openRange({ ...sourceRange, file: path })}
             />
+            {!loading && activeDiagnostics.length ? <details className="mt-3 grid gap-1" aria-label="Диагностики файла"><summary className="cursor-pointer text-[12px] font-semibold text-slate-400">Диагностики файла · {activeDiagnostics.length}</summary><div className="mt-1 grid gap-1">{activeDiagnostics.map((item, index) => <button type="button" key={`${item.code}-${index}`} className="rounded border border-slate-800 bg-slate-900/60 p-2 text-left text-[12px] text-slate-300 hover:border-slate-600" onClick={() => void openRange(item.source_range)}><span>{item.message}</span><small className="mt-1 block font-mono text-[11px] text-slate-500">{item.code} · строка {item.source_range.line ?? "—"}</small></button>)}</div></details> : null}
             {complexity && selectedMethod ? <div className="mt-3 rounded border border-slate-800 bg-slate-900/50 p-2 text-[12px]"><span className="text-slate-500">Статическая сложность</span><strong className="ml-2 font-mono text-violet-200">{complexity.methods.find((item) => item.method_id === selectedMethod.id)?.time_complexity ?? "unknown"}</strong><p className="m-0 mt-1 leading-5 text-slate-500">Не является измерением времени выполнения.</p></div> : null}
           </div>
         </aside>
       </div>
 
-      <section className="min-h-0 overflow-auto border-t border-slate-700 bg-[#0a1220]" aria-label="Рабочая панель">
+      <section className="grid min-h-0 grid-rows-[32px_minmax(0,1fr)] border-t border-slate-700 bg-[#0a1220]" aria-label="Рабочая панель">
+        <nav className="flex items-center gap-1 border-b border-slate-800 bg-[#0d1625] px-2" aria-label="Нижняя панель">
+          {([["code", "Код"], ["diff", "Diff ревизий"]] as const).map(([id, label]) => (
+            <button key={id} className={`rounded px-2.5 py-1 text-[12px] ${workbench === id ? "bg-slate-800 text-cyan-200" : "text-slate-400 hover:bg-slate-800"}`} type="button" onClick={() => { setWorkbench(id); if (id === "diff") void getProjectRevisions(project.id).then(setRevisions); }}>{label}</button>
+          ))}
+          <span className="ml-2 text-[11px] text-slate-600">{workbench === "verify" ? "Проверка" : workbench === "benchmark" ? "Бенчмарк" : workbench === "decompose" ? "Разбор монолита" : ""}</span>
+        </nav>
+        <div className="min-h-0 overflow-auto">
         {workbench === "code" ? (
           <div className="grid h-full min-h-0 grid-rows-[34px_minmax(0,1fr)]">
             <header className="flex items-center gap-2 border-b border-slate-800 px-3 text-[12px] text-slate-400"><FileCode2 size={14} /><strong className="truncate font-mono text-slate-300">{activeFile}</strong><span className="ml-auto">{dirty ? "Черновик" : `Сохранено · REV ${revision}`}</span></header>
             <div className="min-h-0 min-w-0"><JavaEditor key={`${activeFile}:${revision}:${savedSource.length}`} ref={editorRef} value={source} diagnostics={activeDiagnostics} focusRange={range} onDirtyChange={(next) => { dirtyRef.current = next; setDirty(next); }} onMetricsChange={() => {}} onSourceSelection={(selection) => setRange(selection ? { ...selection, file: activeFile } : null)} /></div>
           </div>
         ) : null}
-        {workbench === "verify" ? <VerificationWorkbench revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} cases={cases} onCases={setCases} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} report={verifyReport} error={verifyError} busy={verifyBusy} onRun={() => void runFunctionalVerification()} /> : null}
+        {workbench === "verify" ? <VerificationWorkbench revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} cases={cases} onCases={setCases} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} repeats={repeats} onRepeats={setRepeats} report={verifyReport} error={verifyError} busy={verifyBusy} onRun={() => void runFunctionalVerification()} /> : null}
         {workbench === "benchmark" ? <BenchmarkWorkbench revisions={revisions} baseline={baselineRevision} candidate={candidateRevision} onBaseline={setBaselineRevision} onCandidate={setCandidateRevision} mainClass={mainClass} onMainClass={setMainClass} sourceLevel={sourceLevel} onSourceLevel={setSourceLevel} workload={workload} onWorkload={setWorkload} iterations={measuredIterations} onIterations={setMeasuredIterations} report={benchmarkReport} error={benchmarkError} busy={benchmarkBusy} onRun={() => void runRuntimeBenchmark()} /> : null}
         {workbench === "diff" ? <DiffWorkbench revisions={revisions} from={diffFrom} to={diffTo} onFrom={setDiffFrom} onTo={setDiffTo} files={revisionDiff} onLoad={() => void loadDiff()} /> : null}
+        {workbench === "decompose" ? <DecompositionPanel key={`${revision}:${sourceLevel}`} projectId={project.id} revision={revision} sourceLevel={sourceLevel} dirty={dirty} onApplied={reloadCurrentRevision} /> : null}
+        </div>
       </section>
-      <nav className="fixed bottom-[30vh] right-[350px] z-30 flex gap-1 rounded-t border border-b-0 border-slate-700 bg-[#0d1625] p-1" aria-label="Нижняя панель"><button className="rounded px-2 py-1 text-[12px] text-slate-400 hover:bg-slate-800" type="button" onClick={() => setWorkbench("code")}>Код</button><button className="rounded px-2 py-1 text-[12px] text-slate-400 hover:bg-slate-800" type="button" onClick={() => { setWorkbench("diff"); void getProjectRevisions(project.id).then(setRevisions); }}>Diff ревизий</button></nav>
     </main>
   );
 }
@@ -455,20 +468,22 @@ function RevisionSelect({ label, values, value, onChange }: { label: string; val
   return <label className="grid gap-1 text-[12px] text-slate-400">{label}<select className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[12px] text-slate-200" value={value} onChange={(event) => onChange(Number(event.target.value))}>{values.map((item) => <option key={item.revision} value={item.revision}>REV {item.revision}{item.has_analysis ? " · анализ" : ""}</option>)}</select></label>;
 }
 
-function VerificationWorkbench({ revisions, baseline, candidate, onBaseline, onCandidate, cases, onCases, mainClass, onMainClass, sourceLevel, onSourceLevel, report, error, busy, onRun }: {
+function VerificationWorkbench({ revisions, baseline, candidate, onBaseline, onCandidate, cases, onCases, mainClass, onMainClass, sourceLevel, onSourceLevel, repeats, onRepeats, report, error, busy, onRun }: {
   revisions: { revision: number; has_analysis: boolean }[]; baseline: number; candidate: number; onBaseline: (revision: number) => void; onCandidate: (revision: number) => void;
-  cases: VerifyTestCase[]; onCases: (cases: VerifyTestCase[]) => void; mainClass: string; onMainClass: (value: string) => void; sourceLevel: string; onSourceLevel: (value: string) => void; report: VerificationReport | null; error: string; busy: boolean; onRun: () => void;
+  cases: VerifyTestCase[]; onCases: (cases: VerifyTestCase[]) => void; mainClass: string; onMainClass: (value: string) => void; sourceLevel: string; onSourceLevel: (value: string) => void; repeats: number; onRepeats: (value: number) => void; report: VerificationReport | null; error: string; busy: boolean; onRun: () => void;
 }) {
   return <div className="grid min-h-full content-start gap-3 p-3" aria-label="Поведенческая проверка"><header className="flex items-center gap-2 text-[14px] font-semibold text-slate-200"><ShieldCheck size={16} /> Функциональная проверка <span className="text-[12px] font-normal text-slate-500">сравнивает вывод, не время</span></header>
     <div className="grid max-w-4xl grid-cols-[1fr_1fr_170px_130px] gap-2"><RevisionSelect label="Baseline" values={revisions} value={baseline} onChange={onBaseline} /><RevisionSelect label="Candidate" values={revisions} value={candidate} onChange={onCandidate} /><label className="grid gap-1 text-[12px] text-slate-400">Класс запуска<input aria-label="Главный класс Java" className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 font-mono text-[12px] text-slate-200" placeholder="например shop.Main" value={mainClass} onChange={(event) => onMainClass(event.target.value)} /></label><label className="grid gap-1 text-[12px] text-slate-400">Java<select className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" value={sourceLevel} onChange={(event) => onSourceLevel(event.target.value)}>{["8", "11", "17", "21"].map((level) => <option key={level} value={level}>{level}</option>)}</select></label></div>
-    <div className="grid max-w-4xl gap-2">{cases.map((item, index) => <div className="grid grid-cols-[220px_1fr_auto] gap-2" key={index}><input className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" aria-label={`Имя сценария ${index + 1}`} value={item.name} onChange={(event) => onCases(cases.map((test, i) => i === index ? { ...test, name: event.target.value } : test))} /><textarea className="min-h-12 rounded border border-slate-700 bg-[#08101d] p-2 font-mono text-[12px] text-slate-200" aria-label={`stdin сценария ${index + 1}`} value={item.stdin} onChange={(event) => onCases(cases.map((test, i) => i === index ? { ...test, stdin: event.target.value } : test))} /><Button size="sm" variant="outline" disabled={cases.length === 1} onClick={() => onCases(cases.filter((_, i) => i !== index))}>Удалить</Button></div>)}<Button className="w-fit" size="sm" variant="outline" disabled={cases.length >= 20} onClick={() => onCases([...cases, { name: `Сценарий ${cases.length + 1}`, stdin: "" }])}>Добавить сценарий</Button></div>
+    <label className="flex max-w-4xl items-center gap-2 text-[12px] text-slate-400">Запусков каждого сценария<select aria-label="Число запусков сценария" className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" value={repeats} onChange={(event) => onRepeats(Number(event.target.value))}>{[1, 2, 3, 5].map((count) => <option key={count} value={count}>{count}</option>)}</select><span className="text-slate-500">от 2: нестабильный вывод (время, случайные числа) не выдаётся за изменение поведения</span></label>
+    <div className="grid max-w-4xl gap-2">{cases.map((item, index) => <div className="grid grid-cols-[220px_1fr_auto] gap-2" key={index}><input className="h-8 rounded border border-slate-700 bg-[#08101d] px-2 text-[12px] text-slate-200" aria-label={`Имя сценария ${index + 1}`} value={item.name} onChange={(event) => onCases(cases.map((test, i) => i === index ? { ...test, name: event.target.value } : test))} /><div className="grid gap-1"><textarea className="min-h-12 rounded border border-slate-700 bg-[#08101d] p-2 font-mono text-[12px] text-slate-200" aria-label={`stdin сценария ${index + 1}`} value={item.stdin} onChange={(event) => onCases(cases.map((test, i) => i === index ? { ...test, stdin: event.target.value } : test))} /><input className="h-7 rounded border border-slate-800 bg-[#08101d] px-2 font-mono text-[11px] text-slate-300 placeholder:text-slate-600" aria-label={`Ожидаемый stdout сценария ${index + 1}`} placeholder="ожидаемый stdout (необязательно; \n — перевод строки)" value={(item.expected_stdout ?? "").replace(/\n/g, "\\n")} onChange={(event) => onCases(cases.map((test, i) => i === index ? { ...test, expected_stdout: event.target.value ? event.target.value.replace(/\\n/g, "\n") : null } : test))} /></div><Button size="sm" variant="outline" disabled={cases.length === 1} onClick={() => onCases(cases.filter((_, i) => i !== index))}>Удалить</Button></div>)}<Button className="w-fit" size="sm" variant="outline" disabled={cases.length >= 20} onClick={() => onCases([...cases, { name: `Сценарий ${cases.length + 1}`, stdin: "" }])}>Добавить сценарий</Button></div>
     {error ? <p role="alert" className="m-0 text-[13px] text-rose-300">{error}{error.includes("main_class_required") ? " Введите полностью квалифицированный класс с main(String[])." : ""}</p> : null}<Button className="w-fit" onClick={onRun} disabled={busy || !cases.length || cases.some((item) => !item.name.trim())}>{busy ? <LoaderCircle className="spin" /> : <ShieldCheck />} Запустить реальные сценарии</Button>
     {report ? <VerificationReportView report={report} /> : null}
   </div>;
 }
 
 function VerificationReportView({ report }: { report: VerificationReport }) {
-  return <section className="grid max-w-5xl gap-2 rounded border border-slate-700 bg-slate-950/70 p-3 text-[12px]" aria-label="Результат функциональной проверки"><strong className={report.behaviorally_verified ? "text-emerald-300" : "text-rose-300"}>{report.behaviorally_verified ? "Сценарии совпали" : report.status === "compilation_failed" ? "Компиляция не прошла" : "Есть различия"} · REV {report.baseline_revision} → REV {report.candidate_revision}</strong><p className="m-0 text-slate-400">{report.explanation}</p><div className="flex gap-4 text-slate-400"><span>Сборка baseline: {report.baseline_compilation.status}</span><span>candidate: {report.candidate_compilation.status}</span><span>Сценариев: {report.executed_test_cases}/{report.requested_test_cases}</span></div><button className="w-fit text-cyan-300" type="button" onClick={() => navigator.clipboard?.writeText(JSON.stringify(report, null, 2))}>Скопировать реальный JSON-отчёт</button>{report.test_cases.map((item) => <details className="border-t border-slate-800 pt-2" key={item.name}><summary className="cursor-pointer text-slate-300">{item.passed ? "✓" : "!"} {item.name} · {item.mismatches.length ? "различия" : "совпало"}</summary>{item.mismatches.map((mismatch) => <p className="m-0 mt-1 text-rose-300" key={mismatch.field}>{mismatch.field}: {mismatch.explanation}</p>)}</details>)}<small className="text-slate-500">Проверка относится только к введённым сценариям, полной эквивалентности не доказывает.</small></section>;
+  return <section className="grid max-w-5xl gap-2 rounded border border-slate-700 bg-slate-950/70 p-3 text-[12px]" aria-label="Результат функциональной проверки"><strong className={report.behaviorally_verified ? "text-emerald-300" : report.status === "unstable" ? "text-amber-300" : "text-rose-300"}>{report.behaviorally_verified ? "Сценарии совпали" : report.status === "compilation_failed" ? "Компиляция не прошла" : report.status === "unstable" ? "Результат неопределён: вывод нестабилен" : "Есть различия"} · REV {report.baseline_revision} → REV {report.candidate_revision}{report.repeats && report.repeats > 1 ? ` · ${report.repeats} запуска на сценарий` : ""}</strong><p className="m-0 text-slate-400">{report.explanation}</p>
+    {report.warnings?.length ? <div className="grid gap-1 rounded border border-amber-900/60 bg-amber-950/20 p-2" aria-label="Предупреждения проверки">{report.warnings.map((warning) => <p className="m-0 text-amber-200" key={warning.code}><code className="mr-1 text-amber-400">{warning.code}</code>{warning.message}</p>)}</div> : null}<div className="flex gap-4 text-slate-400"><span>Сборка baseline: {report.baseline_compilation.status}</span><span>candidate: {report.candidate_compilation.status}</span><span>Сценариев: {report.executed_test_cases}/{report.requested_test_cases}</span></div><button className="w-fit text-cyan-300" type="button" onClick={() => navigator.clipboard?.writeText(JSON.stringify(report, null, 2))}>Скопировать реальный JSON-отчёт</button>{report.test_cases.map((item) => <details className="border-t border-slate-800 pt-2" key={item.name}><summary className="cursor-pointer text-slate-300">{item.passed ? "✓" : "!"} {item.name} · {item.mismatches.length ? "различия" : "совпало"}</summary>{item.mismatches.map((mismatch) => <p className={`m-0 mt-1 ${mismatch.field === "unstable" ? "text-amber-300" : "text-rose-300"}`} key={mismatch.field}>{mismatch.field}: {mismatch.explanation}</p>)}{item.expectation_failures?.map((failure) => <p className="m-0 mt-1 text-rose-300" key={`expected-${failure.field}`}>ожидание {failure.field}: {failure.explanation}</p>)}</details>)}{report.not_covered?.length ? <details className="border-t border-slate-800 pt-2"><summary className="cursor-pointer text-slate-400">Чего эта проверка не показывает · {report.not_covered.length}</summary><ul className="m-0 mt-1 grid gap-1 pl-4 text-slate-500">{report.not_covered.map((note) => <li key={note}>{note}</li>)}</ul></details> : null}<small className="text-slate-500">Проверка относится только к введённым сценариям, полной эквивалентности не доказывает.</small></section>;
 }
 
 function BenchmarkWorkbench({ revisions, baseline, candidate, onBaseline, onCandidate, mainClass, onMainClass, sourceLevel, onSourceLevel, workload, onWorkload, iterations, onIterations, report, error, busy, onRun }: {

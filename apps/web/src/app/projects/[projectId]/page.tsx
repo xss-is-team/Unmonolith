@@ -7,9 +7,12 @@ export const metadata: Metadata = {
 
 export default async function ProjectPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string }>;
+  searchParams: Promise<{ legacy?: string }>;
 }) {
   const { projectId } = await params;
-  return <ProjectWorkspace projectId={projectId} />;
+  const { legacy } = await searchParams;
+  return <ProjectWorkspace projectId={projectId} legacySingleFile={legacy === "1"} />;
 }

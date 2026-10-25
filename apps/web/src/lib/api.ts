@@ -199,6 +199,14 @@ export type RevisionDetail = RevisionSummary & {
 export type VerifyTestCase = {
   name: string;
   stdin: string;
+  expected_stdout?: string | null;
+  expected_stderr?: string | null;
+  expected_exit_code?: number | null;
+};
+
+export type VerifyWarning = {
+  code: "empty_scenarios" | "no_method_changes" | "change_not_reached" | "reachability_unknown" | string;
+  message: string;
 };
 
 export type CapturedStream = {
@@ -230,6 +238,8 @@ export type VerificationCaseResult = {
   name: string;
   passed: boolean;
   mismatches: { field: string; explanation: string }[];
+  expectation_failures?: { field: string; explanation: string }[];
+  runs?: number;
   baseline: ExecutionObservation;
   candidate: ExecutionObservation;
 };
@@ -239,7 +249,10 @@ export type VerificationReport = {
   created_at: string;
   requested_test_cases: number;
   behaviorally_verified: boolean;
-  status: "passed" | "failed" | "compilation_failed";
+  warnings?: VerifyWarning[];
+  not_covered?: string[];
+  repeats?: number;
+  status: "passed" | "failed" | "unstable" | "compilation_failed";
   baseline_revision: number;
   candidate_revision: number;
   baseline_compilation: CompilationResult;
@@ -659,6 +672,88 @@ export function applyCfgEdit(projectId: string, baseRevision: number, methodId: 
   });
 }
 
+export type DecompositionMember = { id: string; name: string; lines: number };
+
+export type DecompositionCheck = { id: string; status: "satisfied" | "violated"; detail: string };
+
+export type DecompositionTypeCandidate = {
+  id: string;
+  name: string;
+  kind: "class" | "interface" | "enum" | "record";
+  host: string;
+  file: string;
+  new_file: string;
+  lines: number;
+  extractable: boolean;
+  depends_on: string[];
+  preconditions: DecompositionCheck[];
+  not_extractable_reasons: string[];
+};
+
+export type DecompositionMethodGroup = {
+  id: string;
+  name: string;
+  host: string;
+  file: string;
+  new_file: string;
+  methods: DecompositionMember[];
+  moves_along: DecompositionMember[];
+  lines: number;
+  extractable: boolean;
+  preconditions: DecompositionCheck[];
+  not_extractable_reasons: string[];
+};
+
+export type DecompositionList = {
+  revision: number;
+  rule: string;
+  candidates: DecompositionTypeCandidate[];
+  method_groups: DecompositionMethodGroup[];
+};
+
+export type DecompositionGroupRequest = { id?: string; name?: string; methods?: string[] };
+
+export type DecompositionSelection = { classes?: string[]; groups?: DecompositionGroupRequest[] };
+
+export type DecompositionPreview = {
+  base_revision: number;
+  extracted: { id: string; name: string; kind?: string; from: string; new_file: string; lines: number; methods?: string[] }[];
+  diff: FileDiff[];
+  preview_sha256: string;
+  added_files: string[];
+  changed_files: string[];
+  host_lines: Record<string, { before: number; after: number }>;
+  validation: "valid";
+};
+
+export type DecompositionApplyResult = {
+  revision: number;
+  base_revision: number;
+  extracted: DecompositionPreview["extracted"];
+  diff: FileDiff[];
+  analysis_status: "completed" | "partial";
+  project_kind: "single_file" | "archive";
+  file_count: number;
+};
+
+export function getDecomposition(projectId: string, sourceLevel = "21") {
+  return request<DecompositionList>(`/projects/${encodeURIComponent(projectId)}/decomposition?source_level=${encodeURIComponent(sourceLevel)}`);
+}
+
+export function previewDecomposition(projectId: string, baseRevision: number, selection: DecompositionSelection, sourceLevel = "21") {
+  return request<DecompositionPreview>(`/projects/${encodeURIComponent(projectId)}/decomposition/preview`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ base_revision: baseRevision, source_level: sourceLevel, ...selection }),
+  });
+}
+
+export function applyDecomposition(projectId: string, baseRevision: number, selection: DecompositionSelection, previewHash: string, sourceLevel = "21") {
+  return request<DecompositionApplyResult>(`/projects/${encodeURIComponent(projectId)}/decomposition/apply`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ base_revision: baseRevision, source_level: sourceLevel, preview_sha256: previewHash, ...selection }),
+  });
+}
+
 export function compareRevisions(projectId: string, from: number, to: number) {
   return request<{ from_revision: number; to_revision: number; files: FileDiff[] }>(`/projects/${encodeURIComponent(projectId)}/revisions/${from}/diff/${to}`);
 }
@@ -827,7 +922,7 @@ export function verifyRevisions(
   baselineRevision: number,
   candidateRevision: number,
   testCases: VerifyTestCase[],
-  options?: { main_class?: string | null; source_level?: string },
+  options?: { main_class?: string | null; source_level?: string; repeats?: number },
 ) {
   return request<VerificationReport>(
     `/projects/${encodeURIComponent(projectId)}/verify`,

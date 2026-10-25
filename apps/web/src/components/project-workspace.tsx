@@ -88,7 +88,7 @@ function projectLoadMessage(error: unknown) {
   return "Не удалось загрузить проект. Проверьте, что API запущен.";
 }
 
-export function ProjectWorkspace({ projectId }: { projectId: string }) {
+export function ProjectWorkspace({ projectId, legacySingleFile = false }: { projectId: string; legacySingleFile?: boolean }) {
   const { data, error, isLoading, mutate } = useSWR(
     `project:${projectId}`,
     () => getProjectWorkspace(projectId),
@@ -113,7 +113,7 @@ export function ProjectWorkspace({ projectId }: { projectId: string }) {
     );
   }
 
-  if (data.project.kind === "archive") {
+  if (data.project.kind === "archive" || !legacySingleFile) {
     return <ArchiveWorkspace project={data.project} initialRevision={data.revision} initialSource={data.source} initialFilePath={data.activeFilePath} initialFiles={data.files} />;
   }
 
